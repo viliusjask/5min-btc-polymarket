@@ -1024,3 +1024,24 @@ def test_rejected_metadata_public_diagnostic_survives_ledger(
         ledger.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("first", ["unsupported_tick", "flags_tick"])
+def test_metadata_diagnostic_preserves_first_rejection_before_later_bad_field(first):
+    async def run():
+        venue = Venue()
+        if first == "unsupported_tick":
+            venue.fees["mts"] = ".02"
+            venue.market["minimum_tick_size"] = None
+        else:
+            venue.market["minimum_tick_size"] = ".001"
+            venue.market["minimum_order_size"] = None
+        async with venue.adapter() as data:
+            with pytest.raises(DataUnavailable, match="^TRADING_METADATA_CHANGED$"):
+                await data.snapshot()
+        assert any(
+            row["kind"] == "metadata_rejected" and row["compared_field"] == "tick_size"
+            for row in venue.records
+        )
+
+    asyncio.run(run())

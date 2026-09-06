@@ -16,7 +16,29 @@ our read-only receipt/hash adapter uses them. No language model in the trading l
 
 Use /home/vilius/.local/bin/uv if uv is absent from PATH.
 Run git status --short before edits and git branch --show-current before commits.
-Runtime/check commands are added once verified during implementation.
+Verified native Linux/WSL commands (Python 3.12, uv 0.11.24):
+
+```bash
+uv sync --locked
+uv lock --check
+uv run --locked pytest -q
+uv run --locked ruff check src/btc5m tests
+uv run --locked ruff format --check src/btc5m tests
+uv run --locked mypy src/btc5m
+uv run --locked btc5m --help
+uv run --locked btc5m doctor --duration 15
+uv run --locked btc5m observe --duration 2100 --runtime work/observe-35m/ledger.sqlite
+uv run --locked btc5m report --runtime work/observe-35m/ledger.sqlite
+```
+
+Public smoke verified the doctor/observe/report paths with bounded short durations; the advertised
+35-minute collection is the operator protocol. Funded operation remains unverified. Read README.md
+before explicit account/run/reconcile commands; no account setup occurs automatically.
+`run --execute --duration ...` is the only trading mode. `scripts/btc5m_ctl.sh` forwards exact CLI
+arguments, never execution consent. Status/report/stop use an explicit runtime path without secrets.
+Live data is common-root `.runtime/<wallet>/ledger.sqlite`; anonymous data is separate. Run and
+mutating local reconcile require the same exclusive owner lock. Readonly account doctor works with
+or without an existing live journal. Never recover the removed legacy scripts/Docker/YAML workflow.
 
 ## Non-negotiables
 

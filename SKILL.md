@@ -1,71 +1,36 @@
 ---
-name: btc-5m-live
-description: Run and monitor BTC 5-minute Up/Down trading on Polymarket using momentum-near-close logic (time-left, BTC move, market skew), fixed/controlled sizing, optional micro-hedge, and one-shot or loop execution.
+name: btc5m-operator
+description: Observe, diagnose, explicitly run, stop, and inspect this standalone Polymarket BTC five-minute experiment through its native CLI.
 ---
 
-# BTC 5m Live
+Use this checkout's `uv run --locked btc5m`; read [README.md](README.md) for verified commands,
+existing-account prerequisites, manual claims, and limitations. [CONTOUR.md](CONTOUR.md) identifies
+the source/runtime boundaries. The canonical configuration is `config/btc5m.toml`; do not recover
+old profiles or delegate execution to another trading repository.
 
-## Paths
-- Main trading repo: `<your-workspace>/pm-hl-conservative-plus-repo` (or set `BTC5M_REPO`)
-- Core runner: `src/live/pm_live_trade_runner.py`
-- Canonical skill runner: `scripts/test_btc_5m_session_exit_sl.py`
-- Skill control entrypoint: `scripts/btc5m_ctl.sh`
-- Compatibility wrapper (deprecated): `scripts/run_btc_5m_threshold_test.py`
+Anonymous `observe` and public `doctor` need no credentials. An observation records both raw
+candidate screens and eventual official references, never invented fills or paper profit. Allow
+at least30 minutes of source-history warm-up; use a finite35-minute observation for initial evidence.
 
-## Strategy Alignment
-Use this skill when the operator wants to execute a BTC 5m momentum strategy:
-- Entry focus near event close (around 2 minutes left).
-- Confirm meaningful BTC move in the interval (about $70-$100).
-- Prefer direction supported by market skew.
-- Enter with momentum, not against it.
-- Optional small opposite hedge when skew becomes extreme.
+Funded execution requires the operator's explicit authorization and `run --execute --duration ...`.
+Never add `--execute` to a wrapper or infer authorization from an eligible screen. Use existing
+owner credentials only, passed through the process environment or an explicit private env-file.
+Do not create/derive credentials, deploy wallets, approve, transfer, or redeem. CLOB L2, Relayer,
+and Builder credentials are different. Account doctor is read-only and may run before a live
+journal exists. Session/scoped signers are unsupported.
 
-## Operational Rules
-- Default is dry-run unless `--execute` is set.
-- Use controlled stake sizing (`--stake-usd`, profile caps).
-- If both UP and DOWN satisfy threshold logic, choose the stronger side.
-- Keep stop-loss and timing guards enabled in profile config.
+Use the absolute live journal path printed at startup for `stop`, `status`, and `report`.
+Live paths are wallet-scoped under the common Git root across worktrees; never create a second
+live runtime to bypass an owner lock, stop, loss budget, unknown order, or existing inventory.
+`reconcile` reads the venue but writes local evidence, so it requires the same exclusive owner lock.
+`run --execute` alone acknowledges an old stop once; new concurrent stops must survive.
 
-## One-shot real test
-From trading repo root:
+A raw eligible screen, a pending confirmation, a submitted order, and a receipt-confirmed fill
+are different states. Report actual fees/cash/PnL separately from estimated exit quotes, remaining
+risk, unknown submissions, and claimable noncash inventory. A bounded shutdown can end unresolved;
+never call it flat without the ledger evidence. An uncertain order is not automatically replayed.
+Use the same wallet's official manual claim route and preserve unresolved journal evidence.
 
-```bash
-.venv/bin/python scripts/test_btc_5m_session_exit_sl.py --profile conservative --execute
-```
-
-Aggressive profile:
-
-```bash
-.venv/bin/python scripts/test_btc_5m_session_exit_sl.py --profile aggressive --execute
-```
-
-Override profile params manually (example):
-
-```bash
-.venv/bin/python scripts/test_btc_5m_session_exit_sl.py --profile conservative --stake-usd 5 --entry-timeout-min 90 --execute
-```
-
-## Strategy Profiles
-- File: `config/btc_5m_profiles.yaml`
-- Presets: `conservative`, `aggressive`
-- Includes entry/exit timing, quote staleness checks, spread/liquidity guards, hedge triggers, and risk caps.
-
-## Hot Commands (chat-friendly)
-Examples:
-- `btc5m conservative start`
-- `btc5m aggressive start`
-
-Handlers:
-- `scripts/btc5m_hot.sh [conservative|aggressive]`
-- `scripts/btc5m_ctl.sh start --profile [conservative|aggressive]`
-- `scripts/btc5m_ctl.sh status|stop|report|logs`
-- completion summary utility: `scripts/btc5m_latest_report.py --mark`
-
-Output:
-- isolated skill runtime logs: `skills/btc-5m-live/runtime/btc5m_<profile>_<UTCSTAMP>.log`
-
-## Notes
-- Canonical runner resolves current BTC 5m market slug (`btc-updown-5m-<bucket>`).
-- Real order placement is delegated to `pm_live_trade_runner.py` with `--force-side` and `--max-notional-usd`.
-- Keep BTC5m automation scoped to this skill contour (`btc5m_ctl.sh` + `skills/btc-5m-live/runtime`) to avoid cross-skill interference.
-- Keep all GitHub-facing docs and metadata in English.
+This repair is development-verified and funded-live-unverified. Strategy defaults and confirmation
+are experiments, not evidence of higher returns. Preserve rejected rounds and one calibration
+sample/outcome per round as described in the design; do not turn repeated snapshots into successes.

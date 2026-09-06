@@ -621,3 +621,31 @@ def test_initial_close_reason_survives_later_control_and_resolution_problems(tmp
     position = ledger.open_position()
     assert position.exit_reason == "STOP" and position.exit_problem == "RESOLUTION_UNCONFIRMED"
     ledger.close()
+
+
+def test_metadata_diagnostics_accept_only_normalized_public_comparisons(tmp_path):
+    ledger = Ledger(tmp_path / "diagnostic.sqlite", WALLET)
+    public = {
+        "kind": "metadata_rejected",
+        "received_ms": NOW,
+        "slug": make_snapshot().market.slug,
+        "condition_id": make_snapshot().market.condition_id,
+        "token_id": "123456789",
+        "endpoint": "https://clob.polymarket.com/book",
+        "compared_field": "tick_size",
+        "expected": D(".01"),
+        "actual": D(".001"),
+        "supported_ticks": (D(".01"), D(".001")),
+        "signed_payload": "secret",
+        "api_key": "secret",
+    }
+    ledger.record_observation(public)
+    row = ledger.observations()[0]
+    assert row["expected"] == "0.01" and row["actual"] == "0.001"
+    assert row["supported_ticks"] == ["0.01", "0.001"]
+    assert "signed_payload" not in row and "api_key" not in row
+    with pytest.raises(LedgerError, match="INVALID_PUBLIC_OBSERVATION"):
+        ledger.record_observation(public | {"actual": {"arbitrary": "payload"}})
+    ledger.record_observation({"kind": "other", "received_ms": NOW, "expected": "unrelated"})
+    assert "expected" not in ledger.observations()[-1]
+    ledger.close()

@@ -855,7 +855,17 @@ def test_input_generation_cancels_pending_after_account_even_if_valid_overwrites
 
 
 @pytest.mark.parametrize(
-    "change", ["generation", "missing", "identity", "rejection", "budget", "normal", "looser_limit"]
+    "change",
+    [
+        "generation",
+        "missing",
+        "identity",
+        "rejection",
+        "budget",
+        "fee_reserve",
+        "normal",
+        "looser_limit",
+    ],
 )
 def test_buy_provider_revalidates_current_authorization_after_preparation(
     tmp_path, monkeypatch, change
@@ -883,6 +893,8 @@ def test_buy_provider_revalidates_current_authorization_after_preparation(
                 snap = replace(snap, spot=replace(snap.spot, price=D("80000")))
             elif change == "budget":
                 snap = replace(snap, up_book=replace(snap.up_book, asks=(Level(D(".60"), D("8")),)))
+            elif change == "fee_reserve":
+                snap = replace(snap, market=replace(snap.market, fee_rate=D(".0701")))
             elif change == "looser_limit":
                 snap = confirmation_snapshot(venue.now, ask=".71")
             latest = SnapshotInput(

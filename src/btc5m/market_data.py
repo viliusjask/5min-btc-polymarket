@@ -748,7 +748,6 @@ class MarketData:
         if rate > 1 or exponent != exponent.to_integral_value() or exponent > 10:
             raise DataUnavailable("UNSUPPORTED_FEE_SCHEMA")
         tick, minimum = _decimal(fees.get("mts")), _decimal(fees.get("mos"))
-        mismatches = []
         if tick not in TICKS:
             self._emit(
                 "metadata_rejected",
@@ -761,12 +760,13 @@ class MarketData:
                 actual=str(tick),
                 supported_ticks=sorted(str(value) for value in TICKS),
             )
-        for name, expected, actual in (
-            ("tick_size", tick, _decimal(flags.get("minimum_tick_size"))),
-            ("min_order_size", minimum, _decimal(flags.get("minimum_order_size"))),
+            raise DataUnavailable("TRADING_METADATA_CHANGED")
+        for name, expected, wire_value in (
+            ("tick_size", tick, flags.get("minimum_tick_size")),
+            ("min_order_size", minimum, flags.get("minimum_order_size")),
         ):
+            actual = _decimal(wire_value)
             if expected != actual:
-                mismatches.append(name)
                 self._emit(
                     "metadata_rejected",
                     code="TRADING_METADATA_CHANGED",
@@ -777,6 +777,5 @@ class MarketData:
                     expected=str(expected),
                     actual=str(actual),
                 )
-        if tick not in TICKS or mismatches:
-            raise DataUnavailable("TRADING_METADATA_CHANGED")
+                raise DataUnavailable("TRADING_METADATA_CHANGED")
         return tick, minimum, rate, int(exponent)

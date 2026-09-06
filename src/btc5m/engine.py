@@ -287,7 +287,7 @@ class Engine:
                     elif (
                         current.price_limit is None
                         or current.buy_principal != intent.principal
-                        or current.max_total_reserved < intent.reserved_cash
+                        or current.max_total_reserved != intent.reserved_cash
                         or current.price_limit < intent.price_limit
                     ):
                         reason = "DECISION_CHANGED_BEFORE_POST"

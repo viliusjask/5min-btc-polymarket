@@ -27,6 +27,8 @@ Task1 owns `src/btc5m/{__init__,domain,config,strategy}.py`, `config/btc5m.toml`
 Task2 owns `src/btc5m/market_data.py`, `tests/test_market_data.py`, public fixtures in `tests/fixtures/`.
 Task3 owns `src/btc5m/{broker,ledger,engine,execution_types,rpc}.py`, `tests/test_{broker,ledger,engine,rpc}.py`.
 Task4 owns `src/btc5m/{cli,__main__}.py`, CLI/E2E tests, wrappers, docs, container/CI cleanup.
+Task4 also owns the narrow rejected-metadata diagnostic addition in `market_data.py` and its tests,
+as specified by the public-probe finding in its task brief; entry validation remains unchanged.
 Root owns design/research/plan/progress and package/bootstrap metadata until final integration.
 
 Domain interfaces established by Task1 (other tasks consume these names):

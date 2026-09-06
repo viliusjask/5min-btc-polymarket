@@ -138,6 +138,14 @@ size is not a full liquidation quote. Triggering a stop requests a price-protect
 guarantee the trigger price or prevent the full allocated loss. Sell attempt limit is a fresh
 executable bid with bounded configured slippage; no stale-price or one-cent panic fallback.
 
+For SELL construction, the entry-time tick is historical context. Use a supported current tick
+when the fresh held-token book and forced current SDK metadata agree. If those current views
+disagree, accept only the SDK tick being finer and exactly dividing the book tick, with the protected
+price valid on that current grid. This accommodates the documented price-limit tick refinement;
+unsupported or coarsening disagreements remain blocked. Record entry/book/current ticks and the
+refinement reason. Token, negative-risk, minimum-size, fee and signed-quantity checks remain required.
+Entry metadata disagreements still skip; this exception is specific to reducing existing exposure.
+
 Evaluate both candidates on the same available snapshots and retain each first eligible intent
 per round, without invented fills/PnL. Record one calibration observation at the first snapshot
 received 0..2 seconds after end-minus120; if absent, record missing rather than choose a later

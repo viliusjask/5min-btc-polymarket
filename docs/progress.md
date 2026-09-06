@@ -20,3 +20,5 @@ All parameters remain hypotheses. Actual funded validation remains a later expli
 
 Observed feed gaps prompted a reviewed sparse-history policy:>=95% grid coverage,<=12s accepted
 source gaps, unchanged2s sampling tolerance and5s currentquote freshness. Completed32minute feed capture:24/24 eligible1800second windows pass revisedsampler; strictpolicy0/24.
+
+- Task 4 is independently approved at 2e83025. The publication/calibration duplication finding was fixed and re-reviewed; 124 covering tests and lint/format/types pass. Final whole-branch review and the ongoing 35-minute public CLI capture remain root-owned.

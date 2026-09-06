@@ -33,3 +33,7 @@ The selected strategy also deliberately omits an LLM, a tiny opposite-side hedge
 orders, a fitted drift term and an Alpha-Sentry integration. Their expected benefit has not been
 established for this first experiment. See [strategy decisions](../research/strategy-decisions.md)
 for the alternatives, scientific sources and positive as well as negative trader evidence.
+
+## Additional article and inventory ruling
+
+Adopted the existing valuation/depth/inventory principles; deferred six funded portfolios, passive pairing and automatic merge after scientific review and a bounded complementary-route quote comparison. The user delegated this choice. The hypotheses, evidence limits and opportunity cost are recorded in [inventory strategy ruling](../research/inventory-strategy-ruling.md). Task4 calibration writes now belong to actual publication in provider mode; current-time execution reevaluation cannot invent a new receipt.

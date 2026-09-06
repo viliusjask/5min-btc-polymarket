@@ -319,3 +319,62 @@ Remaining limitations to retain in the root handoff:
 Root was asked to incorporate the operator workflow and reusable cleanup/input lessons into its
 final project-memory/CHEATSHEET pass, since root owns the final setup/memory handoff. No user approval
 is needed for this local report; it presents the concrete result for independent gate review.
+
+## Fix round 1 — I1/P2: preserve raw snapshot publication time
+
+The independent Task4 review reproduced an Important observational defect, superseding the
+initial self-review's clean assessment: Engine provider consumption recorded an already-published
+cached snapshot again after replacing its timestamp with current execution time. An input published
+500ms before the fixed calibration point could become an observed calibration500ms after the point,
+and one publication produced four raw paired decisions. Root supplied the finding and reproduction
+in `.superpowers/sdd/standalone/task-4-review.md` and `work/task4-review/`.
+
+**Fixed in local commit `2e830258c0a759a7172d71ee164f85bb6d584776` —
+`fix: keep cached execution inputs out of calibration observations`.** Only `src/btc5m/engine.py`
+and `tests/test_engine.py` changed. No public interface, schema, CLI publication, account/RPC,
+strategy policy, credentials or teardown behavior changed. No subagent, network/account action,
+full-suite rerun, push/merge or branch deletion occurred. Root's running35-minute anonymous
+observation session42800 was not interrupted; it uses publication-only observation and never
+calls Engine.step, so its public measurements are unaffected by this Engine-only fix.
+
+Short contract:
+
+- With `read_snapshot` configured, CLI publication remains the single owner of raw paired-screen
+  and calibration writes. Engine creates a current-time copy for the existing pure selected-core
+  `evaluate` call, without calling `Ledger.record_snapshot` on that cached receipt. The immutable
+  source cell and its original publication timestamp remain unchanged.
+- Without `read_snapshot`, the supported direct-call path deliberately retains its existing
+  behavior: each applicable step is its observation boundary and records paired screens at the
+  current step time. A regression preserves this and verifies stale input still cancels pending
+  execution. CLI live execution always uses the provider path.
+- Current-time evaluation, clock-driven missing-calibration marking, monotonic input generation,
+  pending-candidate identity, post-preparation principal/reserve/price bounds, account checks,
+  stop handling and fresh held-book scheduling remain intact. Execution confirmation/order records
+  remain distinct from publication records. No new observational receipt is invented by consumption.
+
+Tests were added before the change. Two provider cases initially failed with `observed != pending`;
+the explicit direct-call compatibility control already passed. The no-publication case now keeps
+calibration pending at target+500ms and missing at target+2500ms, with exactly the original two raw
+decisions and the original target−500ms timestamp. The genuine-publication control adds one snapshot
+at target+1000ms, captures that exact sample, retains exactly four decisions for two publications,
+and still reaches one protected synthetic BUY after confirmation at the later execution step.
+These use actual LatestInput, Engine, core, Broker/SDK and SQLite with existing synthetic external
+transport fixtures; no wall-clock sleeps or injected ledger money are used.
+
+| Command | Observed result / retained output |
+| --- | --- |
+| `uv run --locked pytest tests/test_engine.py -q -k 'never_moves_publication or direct_step_retains'` before fix |2 failed,1 passed,55 deselected; `work/task4-fix1-red.txt` |
+| Same focused command after fix |3 passed,55 deselected in0.84s; `work/task4-fix1-green.txt` |
+| `uv run --locked pytest tests/test_engine.py tests/test_cli.py tests/test_end_to_end.py tests/test_ledger.py -q` |**124 passed in14.54s**; `work/task4-fix1-covering.txt` |
+| `uv run --locked ruff check src/btc5m tests` |All checks passed; `work/task4-fix1-lint.txt` |
+| `uv run --locked ruff format --check src/btc5m tests` |21 files already formatted; `work/task4-fix1-format.txt` |
+| `uv run --locked mypy src/btc5m tests/test_engine.py tests/test_cli.py tests/test_end_to_end.py tests/test_ledger.py` |16 files clean; `work/task4-fix1-types.txt` |
+| Working/staged `git diff --check` |Passed |
+
+All commands used `/home/vilius/.local/bin/uv` from the explicit standalone worktree. The earlier
+381-test full-suite evidence remains the baseline; this round adds three cases and runs only the
+root-requested covering suite and static checks. Self-review of the final narrow diff confirmed
+that the sole execution change selects pure evaluation for providers and preserves the direct
+branch. Independent rereview and root's remaining public/whole-branch/memory stages remain pending.
+The review's unproven pathological teardown hard bound is retained for root's final review, not
+claimed fixed or expanded into this narrowly authorized finding.

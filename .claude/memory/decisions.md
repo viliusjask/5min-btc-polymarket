@@ -20,3 +20,13 @@
   Pinned SDK0.9 lacks the archive argument, so a narrow anonymous HTTP adapter is intentional.
   The index supplies candidate tokens for onchain checks; it cannot prove exhaustive absence of
   foreign ERC1155 holdings. Use a dedicated wallet and preserve the ledger through restarts.
+- 2026-09-06: A SELL uses verified current tick metadata; the historical entry tick is not
+  immutable. A current disagreement permits only the documented supported finer/dividing SDK
+  grid with protected prices. See docs/research/tick-change-contract.md for the actual vectors.
+- 2026-09-06: Entry confirmation is a prospective experiment motivated by one information-lag
+  event. Wait for a strictly newer spot source to reach the original book timestamp, then use
+  the current eligible decision. Cancel observed invalidations; no reservation while waiting.
+  Current books can still lead, and the event does not prove this better than a second check.
+- 2026-09-06: Native WSL/Linux is the verified runtime target. Docker Desktop's shim is present
+  but WSL integration is unavailable; remove the old launcher rather than advertise an untested
+  replacement container workflow. Preserve feature branches/worktrees for the user to merge.

@@ -44,9 +44,9 @@ qualify against the current book/model. Any observed invalidation cancels that p
 The original timestamp stays fixed, so the bot does not endlessly chase a newer book. This removes
 the initial observed information gap; a gap to the newest book can remain and is reported.
 
-In the35-minute public run, the sole value-eligible snapshot showed a61c Up ask and a96.8% central
-model probability, using a BTC source timestamp about2.2seconds older than the book. Later-arriving
-Chainlink points for times before that decision showed an approximately18-dollar BTC drop; the next
+In the 35-minute public run, the sole value-eligible snapshot showed a 61c Up ask and a 96.8% central
+model probability, using a BTC source timestamp about 2.2 seconds older than the book. Later-arriving
+Chainlink points for times before that decision showed an approximately 18-dollar BTC drop; the next
 snapshot no longer qualified. A generic next-snapshot check also rejects this one event, so it does
 not prove the chosen rule superior. No order, hypothetical fill or trade profit is inferred.
 

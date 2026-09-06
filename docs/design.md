@@ -124,6 +124,19 @@ Confirmed worthless residual inventory realizes its remaining basis loss even wi
 Never round up a position to satisfy minimum size if doing so exceeds the authorized reservation.
 A USD100 dedicated wallet is the outer experimental allocation. No automatic reload or compounding.
 
+An eligible screen is not yet an opening order. For either selected mode, arm one pending candidate
+with its side, round/config identity, initial spot source, initial selected-book source timestamp and
+decision time. Keep that original book timestamp fixed. Confirm only on a subsequent fresh snapshot
+whose spot source is strictly newer and has reached that original book timestamp, with the same side
+still independently eligible. Reevaluate and use the current decision's sizing/price before reserving.
+Any observed invalid/missing/stale input, changed side/round/config/window, stop or account/exposure
+block cancels the pending candidate. A replacement can arm but cannot confirm in the same call.
+Waiting creates no reservation or order intent. Restart discards pending candidates while preserving
+their safe observation records. Report original/current timestamps and the remaining current book/spot
+source gap: this does not fully synchronize the current inputs. Raw paired screens and fixed calibration
+remain unchanged and separate from execution confirmation. This is an experimental response to a
+captured information-lag event, not evidence of improved ROI or an optimized delay.
+
 Default exit triggers are an 0.08/share drop from actual entry price, selected bid at 0.98, or
 20 seconds before expiry. These are experimental risk/profit/time choices, not optimized scientific
 claims. Stop/take-profit triggers use depth-weighted executable gross price for the whole held quantity,

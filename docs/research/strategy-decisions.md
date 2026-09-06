@@ -15,6 +15,7 @@ arithmetic does not evaluate this proposed strategy.
 | Replace a fixed BTC-dollar move with distance relative to recent volatility and remaining time | A USD 90 lead is very different in quiet and fast markets; skip expensive weak leads | Conditional probability math supports the distinction. The probability model remains uncalibrated. |
 | Model the 60-second settlement average and capture the correct opening average | Avoid buying on a spot-price signal that is misaligned with the contract | Current contract rules and our two-boundary anonymous probe support this reference policy. |
 | Require a margin above executable cost | Fewer trades with more room for fees, spread and model error | Actual fee formula and depth are measurable; the initial two-cent margin is a hypothesis. |
+| Confirm a candidate after the underlying feed reaches its original book timestamp | Reduce entries whose apparent value comes from newer market information missing from our model | A captured repricing event motivates the rule. It can miss short-lived opportunities; higher ROI is unproven. |
 | Keep price-protected stops, a profit target and an expiry exit | Bound ordinary losing trades and free capital without waiting for every resolution | Stops can help or hurt depending on the price process. Only filled sales reduce exposure. |
 | Fixed small spending, one opening intent per round | Prevent churn, duplicate orders and accidental compounding from dominating the experiment | Operational control, not a forecasting edge. Actual received shares drive exit size. |
 | Record both candidate decisions but execute one configured strategy | Compare the modified upstream rule with the value candidate on the same rounds | Decision records cost little. They do not claim hypothetical fills or paper profit. |
@@ -36,6 +37,18 @@ The value metric estimates the final payout's value. Because we also stop, take 
 before expiry, it is not a forecast of the complete strategy's profit. Measured stopped-trade
 outcomes stay separate from probability calibration. Default exits are an 8c drop from actual
 entry price, a 98c depth-weighted bid, or 20 seconds remaining. Those numbers are initial hypotheses.
+
+Both executable modes now require a second information check before reserving money: the underlying
+source must advance to at least the original candidate's book timestamp, and the same side must still
+qualify against the current book/model. Any observed invalidation cancels that pending candidate.
+The original timestamp stays fixed, so the bot does not endlessly chase a newer book. This removes
+the initial observed information gap; a gap to the newest book can remain and is reported.
+
+In the35-minute public run, the sole value-eligible snapshot showed a61c Up ask and a96.8% central
+model probability, using a BTC source timestamp about2.2seconds older than the book. Later-arriving
+Chainlink points for times before that decision showed an approximately18-dollar BTC drop; the next
+snapshot no longer qualified. A generic next-snapshot check also rejects this one event, so it does
+not prove the chosen rule superior. No order, hypothetical fill or trade profit is inferred.
 
 A USD 5 all-in spending target can be too small to satisfy the exchange's minimum shares at a high
 price. The bot skips those entries; it never rounds the order up beyond its reservation. The

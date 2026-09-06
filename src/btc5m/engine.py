@@ -18,7 +18,7 @@ from btc5m.execution_types import (
     SnapshotInput,
 )
 from btc5m.ledger import Ledger, LedgerError
-from btc5m.strategy import fee_for
+from btc5m.strategy import evaluate, fee_for
 
 D = Decimal
 
@@ -124,8 +124,14 @@ class Engine:
             if snapshot is None:
                 return EngineResult("SKIP", "NO_SNAPSHOT")
             current = replace(snapshot, now_ms=self._now(now_ms))
-            decisions = self.ledger.record_snapshot(current, self.config)
-            decision = decisions[0 if self.config.strategy.mode == "value" else 1]
+            if self._read_snapshot is None:
+                # Direct callers use step as their observation boundary.
+                decisions = self.ledger.record_snapshot(current, self.config)
+                decision = decisions[0 if self.config.strategy.mode == "value" else 1]
+            else:
+                # Providers publish raw observations separately. Reusing their latest
+                # receipt at a later execution time must not create a new sample.
+                decision = evaluate(current, self.config)
             if decision.reason != "ENTRY":
                 self._cancel_pending(decision.reason, current, current.now_ms)
                 return EngineResult("SKIP", decision.reason)
@@ -273,8 +279,6 @@ class Engine:
                     reason = "NO_SNAPSHOT_BEFORE_POST"
                 if reason is None and snapshot is not None:
                     assert intent.decision is not None and intent.decision.side is not None
-                    from btc5m.strategy import evaluate
-
                     current = evaluate(
                         replace(snapshot, now_ms=self._now(intent.created_ms)), self.config
                     )

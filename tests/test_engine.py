@@ -915,3 +915,84 @@ def test_buy_provider_revalidates_current_authorization_after_preparation(
         ledger.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("publish_in_window", [False, True])
+def test_provider_consumption_never_moves_publication_into_calibration_window(
+    tmp_path, monkeypatch, publish_in_window
+):
+    from btc5m.cli import LatestInput
+
+    async def run():
+        venue = Venue()
+        venue.post_loss = True
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        venue.now = NOW - 500
+        cell = LatestInput(ledger, Config(), clock=lambda: venue.now / 1000, emit=lambda row: None)
+        cell.publish(confirmation_snapshot(venue.now), 0)
+        original_rows = ledger.decisions()
+        assert len(original_rows) == 2
+        engine = Engine(broker, ledger, Config(), session, read_snapshot=cell.read)
+
+        # Consuming one earlier receipt inside the fixed window is no new publication.
+        venue.now = NOW + 500
+        assert (await engine.step(None, None, venue.now)).reason == "ENTRY_CONFIRMATION_WAITING"
+        calibration = next(row for row in ledger.measurements() if row["kind"] == "calibration")
+        assert calibration["status"] == "pending"
+        assert ledger.decisions() == original_rows
+        published = cell.read().snapshot
+        assert published is not None and published.now_ms == NOW - 500
+
+        if publish_in_window:
+            venue.now = NOW + 1000
+            cell.publish(confirmation_snapshot(venue.now), cell.read().invalidation_generation)
+            calibration = next(row for row in ledger.measurements() if row["kind"] == "calibration")
+            assert calibration["status"] == "observed"
+            assert calibration["now_ms"] == NOW + 1000
+
+        venue.now = NOW + 2500
+        result = await engine.step(None, None, venue.now)
+        calibration = next(row for row in ledger.measurements() if row["kind"] == "calibration")
+        if publish_in_window:
+            assert result.action == "SUBMITTED" and venue.posts == 1
+            assert calibration["status"] == "observed" and calibration["now_ms"] == NOW + 1000
+            assert [row["now_ms"] for row in ledger.decisions()] == [
+                NOW - 500,
+                NOW - 500,
+                NOW + 1000,
+                NOW + 1000,
+            ]
+        else:
+            assert result.reason == "ENTRY_CONFIRMATION_WAITING" and venue.posts == 0
+            assert calibration["status"] == "missing"
+            assert "now_ms" not in calibration
+            assert ledger.decisions() == original_rows
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_direct_step_retains_its_observation_boundary_and_current_time_evaluation(
+    tmp_path, monkeypatch
+):
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        venue.now = NOW + 500
+        engine = Engine(broker, ledger, Config(), session)
+        assert (
+            await engine.step(confirmation_snapshot(NOW - 500), None, venue.now)
+        ).reason == "ENTRY_CONFIRMATION_WAITING"
+        assert [row["now_ms"] for row in ledger.decisions()] == [NOW + 500, NOW + 500]
+        calibration = next(row for row in ledger.measurements() if row["kind"] == "calibration")
+        assert calibration["status"] == "observed" and calibration["now_ms"] == NOW + 500
+        venue.now = NOW + 5500
+        assert (
+            await engine.step(confirmation_snapshot(NOW - 500), None, venue.now)
+        ).reason == "STALE_DATA"
+        assert engine.pending_candidate is None and venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())

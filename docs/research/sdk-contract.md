@@ -336,3 +336,11 @@ Read all related state at one explicit finalized block number, retain block hash
 SDK 0.9.0 has no equivalent payout-mapping/collection/position-ID getter: an exhaustive source search found none of the five names. Its position helper consumes API token IDs and its `redeem_positions` method submits a wallet transaction, so it must not be used as a resolution probe. Existing httpx/eth_abi/eth_utils suffice. [Pinned position helper](https://github.com/Polymarket/py-sdk/blob/polymarket-client-v0.9.0/src/polymarket/_internal/actions/relayer/positions.py).
 
 Fixtures: this full vector, reversed metadata outcome ordering, pUSD-derived mismatch, denominator zero, fractional `[1,1]/2`, nonbinary slot count, changed finalized block hash, and successful resolution with an unresolved submit still blocking transition. The anonymous RPC evidence verifies this resolution path without a funded trial.
+
+Root additionally inspected pinned `AsyncSecureClient.post_order` and `AsyncTransport._request`:
+the path formats one payload, calls one HTTP request and parses the response. No automatic retry loop
+is present in this pinned path. HTTP transport failures become TransportError. The broker's own
+no-retry/UNKNOWN policy therefore need not disable a hidden SDK retry mechanism. Preserve that
+property with a transport-count fixture when testing timeout-after-acceptance. SDK transport logging
+can include an exception's text, so do not enable its request-failure logger on authenticated paths;
+the application reports sanitized error classes/reason codes instead.

@@ -6,7 +6,8 @@
 - Established feature branch/worktree, Python3.12 environment, pinned official SDK0.9.0 and uv lock.
 - Design independently reviewed; six execution and five strategy findings incorporated.
 - Anonymous boundary probe passed two comparisons, including exact second vs neighboring seconds.
-- Task1 complete and independently approved;122tests,lint/format/mypy pass. Task2 marketdata next; tasks3..4 pending. No real orders or account actions.
+- Task1 complete and independently approved;122tests,lint/format/mypy pass.
+- Task2 implemented at2e5cd84;50 adapter tests and172 combined tests pass, with two bounded anonymous feed/book smokes. Independent task review is running; tasks3..4 pending. No real orders or account actions.
 
 Decisions: default experimental value filter plus modified upstream momentum comparison; no fitted drift,
 no passive market-making, no micro-hedge. Exact captured TWAP60 opening anchors enabled on probe evidence; missing boundaries still skip.

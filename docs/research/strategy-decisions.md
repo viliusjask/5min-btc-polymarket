@@ -76,6 +76,14 @@ and fills that occur preferentially when the quote has become bad. A measured pr
 is not sufficient evidence of a profitable maker strategy. Do not make latency optimization or
 a language rewrite the first project.
 
+Our public probe also measured roughly two to three seconds between source timestamps and local
+receipt, including any clock offset. Fresh order-book prices may incorporate information that the
+underlying feed has not delivered yet. This can create an apparent valuation advantage that disappears
+when the newer information is included. A faster underlying feed, aligned and compared with Chainlink,
+is a useful next competitor if recorded fills indicate this problem. It must preserve the actual
+Chainlink settlement reference and measure the price difference between feeds; blindly substituting
+an exchange price would change the modeled contract. The first version keeps one verified source.
+
 Fitted momentum, reversal, heavy-tail models and order-flow features are sensible competitors
 only after a chronological dataset exists. A more complex model should improve later predictions
 and realized policy outcomes after costs, not merely fit the collected sample. Avoid optimizing

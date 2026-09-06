@@ -238,8 +238,12 @@ class MarketData:
         self._closed = True
         for task in self._tasks:
             task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
-        await asyncio.gather(self._client.close(), self._http.aclose())
+        results = await asyncio.gather(
+            self._client.close(), self._http.aclose(), *self._tasks, return_exceptions=True
+        )
+        for result in results[:2]:
+            if isinstance(result, BaseException):
+                raise result
 
     async def _consume(self, kind: Literal["spot", "twap60"]) -> None:
         spec = (

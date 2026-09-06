@@ -137,9 +137,12 @@ class Broker:
         self.last_preflight: PreflightEvidence | None = None
 
     async def close(self) -> None:
-        await self.client.close()
-        await self.rpc.close()
-        await self.http.aclose()
+        results = await asyncio.gather(
+            self.client.close(), self.rpc.close(), self.http.aclose(), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def _get(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
         try:

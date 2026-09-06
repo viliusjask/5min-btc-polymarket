@@ -162,7 +162,22 @@ adds paired-screen counts, confirmation events, calibration, final references an
 is not an actual charged fee, and an accepted order is not a confirmed fill.
 
 SIGINT, SIGTERM, `stop`, or the duration limit requests a protected unwind. The additional shutdown
-window is bounded; exit2 means failure or unfinished work requiring inspection, not liquidation.
+window (`--shutdown-seconds`) is one shared deadline for reconciliation, protected closes,
+task cancellation and transport cleanup, including when the account becomes flat early.
+At that deadline, pending asynchronous work is cancelled; the process drains cancellation,
+records its final summary and releases the wallet lock after execution has stopped. Cleanup
+uses the remaining budget, so a slow close can consume that budget and produce exit2 even
+when flat. Exit2 means failure or unfinished work requiring inspection, not liquidation.
+Cancellation during a submitted order preserves UNKNOWN state and its reservation.
+
+This bound assumes asynchronous operations promptly acknowledge cancellation. It allows event-loop
+scheduling and final local journal/report work; it is not a hard real-time guarantee. Code that
+suppresses cancellation, blocks the event loop, or stalls synchronous storage/output can delay
+termination. Ownership stays held until execution stops; a second worker must not bypass that lock.
+If shutdown remains stuck, terminate the existing process externally, confirm it has exited, then
+inspect `status`/`report` and run the explicit `reconcile` command below before considering a restart.
+An interrupted cleanup may leave transport resources for the operating system to reclaim on exit.
+
 If no fresh executable bid is available, partial depth/minimum size prevents closing, resolution
 is unverified, or a submission remains uncertain, inventory and reservations remain durable.
 The original close request persists across partial fills and restarts; subsequent prices can differ.

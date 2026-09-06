@@ -381,7 +381,11 @@ def test_account_doctor_can_read_owned_runtime_without_adopting_cash(tmp_path, m
     asyncio.run(run())
 
 
-def test_bounded_run_shutdown_retains_unknown_order_and_releases_owner(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cancel", [False, True])
+def test_bounded_run_shutdown_retains_unknown_order_and_releases_owner(
+    tmp_path, monkeypatch, cancel
+):
+    import httpx
     from test_market_data import Venue as PublicVenue
 
     from btc5m.engine import Engine
@@ -422,14 +426,39 @@ def test_bounded_run_shutdown_retains_unknown_order_and_releases_owner(tmp_path,
                 client, rpc, journal, config, clock=lambda: venue.now / 1000
             ),
         )
-        assert (
-            await cli.async_main(
+        reading = asyncio.Event()
+
+        async def send(client, request, **kwargs):
+            if cancel and request.url.path.startswith("/data/order/"):
+                reading.set()
+                await asyncio.Event().wait()
+            return await venue.send(client, request, **kwargs)
+
+        monkeypatch.setattr(httpx.AsyncClient, "send", send)
+        task = asyncio.create_task(
+            cli.async_main(
                 cli.parse_args(
-                    ["run", "--execute", "--duration", ".01", "--shutdown-seconds", ".01"]
+                    [
+                        "run",
+                        "--execute",
+                        "--duration",
+                        "30" if cancel else ".01",
+                        "--shutdown-seconds",
+                        ".01",
+                    ]
                 )
             )
-            == 2
         )
+        try:
+            if cancel:
+                await asyncio.wait_for(reading.wait(), 2)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 0.5)
+            else:
+                assert await task == 2
+        finally:
+            await cli._cancel(task)
         reopened = Ledger(path, WALLET)
         assert reopened.stop_requested()
         assert reopened.unresolved_orders()[0].state == "UNKNOWN"
@@ -696,5 +725,373 @@ def test_public_pair_and_calibration_record_before_blocked_account_finishes(tmp_
                 await account_task
         await broker.close()
         ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("conflict", ["anchor", "rule"])
+@pytest.mark.parametrize("phase", ["account", "prepare"])
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("historical", [False, True])
+def test_official_conflict_invalidates_current_entry_during_io(
+    tmp_path, monkeypatch, conflict, phase, overwrite, historical
+):
+    from datetime import UTC, datetime
+
+    from test_market_data import Venue as PublicVenue
+
+    from btc5m.engine import Engine
+    from btc5m.market_data import MarketData, _Round
+
+    async def run():
+        venue = Venue()
+        venue.post_loss = True
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        public = PublicVenue()
+        cell = cli.LatestInput(
+            ledger, Config(), clock=lambda: venue.now / 1000, emit=lambda row: None
+        )
+        snap = confirmation_snapshot()
+        cell.publish(snap, 0)
+        engine = Engine(broker, ledger, Config(), session, read_snapshot=cell.read)
+        assert (await engine.step(None, None, venue.now)).reason == "ENTRY_CONFIRMATION_WAITING"
+        venue.now += 1000
+        snap = confirmation_snapshot(venue.now)
+        cell.publish(snap, 0)
+        start = snap.market.start_s - (300 if historical else 0)
+        state = _Round(
+            f"btc-updown-5m-{start}",
+            start,
+            snap.market.condition_id,
+            official=snap.market.reference_price,
+        )
+        event = public.event
+        event.update(
+            slug=state.slug,
+            startTime=datetime.fromtimestamp(start, UTC).isoformat(),
+            endDate=datetime.fromtimestamp(start + 300, UTC).isoformat(),
+            eventMetadata={"priceToBeat": str(state.official + 1)},
+        )
+        event["markets"][0]["conditionId"] = state.condition_id
+        if conflict == "rule":
+            event["description"] = "Conflicting official rule"
+        public.events[state.slug] = event
+        data = MarketData(
+            Config(),
+            client=public.client,
+            http_client=public.http,
+            clock=lambda: venue.now / 1000,
+            monotonic=public.clock.mono,
+            observer=cell.observe,
+        )
+        data._rounds[state.slug] = state
+        blocked, release = asyncio.Event(), asyncio.Event()
+        original = getattr(broker, "preflight" if phase == "account" else "prepare")
+
+        async def delayed(*args):
+            result = await original(*args)
+            blocked.set()
+            await release.wait()
+            return result
+
+        monkeypatch.setattr(broker, "preflight" if phase == "account" else "prepare", delayed)
+        task = asyncio.create_task(engine.step(None, None, venue.now))
+        try:
+            await asyncio.wait_for(blocked.wait(), 2)
+            await data._poll_due()  # Actual SDK model -> producer -> cache observation.
+            assert state.conflict
+            invalidated = cell.read()
+            if overwrite:
+                cell.publish(snap, invalidated.invalidation_generation)
+            release.set()
+            result = await task
+            if historical:
+                assert invalidated.invalidation_generation == 0
+                assert result.action == "SUBMITTED" and venue.posts == 1
+            else:
+                assert invalidated.snapshot is None
+                assert invalidated.invalidation_generation == 1
+                assert venue.posts == 0 and not ledger.unresolved_orders()
+                if phase == "prepare":
+                    assert result.reason == "INPUT_INVALIDATED_BEFORE_POST"
+                    assert ledger.order(result.intent_id).state == "REJECTED"
+                else:
+                    rows = ledger.observations()
+                    assert any(
+                        r.get("status") == "cancelled" and r.get("code") == "INPUT_INVALIDATED"
+                        for r in rows
+                    )
+        finally:
+            release.set()
+            await cli._cancel(task)
+            await data.close()
+            await broker.close()
+            ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize(
+    "sequence,expected",
+    [
+        (["80000", "80001", "80000"], "conflict"),
+        (["80000", "80000", "80000.000000005"], "official"),
+    ],
+)
+def test_report_reduces_produced_final_reference_conflicts_retrospectively(
+    tmp_path, sequence, expected, restart
+):
+    from test_market_data import Venue as PublicVenue
+
+    from btc5m.market_data import MarketData, _Round
+
+    async def run():
+        ledger = Ledger(tmp_path / "labels.sqlite", cli.ANONYMOUS_WALLET)
+        public = PublicVenue()
+        data = MarketData(
+            Config(),
+            client=public.client,
+            http_client=public.http,
+            clock=lambda: 1788712200,
+            observer=ledger.record_observation,
+        )
+        state = _Round("btc-updown-5m-1788711600", 1788711600, public.market["condition_id"])
+        for index, price in enumerate(sequence):
+            if restart:
+                state = _Round(state.slug, state.start_s, state.condition_id)
+            data._metadata(state, {"finalPrice": price}, f"synthetic official metadata {index}")
+        # Reopening the historical journal exercises retrospective report reduction.
+        path = ledger.path
+        ledger.close()
+        reader = Ledger(path, cli.ANONYMOUS_WALLET, readonly=True)
+        try:
+            final = cli.report(reader)["official_final_references_by_round"][state.slug]
+            assert final["status"] == expected and final["price"] == "80000"
+        finally:
+            reader.close()
+            await data.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("first_conflict", [False, True])
+def test_report_final_reference_conflict_cannot_heal_across_producer_restart(
+    tmp_path, first_conflict
+):
+    from test_market_data import Venue as PublicVenue
+
+    from btc5m.market_data import MarketData, _Round
+
+    async def run():
+        ledger = Ledger(tmp_path / "labels.sqlite", cli.ANONYMOUS_WALLET)
+        public = PublicVenue()
+        data = MarketData(
+            Config(),
+            client=public.client,
+            http_client=public.http,
+            clock=lambda: 1788712200,
+            observer=ledger.record_observation,
+        )
+        state = _Round("btc-updown-5m-1788711600", 1788711600, public.market["condition_id"])
+        if first_conflict:
+            from decimal import Decimal
+
+            state.final = Decimal("80000")
+        else:
+            data._metadata(state, {"finalPrice": "80000"}, "synthetic initial metadata")
+        data._metadata(state, {"finalPrice": "80001"}, "synthetic conflict metadata")
+        # A restarted producer has no in-memory conflict, but the journal retains it.
+        restarted = _Round(state.slug, state.start_s, state.condition_id)
+        data._metadata(restarted, {"finalPrice": "80000"}, "synthetic later metadata")
+        try:
+            result = cli.report(ledger)["official_final_references_by_round"][state.slug]
+            assert result["status"] == "conflict"
+        finally:
+            await data.close()
+            ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("resource", ["public", "secure", "rpc", "stream"])
+def test_flat_run_bounds_delayed_transport_teardown(tmp_path, monkeypatch, resource):
+    from test_market_data import Venue as PublicVenue
+
+    from btc5m.ledger import LedgerError
+    from btc5m.market_data import MarketData
+
+    async def run():
+        venue = Venue()
+        broker, ledger, _ = await broker_fixture(tmp_path, monkeypatch, venue)
+        path = ledger.path
+        ledger.close()
+        public = PublicVenue()
+        data = MarketData(
+            Config(), client=public.client, http_client=public.http, clock=public.clock.wall
+        )
+        monkeypatch.setattr(cli, "runtime_path", lambda *args: path)
+        monkeypatch.setattr(
+            cli, "load_credentials", lambda *args: cli.Credentials(KEY, WALLET, CREDS)
+        )
+        monkeypatch.setattr(cli, "MarketData", lambda config, observer: data)
+
+        async def client(**kwargs):
+            return broker.client
+
+        def construct(client, rpc, journal, config):
+            broker.ledger = journal
+            return broker
+
+        monkeypatch.setattr(cli, "create_secure_client", client)
+        monkeypatch.setattr(cli, "Broker", construct)
+        closing, release, cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        target = {
+            "public": public.client,
+            "secure": broker.client,
+            "rpc": broker.rpc,
+            "stream": public.client.spot,
+        }[resource]
+        original_close = target.close
+
+        async def delayed_close():
+            closing.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            finally:
+                await original_close()
+
+        monkeypatch.setattr(target, "close", delayed_close)
+        emitted = []
+        monkeypatch.setattr(cli, "emit", emitted.append)
+        task = asyncio.create_task(
+            cli.run_live(
+                cli.parse_args(
+                    ["run", "--execute", "--duration", ".02", "--shutdown-seconds", ".35"]
+                ),
+                Config(),
+            )
+        )
+        try:
+            await asyncio.wait_for(closing.wait(), 2)
+            with pytest.raises(LedgerError, match="WALLET_LOCKED"):
+                Ledger(path, WALLET)
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            assert task in done, "transport teardown exceeded the shared shutdown budget"
+            assert await task == 2 and cancelled.is_set()
+            assert any(row["kind"] == "run_completed" for row in emitted)
+            reopened = Ledger(path, WALLET)
+            assert reopened.stop_requested() and not reopened.unresolved_orders()
+            assert any(row.get("code") == "SHUTDOWN_DEADLINE" for row in reopened.observations())
+            reopened.close()
+            assert all(stream.done() for stream in data._tasks)
+            assert broker.http.is_closed and broker.rpc.http.is_closed and public.http.is_closed
+            assert venue.posts == 0
+        finally:
+            release.set()
+            await cli._cancel(task)
+
+    asyncio.run(run())
+
+
+def test_cancelled_run_drains_inflight_post_before_releasing_owner(tmp_path, monkeypatch):
+    import httpx
+    from polymarket.models.clob.order_book import OrderBook
+    from test_market_data import Venue as PublicVenue
+
+    from btc5m.ledger import LedgerError
+    from btc5m.market_data import MarketData
+
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        held(ledger, session, venue)
+        venue.now = NOW + 100000
+        path = ledger.path
+        ledger.close()
+        public = PublicVenue()
+        posting, cancellation, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def send(client, request, **kwargs):
+            if request.method == "POST" and request.url.path == "/order":
+                venue.posts += 1
+                posting.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancellation.set()
+                    await release.wait()  # Deliberately hold cancellation acknowledgement.
+                    raise
+            return await venue.send(client, request, **kwargs)
+
+        monkeypatch.setattr(httpx.AsyncClient, "send", send)
+
+        async def book(*, token_id):
+            response = await venue.send(
+                None,
+                httpx.Request(
+                    "GET", "https://clob.polymarket.com/book", params={"token_id": token_id}
+                ),
+            )
+            return OrderBook.model_validate(response.json())
+
+        monkeypatch.setattr(public.client, "get_order_book", book)
+        data = MarketData(
+            Config(), client=public.client, http_client=public.http, clock=lambda: venue.now / 1000
+        )
+        monkeypatch.setattr(cli, "MarketData", lambda config, observer: data)
+        monkeypatch.setattr(cli, "runtime_path", lambda *args: path)
+        monkeypatch.setattr(
+            cli, "load_credentials", lambda *args: cli.Credentials(KEY, WALLET, CREDS)
+        )
+
+        async def client(**kwargs):
+            return broker.client
+
+        def construct(client, rpc, journal, config):
+            broker.ledger = journal
+            return broker
+
+        monkeypatch.setattr(cli, "create_secure_client", client)
+        monkeypatch.setattr(cli, "Broker", construct)
+        emitted = []
+        monkeypatch.setattr(cli, "emit", emitted.append)
+        task = asyncio.create_task(
+            cli.run_live(
+                cli.parse_args(
+                    ["run", "--execute", "--duration", "30", "--shutdown-seconds", ".2"]
+                ),
+                Config(),
+            )
+        )
+        try:
+            await asyncio.wait_for(posting.wait(), 2)
+            task.cancel()
+            await asyncio.wait_for(cancellation.wait(), 2)
+            with pytest.raises(LedgerError, match="WALLET_LOCKED"):
+                Ledger(path, WALLET)
+            reader = Ledger(path, WALLET, readonly=True)
+            assert reader.stop_requested()
+            reader.close()
+            task.cancel()  # A second caller cancellation cannot release the owner early.
+            await asyncio.sleep(0)
+            with pytest.raises(LedgerError, match="WALLET_LOCKED"):
+                Ledger(path, WALLET)
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 0.5)
+            reopened = Ledger(path, WALLET)
+            order = reopened.unresolved_orders()[0]
+            assert order.state == "UNKNOWN" and order.outstanding_quantity == 5
+            assert reopened.stop_requested() and reopened.open_position().quantity == 5
+            assert any(row["kind"] == "run_completed" for row in emitted)
+            assert venue.posts == 1
+            reopened.close()
+        finally:
+            release.set()
+            await cli._cancel(task)
 
     asyncio.run(run())

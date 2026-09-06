@@ -16,6 +16,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, replace
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ from btc5m.domain import Snapshot
 from btc5m.engine import Engine
 from btc5m.execution_types import SnapshotInput
 from btc5m.ledger import Ledger, LedgerError, normalize_wallet, runtime_path
-from btc5m.market_data import DataUnavailable, MarketData
+from btc5m.market_data import ANCHOR_TOLERANCE, DataUnavailable, MarketData
 from btc5m.rpc import ReadOnlyRPC, RPCError
 from btc5m.strategy import evaluate
 
@@ -168,7 +169,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 "--shutdown-seconds",
                 type=_seconds,
                 default=60,
-                help="maximum additional seconds for reconciliation and protected close",
+                help="shared shutdown budget for reconciliation, cancellation and transport close",
             )
         if name == "report":
             command.add_argument(
@@ -211,6 +212,20 @@ class LatestInput:
 
     def observe(self, record: dict[str, object]) -> None:
         self.ledger.record_observation(record)
+        snapshot = self._value.snapshot
+        if (
+            snapshot is not None
+            and record.get("slug") == snapshot.market.slug
+            and (
+                (record.get("kind") == "anchor" and record.get("status") == "conflict")
+                or (
+                    record.get("kind") == "metadata_unavailable"
+                    and record.get("code") == "UNSUPPORTED_RULE"
+                )
+            )
+        ):
+            # Official conflicts arrive before the producer's next awaited snapshot.
+            self.invalidate(str(record.get("code", "ANCHOR_CONFLICT")))
         if record.get("kind") in ("stream_unavailable", "price_conflict") and record.get(
             "stream"
         ) in ("spot", "twap60"):
@@ -337,10 +352,26 @@ def report(ledger: Ledger, *, records: bool = False) -> dict[str, Any]:
     for row in observations:
         if row.get("kind") == "final_reference":
             slug = str(row.get("slug"))
-            if slug in final and final[slug].get("price") != row.get("price"):
-                final[slug] = {"slug": slug, "status": "conflict"}
-            elif slug not in final:
+            prior = final.get(slug)
+            if prior is None:
                 final[slug] = row
+            elif prior.get("status") != "conflict":
+                try:
+                    first, current = (
+                        Decimal(str(prior.get("price"))),
+                        Decimal(str(row.get("price"))),
+                    )
+                    changed = (
+                        not first.is_finite()
+                        or not current.is_finite()
+                        or abs(first - current) > ANCHOR_TOLERANCE
+                    )
+                except InvalidOperation:
+                    changed = True
+                if row.get("status") == "conflict" or changed:
+                    # The producer retains its original numeric value on conflict.
+                    evidence = row if row.get("status") == "conflict" else prior
+                    final[slug] = {**evidence, "status": "conflict"}
     result = {
         "summary": summary,
         "screen_unit": "raw core screen; repeated snapshots are not independent trades",
@@ -371,6 +402,20 @@ async def _cancel(task: asyncio.Task[Any]) -> None:
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError, Exception):
         await task
+
+
+async def _finish_before(tasks: list[asyncio.Task[Any]], deadline: float) -> tuple[list[Any], bool]:
+    """Spend only the remaining budget, then require cancellation acknowledgement."""
+    if not tasks:
+        return [], False
+    _, pending = await asyncio.wait(
+        tasks, timeout=max(0, deadline - asyncio.get_running_loop().time())
+    )
+    for task in pending:
+        task.cancel()
+    # Do not detach a task that may still execute orders. Cancellation-suppressing
+    # code can delay this drain and therefore retains ownership (see README).
+    return list(await asyncio.gather(*tasks, return_exceptions=True)), bool(pending)
 
 
 async def observe(args: argparse.Namespace, config: Config, *, doctor: bool = False) -> int:
@@ -506,24 +551,37 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, signal_stop.set)
-    deadline = time.monotonic() + args.duration
+    deadline = loop.time() + args.duration
+    shutdown_deadline: float | None = None
+    deadline_recorded = False
+
+    def begin_shutdown() -> float:
+        nonlocal shutdown_deadline
+        if shutdown_deadline is None:
+            ledger.request_stop()
+            cell.invalidate("STOP_REQUESTED")
+            _record(ledger, "SHUTDOWN_REQUESTED")
+            shutdown_deadline = min(loop.time(), deadline) + args.shutdown_seconds
+        return shutdown_deadline
+
+    def note_deadline() -> None:
+        nonlocal deadline_recorded
+        if not deadline_recorded:
+            _record(ledger, "SHUTDOWN_DEADLINE")
+            deadline_recorded = True
 
     async def control() -> None:
-        shutdown_deadline = None
         while True:
             ledger.record_clock(int(time.time() * 1000))
             cell.read()  # catches silent aging even while account I/O is in progress
             if shutdown_deadline is None and (
-                signal_stop.is_set() or ledger.stop_requested() or time.monotonic() >= deadline
+                signal_stop.is_set() or ledger.stop_requested() or loop.time() >= deadline
             ):
-                ledger.request_stop()
-                cell.invalidate("STOP_REQUESTED")
-                _record(ledger, "SHUTDOWN_REQUESTED")
-                shutdown_deadline = time.monotonic() + args.shutdown_seconds
-            if shutdown_deadline is not None and time.monotonic() >= shutdown_deadline:
-                _record(ledger, "SHUTDOWN_DEADLINE")
+                begin_shutdown()
+            if shutdown_deadline is not None and loop.time() >= shutdown_deadline:
+                note_deadline()
                 return
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(min(0.25, max(0, (shutdown_deadline or deadline) - loop.time())))
 
     async def execute() -> int:
         nonlocal broker
@@ -579,6 +637,37 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
             await asyncio.sleep(0.25)
 
     tasks: list[asyncio.Task[Any]] = []
+    code = 2
+
+    async def cleanup() -> None:
+        nonlocal code
+        limit = begin_shutdown()
+        for task in tasks:
+            task.cancel()
+        _, expired = await _finish_before(tasks, limit)
+        if expired:
+            note_deadline()
+            code = 2
+        # Execution is conclusively stopped before transports or ownership close.
+        closing = [asyncio.create_task(data.close()), asyncio.create_task(rpc.close())]
+        if broker is not None:
+            closing.append(asyncio.create_task(broker.close()))
+        results, expired = await _finish_before(closing, limit)
+        if expired:
+            note_deadline()
+            code = 2
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                _record(ledger, safe_reason(result))
+                code = 2
+        try:
+            _record(ledger, "RUN_COMPLETED" if code == 0 else "RUN_UNRESOLVED")
+            emit({"kind": "run_completed", "summary": asdict(ledger.summary())})
+        finally:
+            ledger.close()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
+
     try:
         _record(ledger, "RUN_STARTED")
         emit(
@@ -590,40 +679,38 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
                 "max_entries_per_day": config.risk.max_entries_per_day,
             }
         )
-        async with data:
-            polling = asyncio.create_task(poll_snapshots(data, cell))
-            controller = asyncio.create_task(control())
-            worker = asyncio.create_task(execute())
-            tasks = [polling, controller, worker]
-            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            if polling in done:
-                await polling
-                raise CLIError("OBSERVATION_WORKER_STOPPED")
-            if worker in done:
-                code = await worker
-            else:
-                code = 2
-            for task in tasks:
-                await _cancel(task)
-            tasks = []
-        _record(ledger, "RUN_COMPLETED" if code == 0 else "RUN_UNRESOLVED")
-        emit({"kind": "run_completed", "summary": asdict(ledger.summary())})
-        return code
+        await data.__aenter__()
+        polling = asyncio.create_task(poll_snapshots(data, cell))
+        controller = asyncio.create_task(control())
+        worker = asyncio.create_task(execute())
+        tasks = [polling, controller, worker]
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        if polling in done:
+            await polling
+            raise CLIError("OBSERVATION_WORKER_STOPPED")
+        if worker in done:
+            code = await worker
+    except asyncio.CancelledError:
+        begin_shutdown()
+        _record(ledger, "RUN_CANCELLED")
+        raise
     except Exception as exc:
         ledger.request_stop()
         _record(ledger, safe_reason(exc))
         raise
     finally:
-        async with contextlib.AsyncExitStack() as cleanup:
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                cleanup.callback(loop.remove_signal_handler, sig)
-            cleanup.callback(ledger.close)
-            cleanup.push_async_callback(rpc.close)
-            if broker is not None:
-                cleanup.push_async_callback(broker.close)
-            cleanup.push_async_callback(data.close)
-            for task in tasks:
-                cleanup.push_async_callback(_cancel, task)
+        finalizing = asyncio.create_task(cleanup())
+        cancelled = False
+        while not finalizing.done():
+            try:
+                await asyncio.shield(finalizing)
+            except asyncio.CancelledError:
+                # Repeated caller cancellation must not release a live worker's lock.
+                cancelled = True
+        await finalizing
+        if cancelled:
+            raise asyncio.CancelledError
+    return code
 
 
 async def async_main(args: argparse.Namespace) -> int:

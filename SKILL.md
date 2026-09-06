@@ -27,7 +27,10 @@ live runtime to bypass an owner lock, stop, loss budget, unknown order, or exist
 
 A raw eligible screen, a pending confirmation, a submitted order, and a receipt-confirmed fill
 are different states. Report actual fees/cash/PnL separately from estimated exit quotes, remaining
-risk, unknown submissions, and claimable noncash inventory. A bounded shutdown can end unresolved;
+risk, unknown submissions, and claimable noncash inventory. Shutdown shares one deadline across
+reconciliation, cancellation and transport cleanup, and can end unresolved. The bound assumes
+prompt cancellation acknowledgement; execution must stop before the owner lock is released.
+Follow README recovery instructions if blocked code prevents termination;
 never call it flat without the ledger evidence. An uncertain order is not automatically replayed.
 Use the same wallet's official manual claim route and preserve unresolved journal evidence.
 

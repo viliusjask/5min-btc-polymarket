@@ -13,6 +13,7 @@ from btc5m.domain import Book, Decision, Market, Side, Snapshot
 from btc5m.execution_types import (
     EngineResult,
     Intent,
+    OrderAck,
     PendingCandidate,
     PreflightEvidence,
     SnapshotInput,
@@ -300,7 +301,14 @@ class Engine:
                 return EngineResult("SKIP", reason, intent.intent_id)
         # No network submission before both SQLite commits have succeeded.
         self.ledger.mark_submitting(intent.intent_id)
-        ack = await self.broker.post(prepared)
+        try:
+            ack = await self.broker.post(prepared)
+        except asyncio.CancelledError:
+            self.ledger.record_ack(
+                intent.intent_id,
+                OrderAck("unknown", prepared.order_hash, reason="POST_CANCELLED_UNKNOWN"),
+            )
+            raise
         self.ledger.record_ack(intent.intent_id, ack)
         return EngineResult(
             "REJECTED" if ack.classification == "rejected" else "SUBMITTED",

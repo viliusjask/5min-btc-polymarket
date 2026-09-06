@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import replace
 from decimal import Decimal as D
+from typing import Any
 
 import httpx
 import pytest
@@ -37,7 +38,7 @@ TOPIC = "0xd543adfd945773f1a62f74f0ee55a5e3b9b1a28262980ba90b1a89f2ea84d8ee"
 
 
 def signed(**changes):
-    data = dict(
+    data: dict[str, Any] = dict(
         builder="0x" + "00" * 32,
         expiration=0,
         maker=WALLET,
@@ -115,6 +116,7 @@ class RPCFixture:
     def __call__(self, request):
         body = json.loads(request.content)
         method, params = body["method"], body["params"]
+        result: Any
         self.calls.append((method, params))
         if method == "eth_chainId":
             result = self.chain

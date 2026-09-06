@@ -83,6 +83,7 @@ def test_receipt_cash_basis_and_deduplication_survive_restart(tmp_path):
     ledger.apply_evidence(buy.intent_id, bought)
     ledger.apply_evidence(buy.intent_id, bought)
     position = ledger.open_position()
+    assert position is not None
     assert position.quantity == D("5")
     assert position.cost_basis == D("3.5735")
     assert position.gross_entry_price == D(".70")
@@ -102,8 +103,10 @@ def test_receipt_cash_basis_and_deduplication_survive_restart(tmp_path):
     ledger = Ledger(tmp_path / "ledger.sqlite", WALLET)
     assert ledger.start_or_resume_session(Config()) == session
     ledger.apply_evidence(sell.intent_id, sold)
-    assert ledger.open_position().quantity == D("3")
-    assert ledger.open_position().cost_basis == D("2.1441")
+    remaining = ledger.open_position()
+    assert remaining is not None
+    assert remaining.quantity == D("3")
+    assert remaining.cost_basis == D("2.1441")
     summary = ledger.summary(NOW)
     assert summary.realized_net_pnl == D(".1482")
     assert summary.cash_movement == D("-1.9959")
@@ -222,6 +225,7 @@ def test_midnight_carried_inventory_and_daily_loss_are_not_reset(tmp_path):
         NOW,
     )
     ledger.apply_resolution(market, res, NOW)
+    ledger.apply_resolution(market, res, NOW)
     with pytest.raises(LedgerError, match="LOSS_LIMIT"):
         reserve(
             ledger,
@@ -266,7 +270,20 @@ def test_resolved_dust_remains_owned_and_claimable_is_not_cash(tmp_path):
     assert ledger.summary(NOW).claimable_value == 5
     assert ledger.summary(NOW).cash == D("96.4265")
     assert ledger.summary(NOW).realized_net_pnl == 0
-    ledger.observe_account(D("97.4265"), {"up": D(5)}, (), now_ms=NOW)
+    next_market = replace(
+        market,
+        slug=market.slug + "next",
+        condition_id="next-condition",
+        up_token="next-up",
+        down_token="next-down",
+        start_s=market.start_s + 300,
+        end_s=market.end_s + 300,
+    )
+    next_intent = reserve(
+        ledger, session, market=next_market, dec=replace(decision(), slug=next_market.slug)
+    )
+    assert next_intent.remaining_reserve == D("3.75")
+    ledger.observe_account(D("97.4265"), {"up": D(5), "next-up": D(0)}, (), now_ms=NOW)
     assert "CASH_DISCREPANCY" in ledger.summary(NOW).halts
     ledger.close()
 
@@ -345,3 +362,198 @@ def test_common_root_runtime_identity_matches_worktrees(tmp_path):
     assert runtime_path(tmp_path / "repo", WALLET) == runtime_path(
         tmp_path / "tree", WALLET.upper()
     )
+
+
+def test_transient_reconciliation_error_clears_after_complete_evidence(tmp_path):
+    ledger, session = opened(tmp_path)
+    buy = submitted(ledger, session)
+    ledger.apply_evidence(
+        buy.intent_id, evidence(terminal=False, discrepancies=("ACCOUNT_READ_FAILED",))
+    )
+    assert "ACCOUNT_READ_FAILED" in ledger.summary(NOW).halts
+    ledger.apply_evidence(
+        buy.intent_id, evidence([fill(buy)], cash=D("96.4265"), tokens={"up": D(5)})
+    )
+    assert "ACCOUNT_READ_FAILED" not in ledger.summary(NOW).halts
+    ledger.close()
+
+
+def test_provisional_balance_difference_cannot_become_profit_and_clears_when_explained(tmp_path):
+    ledger, session = opened(tmp_path)
+    buy = submitted(ledger, session)
+    ledger.apply_evidence(
+        buy.intent_id,
+        evidence(terminal=False, cash=D("96.4265"), tokens={"up": D(5)}, pending=("buy",)),
+    )
+    assert ledger.summary(NOW).cash == 100 and ledger.summary(NOW).realized_net_pnl == 0
+    ledger.apply_evidence(
+        buy.intent_id, evidence([fill(buy)], cash=D("96.4265"), tokens={"up": D(5)})
+    )
+    assert not ledger.summary(NOW).halts
+    ledger.close()
+
+
+@pytest.mark.parametrize("boundary", ["RESERVED", "PREPARED", "SUBMITTING", "UNKNOWN", "ACK"])
+def test_sigkill_after_each_committed_boundary_retains_exact_risk(tmp_path, boundary):
+    import subprocess
+    import sys
+
+    script = """
+import os, signal, sys
+from pathlib import Path
+sys.path.insert(0, 'tests')
+from test_ledger import opened,reserve,prepared,HASH
+from btc5m.execution_types import OrderAck
+ledger,session=opened(Path(sys.argv[1]))
+intent=reserve(ledger,session)
+if sys.argv[2]!='RESERVED': ledger.prepare(intent.intent_id,prepared(intent))
+if sys.argv[2] in ('SUBMITTING','UNKNOWN','ACK'): ledger.mark_submitting(intent.intent_id)
+if sys.argv[2] in ('UNKNOWN','ACK'): ledger.record_ack(intent.intent_id,OrderAck('unknown' if sys.argv[2]=='UNKNOWN' else 'accepted',HASH))
+os.kill(os.getpid(),signal.SIGKILL)
+"""
+    killed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), boundary], capture_output=True, text=True
+    )
+    assert killed.returncode == -9, killed.stderr
+    ledger = Ledger(tmp_path / "ledger.sqlite", WALLET)
+    ledger.start_or_resume_session(Config())
+    summary = ledger.summary(NOW)
+    assert summary.risk_reserve == (
+        D("3.75") if boundary in ("SUBMITTING", "UNKNOWN", "ACK") else 0
+    )
+    assert summary.daily_entries == 1 and summary.cash == 100
+    ledger.close()
+
+
+def test_batch_fill_identity_error_rolls_back_every_cash_and_position_change(tmp_path):
+    ledger, session = opened(tmp_path)
+    buy = submitted(ledger, session)
+    with pytest.raises(LedgerError):
+        ledger.apply_evidence(
+            buy.intent_id, evidence([fill(buy), replace(fill(buy, log=1), chain_id=1)])
+        )
+    assert ledger.open_position() is None
+    assert ledger.summary(NOW).cash == 100 and ledger.summary(NOW).risk_reserve == D("3.75")
+    ledger.close()
+
+
+def test_daily_entry_count_and_cash_gate_are_independent_of_realized_profit(tmp_path):
+    config = replace(Config(), risk=replace(Config().risk, max_entries_per_day=1))
+    ledger = Ledger(tmp_path / "ledger.sqlite", WALLET)
+    session = ledger.start_or_resume_session(config)
+    ledger.observe_account(D(2), {}, (), now_ms=NOW)
+    with pytest.raises(LedgerError, match="INSUFFICIENT_CASH"):
+        reserve(ledger, session)
+    ledger.close()
+    ledger, session = opened(tmp_path / "second")
+    session = ledger.start_or_resume_session(config)
+    intent = reserve(ledger, session)
+    ledger.abandon(intent.intent_id, "SYNTHETIC_LOCAL_ABORT")
+    other = replace(intent.market, slug=intent.market.slug + "next")
+    with pytest.raises(LedgerError, match="DAILY_ENTRY_LIMIT"):
+        reserve(ledger, session, market=other, dec=replace(decision(), slug=other.slug))
+    ledger.close()
+
+
+def test_only_explicit_owner_start_clears_stop_and_later_stop_survives(tmp_path):
+    ledger, session = opened(tmp_path)
+    ledger.request_stop()
+    ledger.start_or_resume_session(Config())
+    assert ledger.stop_requested()
+    ledger.clear_stop_request()
+    assert not ledger.stop_requested()
+    Ledger.request_stop_at(ledger.path)
+    ledger.start_or_resume_session(Config())
+    assert ledger.stop_requested()
+    reader = Ledger(ledger.path, WALLET, readonly=True)
+    with pytest.raises(LedgerError):
+        reader.clear_stop_request()
+    reader.close()
+    ledger.close()
+
+
+def test_resolution_waits_for_explained_account_balances(tmp_path):
+    ledger, session = opened(tmp_path)
+    buy = submitted(ledger, session)
+    ledger.apply_evidence(
+        buy.intent_id, evidence([fill(buy)], cash=D("96.4265"), tokens={"up": D(5)})
+    )
+    ledger.observe_account(D("90"), {"up": D(5)}, (), now_ms=NOW)
+    resolution = ResolutionEvidence(
+        buy.market.condition_id,
+        137,
+        1,
+        "0x" + "ef" * 32,
+        1,
+        (1, 0),
+        (("up", D(1)), ("down", D(0))),
+        "CTF_FINALIZED",
+        NOW,
+    )
+    with pytest.raises(LedgerError, match="RESOLUTION_ACCOUNT_UNCERTAINTY"):
+        ledger.apply_resolution(buy.market, resolution, NOW)
+    assert ledger.open_position() is not None
+    ledger.close()
+
+
+def test_preparation_commits_the_domain_and_keeps_signed_payload_out_of_status(tmp_path):
+    import json
+    import sqlite3
+
+    ledger, session = opened(tmp_path)
+    intent = reserve(ledger, session)
+    ledger.prepare(intent.intent_id, prepared(intent))
+    external = sqlite3.connect(ledger.path)
+    record = json.loads(
+        external.execute("SELECT data FROM events WHERE kind='PREPARED'").fetchone()[0]
+    )
+    assert record["signing_domain"] == {
+        "name": "Polymarket CTF Exchange",
+        "version": "2",
+        "chain_id": 137,
+        "exchange": "0xE111180000d2663C0091e4f400237545B87B996B",
+    }
+    assert (
+        external.execute(
+            "SELECT signed_payload FROM intents WHERE id=?", (intent.intent_id,)
+        ).fetchone()[0]
+        == prepared(intent).signed_payload
+    )
+    assert "synthetic_signed" not in repr(ledger.summary(NOW))
+    external.close()
+    ledger.close()
+
+
+def test_exit_cannot_assign_realized_pnl_to_an_unknown_session(tmp_path):
+    ledger, session = opened(tmp_path)
+    buy = submitted(ledger, session)
+    ledger.apply_evidence(buy.intent_id, evidence([fill(buy)]))
+    with pytest.raises(LedgerError, match="SESSION_REQUIRED"):
+        ledger.reserve_exit(
+            ledger.open_position(), D(2), D(".8"), "TIME", "unrecognized-session", NOW
+        )
+    ledger.close()
+
+
+def test_readonly_decisions_exposes_paired_screens_without_private_execution_data(tmp_path):
+    from dataclasses import asdict
+
+    from test_strategy import make_snapshot
+
+    ledger, session = opened(tmp_path)
+    intent = ledger.reserve_entry(decision(), make_snapshot().market, session, NOW)
+    ledger.prepare(
+        intent.intent_id,
+        PreparedOrder(intent.intent_id, HASH, "REPLAYABLE_PRIVATE_PAYLOAD", D("3.75"), D(5)),
+    )
+    decisions = ledger.record_snapshot(make_snapshot(), Config())
+    reader = Ledger(ledger.path, WALLET, readonly=True)
+    rows = reader.decisions()
+    assert tuple(row["mode"] for row in rows) == ("value", "momentum")
+    assert tuple(row["decision"]["reason"] for row in rows) == tuple(d.reason for d in decisions)
+    assert all(row["config_fingerprint"] == Config().fingerprint for row in rows)
+    assert "REPLAYABLE_PRIVATE_PAYLOAD" not in str(rows)
+    assert "signed_payload" not in str(rows) and "signature" not in str(rows)
+    assert set(rows[0]["decision"]) == set(asdict(decisions[0]))
+    reader.close()
+    ledger.close()

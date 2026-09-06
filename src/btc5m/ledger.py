@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from btc5m.config import Config
-from btc5m.domain import Decision, Market, Side, require_decimal
+from btc5m.domain import Decision, Market, Side, Snapshot, require_decimal
 from btc5m.execution_types import (
     ConfirmedFill,
     Intent,
@@ -33,6 +33,7 @@ from btc5m.execution_types import (
     Position,
     PreparedOrder,
     ResolutionEvidence,
+    SigningDomain,
 )
 
 D = Decimal
@@ -105,7 +106,7 @@ def _intent(raw: str) -> Intent:
         "remaining_reserve",
     ):
         data[key] = D(data[key])
-    for key in ("trade_ids", "pending_fill_ids"):
+    for key in ("trade_ids", "pending_fill_ids", "discrepancies"):
         data[key] = tuple(data[key])
     return Intent(**data)
 
@@ -310,7 +311,15 @@ class Ledger:
             sum((p.cost_basis for p in inventory if p.status == "ACTIVE"), D(0)),
             sum((p.claimable_value for p in inventory), D(0)),
             orders,
-            tuple(json.loads(self._meta("halts") or "[]")),
+            tuple(
+                sorted(
+                    set(
+                        json.loads(self._meta("halts") or "[]")
+                        + json.loads(self._meta("account_halts") or "[]")
+                        + [code for order in orders for code in order.discrepancies]
+                    )
+                )
+            ),
             sum(
                 1
                 for row in self.db.execute(
@@ -333,8 +342,7 @@ class Ledger:
     ) -> None:
         self._write()
         with self.db:
-            for reason in discrepancies:
-                self._halt(reason)
+            reasons = list(discrepancies)
             if cash is not None:
                 require_decimal(cash, "cash")
                 if (
@@ -344,19 +352,56 @@ class Ledger:
                 ):
                     self._set("initial_cash", str(cash))
                 elif self.summary(now_ms).cash != cash:
-                    self._halt("CASH_DISCREPANCY")
+                    reasons.append("CASH_DISCREPANCY")
             else:
-                self._halt("MISSING_CASH_BALANCE")
+                reasons.append("MISSING_CASH_BALANCE")
             known = self.known_inventory()
             for token, balance in tokens.items():
                 require_decimal(balance, "token_balance")
                 if known.get(token, D(0)) != balance:
-                    self._halt("TOKEN_DISCREPANCY")
+                    reasons.append("TOKEN_DISCREPANCY")
             if known.keys() - tokens.keys():
-                self._halt("MISSING_TOKEN_BALANCE")
+                reasons.append("MISSING_TOKEN_BALANCE")
+            self._set("account_halts", _json(sorted(set(reasons))))
             self._event(
                 "ACCOUNT", now_ms, {"cash": cash, "tokens": tokens, "discrepancies": discrepancies}
             )
+
+    def check_entry(self, decision: Decision, market: Market, session_id: str, now_ms: int) -> None:
+        """Read-only risk check; reserve_entry repeats it under the atomic write lock."""
+        if self.config is None or self._meta("session") != session_id:
+            raise LedgerError("SESSION_REQUIRED")
+        summary = self.summary(now_ms)
+        if self.stop_requested() or summary.halts:
+            raise LedgerError("ENTRIES_HALTED")
+        if summary.unresolved_orders or self.open_position():
+            raise LedgerError("EXPOSURE_UNRESOLVED")
+        if (
+            decision.side is None
+            or decision.reason != "ENTRY"
+            or decision.slug != market.slug
+            or decision.price_limit is None
+            or decision.buy_principal <= 0
+        ):
+            raise LedgerError("INVALID_ENTRY")
+        reserve = decision.max_total_reserved
+        risk = self.config.risk
+        if reserve > risk.trade_budget_usd or reserve > risk.allocation_usd:
+            raise LedgerError("ALLOCATION_LIMIT")
+        if summary.cash is None or reserve > summary.cash - summary.risk_reserve:
+            raise LedgerError("INSUFFICIENT_CASH")
+        exposure = summary.position_risk + summary.risk_reserve + reserve
+        if (
+            max(D(0), -summary.daily_realized_net_pnl) + exposure > risk.daily_loss_usd
+            or max(D(0), -summary.session_realized_net_pnl) + exposure > risk.session_loss_usd
+        ):
+            raise LedgerError("LOSS_LIMIT")
+        if summary.daily_entries >= risk.max_entries_per_day:
+            raise LedgerError("DAILY_ENTRY_LIMIT")
+        if self.db.execute(
+            "SELECT 1 FROM intents WHERE opening_round=?", (market.slug,)
+        ).fetchone():
+            raise LedgerError("ROUND_ALREADY_ATTEMPTED")
 
     def reserve_entry(
         self, decision: Decision, market: Market, session_id: str, now_ms: int
@@ -366,33 +411,9 @@ class Ledger:
             raise LedgerError("SESSION_REQUIRED")
         with self.db:
             self.db.execute('UPDATE meta SET value=value WHERE key="wallet"')
-            summary = self.summary(now_ms)
-            if self.stop_requested() or summary.halts:
-                raise LedgerError("ENTRIES_HALTED")
-            if summary.unresolved_orders or self.open_position():
-                raise LedgerError("EXPOSURE_UNRESOLVED")
-            if (
-                decision.side is None
-                or decision.reason != "ENTRY"
-                or decision.slug != market.slug
-                or decision.price_limit is None
-                or decision.buy_principal <= 0
-            ):
-                raise LedgerError("INVALID_ENTRY")
+            self.check_entry(decision, market, session_id, now_ms)
+            assert decision.side is not None and decision.price_limit is not None
             reserve = decision.max_total_reserved
-            risk = self.config.risk
-            if reserve > risk.trade_budget_usd or reserve > risk.allocation_usd:
-                raise LedgerError("ALLOCATION_LIMIT")
-            if summary.cash is None or reserve > summary.cash - summary.risk_reserve:
-                raise LedgerError("INSUFFICIENT_CASH")
-            exposure = summary.position_risk + summary.risk_reserve + reserve
-            if (
-                max(D(0), -summary.daily_realized_net_pnl) + exposure > risk.daily_loss_usd
-                or max(D(0), -summary.session_realized_net_pnl) + exposure > risk.session_loss_usd
-            ):
-                raise LedgerError("LOSS_LIMIT")
-            if summary.daily_entries >= risk.max_entries_per_day:
-                raise LedgerError("DAILY_ENTRY_LIMIT")
             ident = uuid.uuid4().hex
             intent = Intent(
                 ident,
@@ -432,6 +453,8 @@ class Ledger:
         now_ms: int,
     ) -> Intent:
         self._write()
+        if self.config is None or self._meta("session") != session_id:
+            raise LedgerError("SESSION_REQUIRED")
         require_decimal(quantity, "quantity", positive=True)
         require_decimal(price_limit, "price_limit", positive=True)
         with self.db:
@@ -480,6 +503,7 @@ class Ledger:
                 or prepared.reserved_cash > order.reserved_cash
                 or prepared.reserved_quantity > order.quantity
                 or prepared.reserved_quantity <= 0
+                or prepared.signing_domain != SigningDomain()
             ):
                 raise LedgerError("INVALID_PREPARATION")
             self.db.execute(
@@ -498,7 +522,14 @@ class Ledger:
             self._event(
                 "PREPARED",
                 order.created_ms,
-                {"intent_id": intent_id, "order_hash": prepared.order_hash},
+                {
+                    "intent_id": intent_id,
+                    "order_hash": prepared.order_hash,
+                    "signing_domain": asdict(prepared.signing_domain),
+                    "market_metadata": asdict(prepared.market_metadata)
+                    if prepared.market_metadata
+                    else None,
+                },
             )
 
     def abandon(self, intent_id: str, reason: str) -> None:
@@ -543,7 +574,7 @@ class Ledger:
                 replace(
                     order,
                     state=cast(OrderState, state),
-                    reason=reason,
+                    submission_reason=reason,
                     trade_ids=tuple(sorted(set(order.trade_ids + ack.trade_ids))),
                     remaining_reserve=D(0) if state == "REJECTED" else order.remaining_reserve,
                     outstanding_quantity=D(0)
@@ -561,8 +592,6 @@ class Ledger:
                 raise LedgerError("UNPOSTED_FILL_EVIDENCE")
             for fill in evidence.fills:
                 order = self._apply_fill(order, fill)
-            for reason in evidence.discrepancies:
-                self._halt(reason)
             terminal = (
                 evidence.terminal and not evidence.pending_fill_ids and not evidence.discrepancies
             )
@@ -572,6 +601,7 @@ class Ledger:
                     order,
                     state=cast(OrderState, state),
                     pending_fill_ids=evidence.pending_fill_ids,
+                    discrepancies=evidence.discrepancies,
                     remaining_reserve=D(0) if terminal else order.remaining_reserve,
                     outstanding_quantity=D(0)
                     if terminal
@@ -687,6 +717,8 @@ class Ledger:
         with self.db:
             if any(o.market.condition_id == market.condition_id for o in self.unresolved_orders()):
                 raise LedgerError("RESOLUTION_ORDER_UNCERTAINTY")
+            if json.loads(self._meta("account_halts") or "[]"):
+                raise LedgerError("RESOLUTION_ACCOUNT_UNCERTAINTY")
             payouts = dict(evidence.token_payouts)
             if (
                 evidence.chain_id != 137
@@ -741,3 +773,187 @@ class Ledger:
 
     def stop_requested(self) -> bool:
         return self._meta("stop") == "1"
+
+    def record_observation(self, record: dict[str, object]) -> None:
+        """Synchronous MarketData observer; only documented public fields persist."""
+        self._write()
+        allowed = {
+            "kind",
+            "received_ms",
+            "received_utc",
+            "slug",
+            "stream",
+            "source_ms",
+            "price",
+            "source",
+            "status",
+            "captured_price",
+            "official_price",
+            "provenance",
+            "token_id",
+            "condition_id",
+            "tick_size",
+            "min_order_size",
+            "bids",
+            "asks",
+            "code",
+            "error_type",
+            "endpoint",
+            "stage",
+            "opening_status",
+            "final_status",
+            "reference_status",
+            "side",
+            "config_fingerprint",
+            "initial_spot_source_ms",
+            "original_book_source_ms",
+            "original_decision_ms",
+            "spot_source_ms",
+            "book_source_ms",
+            "book_minus_spot_ms",
+            "start_s",
+            "end_s",
+            "reference_price",
+            "reference_timestamp_ms",
+            "settlement_source",
+            "held_quantity",
+            "covered_quantity",
+            "full_depth",
+            "gross_price",
+            "gross_proceeds",
+            "estimated_sell_fee",
+            "estimated_net_proceeds",
+        }
+        safe = {key: value for key, value in record.items() if key in allowed}
+        kind = safe.get("kind")
+        stamp = safe.get("received_ms")
+        if not isinstance(kind, str) or type(stamp) is not int or len(_json(safe)) > 200000:
+            raise LedgerError("INVALID_PUBLIC_OBSERVATION")
+        with self.db:
+            self._event("PUBLIC_OBSERVATION", stamp, safe)
+            if kind == "discovery":
+                slug, source = safe.get("slug"), safe.get("source_ms")
+                if (
+                    isinstance(slug, str)
+                    and re.fullmatch(r"btc-updown-5m-[0-9]{10}", slug)
+                    and type(source) is int
+                    and int(slug.rsplit("-", 1)[1]) * 1000 == source
+                ):
+                    data = {
+                        "kind": "calibration",
+                        "slug": slug,
+                        "target_ms": source + 180000,
+                        "status": "pending",
+                        "config_fingerprint": self.config.fingerprint if self.config else None,
+                    }
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO measurements VALUES (?,?)",
+                        ("calibration:" + slug, _json(data)),
+                    )
+        self.record_clock(stamp)
+
+    def observations(self) -> tuple[dict[str, Any], ...]:
+        return tuple(
+            json.loads(row[0])
+            for row in self.db.execute(
+                "SELECT data FROM events WHERE kind='PUBLIC_OBSERVATION' ORDER BY id"
+            )
+        )
+
+    def measurements(self) -> tuple[dict[str, Any], ...]:
+        return tuple(
+            json.loads(row[0])
+            for row in self.db.execute("SELECT data FROM measurements ORDER BY rowid")
+        )
+
+    def decisions(self) -> tuple[dict[str, Any], ...]:
+        """Paired public strategy screens, with no private execution payloads."""
+        return tuple(
+            json.loads(row[0])
+            for row in self.db.execute("SELECT data FROM events WHERE kind='DECISION' ORDER BY id")
+        )
+
+    def record_clock(self, now_ms: int) -> None:
+        self._write()
+        with self.db:
+            for key, raw in self.db.execute("SELECT key,data FROM measurements").fetchall():
+                data = json.loads(raw)
+                if (
+                    data.get("kind") == "calibration"
+                    and data.get("status") == "pending"
+                    and now_ms > data["target_ms"] + 2000
+                ):
+                    data["status"] = "missing"
+                    data["missing_recorded_ms"] = now_ms
+                    self.db.execute(
+                        "UPDATE measurements SET data=? WHERE key=?", (_json(data), key)
+                    )
+
+    def record_snapshot(self, snapshot: Snapshot, config: Config) -> tuple[Decision, Decision]:
+        from btc5m.strategy import evaluate
+
+        self._write()
+        decisions = tuple(
+            evaluate(snapshot, replace(config, strategy=replace(config.strategy, mode=mode)))
+            for mode in ("value", "momentum")
+        )
+        with self.db:
+            market = snapshot.market
+            target = (market.end_s - 120) * 1000
+            key = "calibration:" + market.slug
+            pending = {
+                "kind": "calibration",
+                "slug": market.slug,
+                "target_ms": target,
+                "status": "pending",
+                "config_fingerprint": config.fingerprint,
+            }
+            self.db.execute(
+                "INSERT OR IGNORE INTO measurements VALUES (?,?)", (key, _json(pending))
+            )
+            for mode, decision in zip(("value", "momentum"), decisions, strict=True):
+                data = {
+                    "kind": "candidate",
+                    "slug": market.slug,
+                    "mode": mode,
+                    "now_ms": snapshot.now_ms,
+                    "decision": asdict(decision),
+                    "config_fingerprint": config.fingerprint,
+                }
+                self._event("DECISION", snapshot.now_ms, data)
+                if decision.reason == "ENTRY":
+                    data.update(
+                        market=asdict(market),
+                        spot=asdict(snapshot.spot),
+                        twap60=asdict(snapshot.twap60),
+                        up_book=asdict(snapshot.up_book),
+                        down_book=asdict(snapshot.down_book),
+                    )
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO measurements VALUES (?,?)",
+                        ("candidate:" + market.slug + ":" + mode, _json(data)),
+                    )
+            current = json.loads(
+                self.db.execute("SELECT data FROM measurements WHERE key=?", (key,)).fetchone()[0]
+            )
+            if current["status"] == "pending" and target <= snapshot.now_ms <= target + 2000:
+                current.update(
+                    status="observed",
+                    now_ms=snapshot.now_ms,
+                    spot=asdict(snapshot.spot),
+                    twap60=asdict(snapshot.twap60),
+                    market=asdict(market),
+                    decisions=[asdict(d) for d in decisions],
+                    up_book=asdict(snapshot.up_book),
+                    down_book=asdict(snapshot.down_book),
+                )
+                self.db.execute("UPDATE measurements SET data=? WHERE key=?", (_json(current), key))
+        self.record_clock(snapshot.now_ms)
+        return decisions[0], decisions[1]
+
+    def clear_stop_request(self) -> None:
+        """Only explicit run startup calls this once, before awaited account setup."""
+        self._write()
+        with self.db:
+            self._set("stop", "0")
+            self._event("STOP_CLEARED", int(time.time() * 1000), {})

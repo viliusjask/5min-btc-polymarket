@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import replace
 from decimal import Decimal as D
+from typing import Any
 
 import httpx
 import pytest
@@ -78,11 +79,12 @@ def trade(order_hash=HASH, *, ident="confirmed", status="CONFIRMED", size="5", t
 
 class Venue:
     def __init__(self):
+        self.now = NOW
         self.posts = 0
         self.post_loss = False
         self.ack_hash = HASH
         self.requests = []
-        self.trades = [[]]
+        self.trades: list[list[dict[str, Any]]] = [[]]
         self.order = None
         self.orders = []
         self.positions = []
@@ -90,6 +92,10 @@ class Venue:
         self.inventory = {}
         self.fee = ".07"
         self.book_min = "5"
+        self.book_tick = ".01"
+        self.current_tick = ".01"
+        self.bid = ".68"
+        self.ask = ".70"
         self.invalid_auth = False
         self.repeat_cursor = False
         self.full_positions = False
@@ -190,7 +196,7 @@ class Venue:
                 if page + 1 < len(self.trades) or self.repeat_cursor
                 else "LTE=",
             }
-            assert int(request.url.params["after"]) <= NOW // 1000 - 2
+            assert int(request.url.params["after"]) <= self.now // 1000 - 2
         elif path == "/positions":
             assert dict(request.url.params) == {
                 "user": WALLET,
@@ -216,7 +222,7 @@ class Venue:
         elif path.startswith("/clob-markets/"):
             data = {
                 "fd": {"r": self.fee, "e": 1, "to": True},
-                "mts": ".01",
+                "mts": self.current_tick,
                 "nr": False,
                 "t": [{"t": TOKEN}, {"t": TOKEN2}],
                 "c": CONDITION,
@@ -236,12 +242,12 @@ class Venue:
             data = {
                 "market": CONDITION,
                 "asset_id": request.url.params["token_id"],
-                "timestamp": str(NOW),
+                "timestamp": str(self.now),
                 "hash": "synthetic",
-                "bids": [{"price": ".68", "size": "100"}],
-                "asks": [{"price": ".70", "size": "100"}],
+                "bids": [{"price": self.bid, "size": "100"}],
+                "asks": [{"price": self.ask, "size": "100"}],
                 "min_order_size": self.book_min,
-                "tick_size": ".01",
+                "tick_size": self.book_tick,
                 "neg_risk": False,
             }
         else:
@@ -249,16 +255,22 @@ class Venue:
         return httpx.Response(200, json=data, request=request)
 
 
-async def broker_fixture(tmp_path, monkeypatch, venue):
+async def broker_fixture(tmp_path, monkeypatch, venue, *, config=None):
+    config = config or Config()
+
     async def send(client, request, **kwargs):
         return await venue.send(client, request, **kwargs)
 
     monkeypatch.setattr(httpx.AsyncClient, "send", send)
     client = await create_secure_client(private_key=KEY, wallet=WALLET, credentials=CREDS)
     ledger = Ledger(tmp_path / "ledger.sqlite", WALLET)
-    session = ledger.start_or_resume_session(Config())
+    session = ledger.start_or_resume_session(config)
     broker = Broker(
-        client, ReadOnlyRPC(clock=lambda: NOW / 1000), ledger, Config(), clock=lambda: NOW / 1000
+        client,
+        ReadOnlyRPC(clock=lambda: venue.now / 1000),
+        ledger,
+        config,
+        clock=lambda: venue.now / 1000,
     )
     preflight = await broker.preflight()
     assert preflight.entry_ready, (
@@ -495,6 +507,141 @@ def test_indexed_holdings_complete_multipage_and_zero_size_candidates(tmp_path, 
         assert len(result.token_balances) == 501
         offsets = [r.url.params["offset"] for r in venue.requests if r.url.path == "/positions"]
         assert offsets[-2:] == ["0", "500"]
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "entry_tick,book_tick,current_tick,bid,floor,allowed",
+    [
+        (".01", ".001", ".001", ".995", ".99", True),
+        (".01", ".01", ".001", ".995", ".99", True),
+        (".001", ".001", ".01", ".99", ".98", False),
+        (".01", ".005", ".0025", ".995", ".99", True),
+        (".01", ".01", ".005", ".995", ".99", True),
+        (".01", ".005", ".0025", ".994", ".99", False),
+        (".01", ".005", ".001", ".995", ".99", True),
+        (".01", ".0025", ".001", ".995", ".99", False),
+    ],
+)
+def test_sell_current_tick_refinement_is_precise_and_audited(
+    tmp_path, monkeypatch, entry_tick, book_tick, current_tick, bid, floor, allowed
+):
+    async def run():
+        from test_engine import held
+
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        pos = held(ledger, session, venue, minimum=".01")
+        # Historical tick is position context; venue source changes independently.
+        pos = replace(pos, market=replace(pos.market, tick_size=D(entry_tick)))
+        venue.book_tick = book_tick
+        venue.current_tick = current_tick
+        venue.bid = bid
+        intent = replace(
+            ledger.reserve_exit(
+                ledger.open_position(), D("3.257891"), D(floor), "TIME", session, NOW
+            ),
+            market=pos.market,
+        )
+        if allowed:
+            prepared = await broker.prepare(intent, intent.market)
+            raw = json.loads(prepared.signed_payload)
+            assert raw["maker_amount"] == 3250000 and raw["order_type"] == "FAK"
+            assert prepared.market_metadata.current_tick == D(current_tick)
+            assert prepared.market_metadata.book_tick == D(book_tick)
+            assert prepared.market_metadata.entry_tick == D(entry_tick)
+            assert D(raw["taker_amount"]) / D(raw["maker_amount"]) >= D(floor)
+        else:
+            with pytest.raises(BrokerError):
+                await broker.prepare(intent, intent.market)
+        assert venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_entry_tick_disagreement_remains_blocked(tmp_path, monkeypatch):
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        venue.current_tick = ".001"
+        intent = ledger.reserve_entry(decision(), market(), session, NOW)
+        with pytest.raises(BrokerError, match="METADATA_CHANGED"):
+            await broker.prepare(intent, intent.market)
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_preflight_wrong_chain_is_explicit_and_blocks_all_order_actions(tmp_path, monkeypatch):
+    async def run():
+        venue = Venue()
+        broker, ledger, _ = await broker_fixture(tmp_path, monkeypatch, venue)
+        venue.rpc.chain = "0x1"
+        result = await broker.preflight()
+        assert "WRONG_CHAIN" in result.discrepancies and result.chain_id is None
+        assert venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "bad", ["raw_minimum", "raw_token", "raw_tick", "book_token", "missing_accepting"]
+)
+def test_preparation_keeps_all_current_identity_and_minimum_guards(tmp_path, monkeypatch, bad):
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        original = venue.send
+
+        async def send(client, request, **kwargs):
+            result = await original(client, request, **kwargs)
+            if request.url.path.startswith("/clob-markets/"):
+                data = result.json()
+                if bad == "raw_minimum":
+                    data["mos"] = "6"
+                if bad == "raw_token":
+                    data["t"] = [{"t": "42"}, {"t": TOKEN2}]
+                if bad == "raw_tick":
+                    data["mts"] = ".001"
+                return httpx.Response(200, json=data, request=request)
+            if request.url.path == "/book" and bad == "book_token":
+                return httpx.Response(200, json=result.json() | {"asset_id": "42"}, request=request)
+            if request.url.path.startswith("/markets/") and bad == "missing_accepting":
+                data = result.json()
+                data.pop("accepting_orders")
+                return httpx.Response(200, json=data, request=request)
+            return result
+
+        monkeypatch.setattr(venue, "send", send)
+        intent = ledger.reserve_entry(decision(), market(), session, NOW)
+        with pytest.raises(BrokerError):
+            await broker.prepare(intent, intent.market)
+        assert venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_clock_reversal_before_post_rejects_newly_future_evidence(tmp_path, monkeypatch):
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        intent = ledger.reserve_entry(decision(), market(), session, NOW)
+        prepared = await broker.prepare(intent, intent.market)
+        ledger.prepare(intent.intent_id, prepared)
+        ledger.mark_submitting(intent.intent_id)
+        venue.now -= 10000
+        ack = await broker.post(prepared)
+        assert ack.classification == "rejected" and venue.posts == 0
         await broker.close()
         ledger.close()
 

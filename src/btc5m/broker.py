@@ -13,7 +13,7 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import asdict
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
 from importlib.metadata import version
 from typing import Any, cast
 
@@ -36,11 +36,12 @@ from btc5m.execution_types import (
     OrderAck,
     OrderEvidence,
     PreflightEvidence,
+    PreparationMarket,
     PreparedOrder,
     ResolutionEvidence,
 )
 from btc5m.ledger import Ledger, normalize_wallet
-from btc5m.rpc import EXCHANGE, SCALE, ReadOnlyRPC, canonical_order_hash
+from btc5m.rpc import EXCHANGE, SCALE, ReadOnlyRPC, RPCError, canonical_order_hash
 
 D = Decimal
 SIGNATURE_TYPES = {"EOA": 0, "POLY_PROXY": 1, "GNOSIS_SAFE": 2, "DEPOSIT_WALLET": 3}
@@ -257,7 +258,7 @@ class Broker:
                 for token, indexed_size in candidates.items():
                     if indexed_size != balances[token]:
                         discrepancies.append("INDEX_BALANCE_DISCREPANCY")
-        except BrokerError as exc:
+        except (BrokerError, RPCError) as exc:
             discrepancies.append(str(exc))
         except Exception:
             discrepancies.append("PREFLIGHT_READ_FAILED")
@@ -308,7 +309,7 @@ class Broker:
                         or flags.get("condition_id") != market.condition_id
                         or not isinstance(fee_wire, dict)
                         or not isinstance(fee_wire.get("fd"), dict)
-                        or set(fee_wire["fd"]) < {"r", "e"}
+                        or not {"r", "e"} <= set(fee_wire["fd"])
                         or fee_wire.get("ao") is not True
                     ):
                         raise BrokerError("MARKET_NOT_ACCEPTING")
@@ -316,9 +317,14 @@ class Broker:
                         fresh.neg_risk
                         or book.neg_risk
                         or fresh.token_ids != {market.up_token, market.down_token}
-                        or fresh.tick_size != market.tick_size
-                        or book.tick_size != market.tick_size
                         or book.min_order_size != market.min_order_size
+                        or D(str(fee_wire.get("mos"))) != market.min_order_size
+                        or D(str(fee_wire.get("mts"))) != fresh.tick_size
+                        or fee_wire.get("c") != market.condition_id
+                        or {row["t"] for row in fee_wire.get("t", [])}
+                        != {market.up_token, market.down_token}
+                        or {row["token_id"] for row in flags.get("tokens", [])}
+                        != {market.up_token, market.down_token}
                         or book.condition_id != market.condition_id
                         or book.asset_id != intent.token_id
                         or fresh.fee_info.rate != market.fee_rate
@@ -327,6 +333,7 @@ class Broker:
                         or D(str(fee_wire["fd"]["e"])) != market.fee_exponent
                     ):
                         raise BrokerError("METADATA_CHANGED")
+                    tick_metadata = self._tick_metadata(intent, market, book, fresh)
                     now = int(self.clock() * 1000)
                     if book.timestamp is None:
                         raise BrokerError("BOOK_TIMESTAMP_MISSING")
@@ -353,7 +360,7 @@ class Broker:
                             asset_id=intent.token_id,
                             side="SELL",
                             shares=quantity,
-                            min_price=intent.price_limit,
+                            min_price=tick_metadata.protected_price,
                             order_type="FAK",
                         )
                     self._validate_signed(intent, market, signed)
@@ -367,6 +374,7 @@ class Broker:
                         json.dumps(asdict(signed), separators=(",", ":")),
                         intent.reserved_cash if intent.side == "BUY" else D(0),
                         quantity,
+                        tick_metadata,
                     )
                     self._prepared[intent.intent_id] = (intent, book_ms)
                     return prepared
@@ -374,6 +382,47 @@ class Broker:
                 raise
             except Exception:
                 raise BrokerError("PREPARATION_FAILED") from None
+
+    def _tick_metadata(
+        self, intent: Intent, market: Market, book: Any, fresh: Any
+    ) -> PreparationMarket:
+        supported = {D(".1"), D(".01"), D(".005"), D(".0025"), D(".001"), D(".0001")}
+        current, quoted = fresh.tick_size, book.tick_size
+        if current not in supported or quoted not in supported:
+            raise BrokerError("UNSUPPORTED_CURRENT_TICK")
+        reason = "UNCHANGED"
+        if intent.side == "BUY":
+            if current != market.tick_size or quoted != market.tick_size:
+                raise BrokerError("METADATA_CHANGED")
+        elif current != quoted:
+            if current >= quoted or quoted % current != 0:
+                raise BrokerError("CURRENT_TICK_DISAGREEMENT")
+            reason = "COMPATIBLE_SDK_TICK_REFINEMENT"
+        elif current != market.tick_size:
+            reason = "CURRENT_TICKS_AGREE_ENTRY_TICK_HISTORICAL"
+        protected = (
+            (intent.price_limit / current).to_integral_value(rounding=ROUND_CEILING) * current
+            if intent.side == "SELL"
+            else intent.price_limit
+        )
+        if protected % current != 0 or not current <= protected <= 1 - current:
+            raise BrokerError("PROTECTED_PRICE_OFF_CURRENT_GRID")
+        if intent.side == "SELL":
+            remaining = intent.quantity
+            for level in sorted(book.bids, key=lambda level: level.price, reverse=True):
+                if remaining <= 0 or level.price < protected:
+                    break
+                if (
+                    level.price % current != 0
+                    or level.price <= 0
+                    or level.price >= 1
+                    or level.size <= 0
+                ):
+                    raise BrokerError("EXIT_DEPTH_OFF_CURRENT_GRID")
+                remaining -= min(remaining, level.size)
+            if remaining == intent.quantity:
+                raise BrokerError("NO_EXECUTABLE_BIDS")
+        return PreparationMarket(market.tick_size, quoted, current, reason, protected)
 
     def _validate_signed(self, intent: Intent, market: Market, signed: SignedOrder) -> None:
         expected_signer = (
@@ -424,8 +473,10 @@ class Broker:
         intent, book_ms = self._prepared[intent_id]
         now = int(self.clock() * 1000)
         if (
-            now - book_ms > self.config.data.max_book_age_ms
-            or now - intent.created_ms > self.config.data.max_price_age_ms
+            not -self.config.data.future_tolerance_ms
+            <= now - book_ms
+            <= self.config.data.max_book_age_ms
+            or not 0 <= now - intent.created_ms <= self.config.data.max_price_age_ms
         ):
             return OrderAck("rejected", prepared.order_hash, reason="STALE_BEFORE_POST")
         if intent.side == "BUY":
@@ -574,7 +625,7 @@ class Broker:
                 cash, _, _, balances = await self.rpc.balances(
                     order.wallet, set(self.ledger.known_inventory()) | {order.token_id}
                 )
-        except BrokerError as exc:
+        except (BrokerError, RPCError) as exc:
             discrepancies.append(str(exc))
         except Exception:
             discrepancies.append("RECONCILIATION_READ_FAILED")

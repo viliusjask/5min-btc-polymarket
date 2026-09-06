@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal
 
-from btc5m.domain import Decision, Market
+from btc5m.domain import Decision, Market, Side
 
 OrderState = Literal["RESERVED", "PREPARED", "SUBMITTING", "ACK", "UNKNOWN", "SETTLED", "REJECTED"]
 
@@ -36,6 +36,25 @@ class Intent:
     remaining_reserve: Decimal = Decimal(0)
     trade_ids: tuple[str, ...] = ()
     pending_fill_ids: tuple[str, ...] = ()
+    submission_reason: str = ""
+    discrepancies: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreparationMarket:
+    entry_tick: Decimal
+    book_tick: Decimal
+    current_tick: Decimal
+    reason: str
+    protected_price: Decimal
+
+
+@dataclass(frozen=True)
+class SigningDomain:
+    name: str = "Polymarket CTF Exchange"
+    version: str = "2"
+    chain_id: int = 137
+    exchange: str = "0xE111180000d2663C0091e4f400237545B87B996B"
 
 
 @dataclass(frozen=True)
@@ -45,6 +64,8 @@ class PreparedOrder:
     signed_payload: str = field(repr=False)
     reserved_cash: Decimal
     reserved_quantity: Decimal
+    market_metadata: PreparationMarket | None = None
+    signing_domain: SigningDomain = field(default_factory=SigningDomain)
 
 
 @dataclass(frozen=True)
@@ -131,6 +152,7 @@ class PreflightEvidence:
         "ORDINARY_CTF_POSITIONS_ONLY",
         "OWNER_SIGNERS_ONLY_SESSION_KEYS_UNSUPPORTED",
         "SELL_MINIMUM_SHARES_CONSERVATIVE_LIVE_UNVERIFIED",
+        "BUY_FEE_RESERVATION_IS_NOT_PROTOCOL_ALL_IN_CAP",
     )
 
     @property
@@ -171,3 +193,20 @@ class EngineResult:
     action: str
     reason: str
     intent_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PendingCandidate:
+    slug: str
+    side: Side
+    config_fingerprint: str
+    condition_id: str
+    token_id: str
+    start_s: int
+    end_s: int
+    reference_price: Decimal | None
+    reference_timestamp_ms: int | None
+    settlement_source: str
+    initial_spot_source_ms: int
+    original_book_source_ms: int
+    original_decision_ms: int

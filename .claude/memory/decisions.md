@@ -1,5 +1,18 @@
 # Decisions
 
+- 2026-09-07: User explicitly authorized strategies 3–6 and six-portfolio comparison, with a
+  single-agent coding workflow and no conductor/cross-model review/human development checkpoints.
+  This supersedes the earlier implementation deferral, not the scientific uncertainty about ROI.
+  Paper uses independent simulated ledgers; funded comparison preassigns one mode per round and
+  shares one real wallet budget. No funded orders were authorized during development.
+- 2026-09-07: User chose canonical checkout `.env`, kept ignored and explicitly passed by path;
+  do not copy/symlink credentials to worktrees. User authorized read-only account diagnosis after
+  provisioning. Builder keys differ from signer-derived CLOB trading keys; Gmail export-page
+  address is the signer, while the profile menu supplies the account/funder wallet.
+- 2026-09-07: Existing external positions remain a funded-entry blocker. Index-size rounding
+  below 0.0001 shares is tolerated only against exact onchain quantities; account ownership,
+  foreign inventory detection and journal accounting are not relaxed.
+
 - 2026-09-06: User authorized autonomous research, design and implementation of a standalone
   repair with feature worktrees, subagents and review. Small funded experiment is the intended
   next stage; no funded execution or wallet setup was requested for this development run.

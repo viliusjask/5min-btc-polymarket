@@ -131,6 +131,7 @@ class Snapshot:
     twap60: PricePoint
     history: tuple[PricePoint, ...]
     now_ms: int
+    exchange_history: tuple[PricePoint, ...] = ()
 
     def __post_init__(self) -> None:
         require_integer(self.now_ms, "now_ms")
@@ -140,6 +141,10 @@ class Snapshot:
             not isinstance(p, PricePoint) for p in self.history
         ):
             raise ValueError("history must be a tuple of PricePoints")
+        if not isinstance(self.exchange_history, tuple) or any(
+            not isinstance(p, PricePoint) or p.kind != "spot" for p in self.exchange_history
+        ):
+            raise ValueError("exchange_history must contain spot PricePoints")
 
 
 @dataclass(frozen=True)

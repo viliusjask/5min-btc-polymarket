@@ -356,6 +356,29 @@ def test_sdk_exact_principal_hash_and_lost_post_response_no_retry(tmp_path, monk
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("units, mismatch", [(500034, False), (500099, False), (500100, True)])
+def test_index_rounding_does_not_override_exact_chain_or_foreign_inventory(
+    tmp_path, monkeypatch, units, mismatch
+):
+    async def run():
+        venue = Venue()
+        broker, ledger, _ = await broker_fixture(tmp_path, monkeypatch, venue)
+        venue.positions = [
+            dict(conditionId=CONDITION, proxyWallet=WALLET, asset=TOKEN, size=".5000")
+        ]
+        venue.inventory = {TOKEN: units}
+        result = await broker.preflight()
+        assert ("INDEX_BALANCE_DISCREPANCY" in result.discrepancies) is mismatch
+        assert result.token_balances[TOKEN] == D(units) / 1000000
+        assert result.foreign_token_ids == (TOKEN,)
+        assert not result.entry_ready
+        assert venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
 def test_prepare_refreshes_sdk_cache_and_rejects_changed_fee(tmp_path, monkeypatch):
     async def run():
         venue = Venue()

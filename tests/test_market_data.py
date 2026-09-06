@@ -457,6 +457,37 @@ def test_delayed_final_metadata_survives_current_discovery_failure_and_is_not_in
     asyncio.run(scenario())
 
 
+def test_restored_history_keeps_timestamps_gaps_conflicts_and_requires_new_feed():
+    async def scenario():
+        venue = Venue()
+        data = venue.adapter()
+        now = venue.clock.ms
+        point = {
+            "kind": "spot",
+            "source": "prices.crypto.chainlink",
+            "source_ms": now - 1000,
+            "received_ms": now - 500,
+            "price": "80000",
+        }
+        count = data.restore_history(
+            [
+                point,
+                {**point, "source_ms": now - 10000},
+                {**point, "source_ms": now + 1},
+                {"kind": "price_conflict", "stream": "spot", "source_ms": now - 10000},
+            ]
+        )
+        assert count == 2
+        assert data._points["spot"][now - 1000].received_ms == now - 500
+        assert now - 10000 in data._conflicting_points["spot"]
+        assert now - 5000 not in data._points["spot"]
+        with pytest.raises(DataUnavailable, match="STREAM_SILENT"):
+            data._latest("spot", now)
+        await data.close()
+
+    asyncio.run(scenario())
+
+
 def test_unpublished_final_is_explicitly_missing_at_retirement() -> None:
     async def scenario() -> None:
         venue = Venue()
@@ -472,6 +503,34 @@ def test_unpublished_final_is_explicitly_missing_at_retirement() -> None:
                 for r in venue.records
             )
             assert not any(r["kind"] == "final_reference" for r in venue.records)
+
+    asyncio.run(scenario())
+
+
+def test_restarted_paper_holding_reloads_official_final_even_after_normal_retirement():
+    async def scenario():
+        first = Venue()
+        async with first.adapter() as data:
+            await first.emit()
+            market = (await data.snapshot()).market
+        resumed = Venue()
+        resumed.clock.ms += 7200000
+        resumed.clock.elapsed += 7200
+        resumed.events[market.slug]["eventMetadata"] = {
+            "priceToBeat": str(market.reference_price),
+            "finalPrice": "79700.12345678",
+        }
+        async with resumed.adapter() as data:
+            data.retain_markets((market,))
+            assert data.final_reference(market) is None
+            await data._poll_due()
+            assert data.final_reference(market) == (
+                market.reference_price,
+                Decimal("79700.12345678"),
+            )
+            data.retain_markets(())
+            data._retire_rounds()
+            assert market.slug not in data._rounds
 
     asyncio.run(scenario())
 

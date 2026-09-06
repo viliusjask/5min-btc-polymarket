@@ -11,6 +11,9 @@ from typing import Any, get_type_hints
 
 from btc5m.domain import require_decimal, require_integer
 
+STRATEGIES = ("momentum", "value", "fast_value", "model_exit", "passive_pairs", "inventory_pairs")
+PAIR_STRATEGIES = ("passive_pairs", "inventory_pairs")
+
 
 @dataclass(frozen=True)
 class StrategyConfig:
@@ -34,8 +37,8 @@ class StrategyConfig:
 
     def __post_init__(self) -> None:
         _validate_types(self)
-        if self.mode not in ("value", "momentum"):
-            raise ValueError("strategy.mode must be value or momentum")
+        if self.mode not in (*STRATEGIES, "compare"):
+            raise ValueError("unsupported strategy.mode")
         if not 60 <= self.entry_min_seconds <= self.entry_max_seconds <= 300:
             raise ValueError("entry timing must be ordered and outside the ending average")
         if (
@@ -131,11 +134,55 @@ class ExecutionConfig:
 
 
 @dataclass(frozen=True)
+class ExperimentConfig:
+    fast_max_age_ms: int = 1500
+    fast_alignment_ms: int = 1000
+    fast_max_move_bps: Decimal = Decimal("50")
+    model_exit_surplus: Decimal = Decimal(".01")
+    averaging_max_gap_ms: int = 2500
+    pair_shares: Decimal = Decimal("5")
+    pair_max_cost: Decimal = Decimal(".97")
+    pair_min_edge: Decimal = Decimal(".02")
+    pair_quote_seconds: int = 5
+    pair_max_unhedged_seconds: int = 30
+    pair_max_orders_per_round: int = 24
+    inventory_adjustment: Decimal = Decimal(".04")
+    paper_latency_ms: int = 250
+
+    def __post_init__(self) -> None:
+        _validate_types(self)
+        for name in (
+            "fast_max_age_ms",
+            "fast_alignment_ms",
+            "averaging_max_gap_ms",
+            "paper_latency_ms",
+        ):
+            if not 1 <= getattr(self, name) <= 5000:
+                raise ValueError(f"{name} must be between one and 5000 milliseconds")
+        if not 0 < self.fast_max_move_bps <= 100:
+            raise ValueError("fast move guard must be between zero and 100 basis points")
+        if not 0 < self.pair_max_cost < 1 or self.pair_shares <= 0:
+            raise ValueError("invalid pair size or all-in cost")
+        if any(
+            not 0 < x < 1
+            for x in (self.pair_min_edge, self.model_exit_surplus, self.inventory_adjustment)
+        ):
+            raise ValueError("invalid experiment price allowances")
+        if not 1 <= self.pair_quote_seconds <= 30:
+            raise ValueError("pair quote lifetime must be one to 30 seconds")
+        if not self.pair_quote_seconds <= self.pair_max_unhedged_seconds <= 120:
+            raise ValueError("invalid unmatched inventory lifetime")
+        if not 2 <= self.pair_max_orders_per_round <= 100:
+            raise ValueError("pair order cap must be two to 100")
+
+
+@dataclass(frozen=True)
 class Config:
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     data: DataConfig = field(default_factory=DataConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+    experiments: ExperimentConfig = field(default_factory=ExperimentConfig)
 
     def __post_init__(self) -> None:
         _validate_types(self)
@@ -197,3 +244,12 @@ def load_config(path: Path) -> Config:
     with path.open("rb") as handle:
         raw = tomllib.load(handle, parse_float=Decimal)
     return _section(Config, raw, "config")
+
+
+def strategy_for_round(config: Config, start_s: int) -> str:
+    """Preassigned UTC rounds prevent selecting a live variant after seeing its signal."""
+    return (
+        STRATEGIES[(start_s // 300) % len(STRATEGIES)]
+        if config.strategy.mode == "compare"
+        else config.strategy.mode
+    )

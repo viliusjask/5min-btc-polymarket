@@ -19,8 +19,8 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from types import TracebackType
@@ -37,6 +37,7 @@ from polymarket.streams import CryptoPricesChainlinkTwapSpec, CryptoPricesSpec
 
 from btc5m.config import Config
 from btc5m.domain import Book, Level, Market, PricePoint, Snapshot
+from btc5m.streams import PublicStreams
 
 SOURCE = "https://data.chain.link/streams/btc-usd-twap-60s-streams"
 GAMMA = "https://gamma-api.polymarket.com"
@@ -178,6 +179,7 @@ class MarketData:
         clock: Callable[[], float] = time.time,
         monotonic: Callable[[], float] = time.monotonic,
         observer: Callable[[dict[str, object]], None] | None = None,
+        enhanced: bool = False,
     ) -> None:
         self.config = config
         self._client = client if client is not None else AsyncPublicClient()
@@ -190,12 +192,153 @@ class MarketData:
         self._stream_error: dict[str, str] = {}
         self._conflicting_points: dict[str, set[int]] = {"spot": set(), "twap60": set()}
         self._rounds: dict[str, _Round] = {}
+        self._retained_rounds: set[str] = set()
         self._tasks: list[asyncio.Task[None]] = []
         self._closed = False
         self._observer_failed = False
         self._snapshot_lock = asyncio.Lock()
         self._history_ms = (config.strategy.volatility_long_seconds + 60) * 1000
         self._max_points = (config.strategy.volatility_long_seconds + 60) * 2 + 100
+        self.streams = (
+            PublicStreams(config, clock=clock, observer=self._stream_observation)
+            if enhanced
+            else None
+        )
+        self._cached_snapshot: Snapshot | None = None
+        self._cached_at = float("-inf")
+        self._logged_stream_books: dict[str, Book] = {}
+
+    def _stream_observation(self, record: dict[str, object]) -> None:
+        if record.get("kind") == "stream_unavailable" and record.get("stream") == "books":
+            self._cached_at = float("-inf")
+        self._emit(str(record["kind"]), **{k: v for k, v in record.items() if k != "kind"})
+
+    def current_snapshot(self) -> Snapshot | None:
+        """Fresh model input independent of whether a new entry is currently eligible."""
+        cached, now = self._cached_snapshot, self._now()
+        if cached is None or self._mono() - self._cached_at > HTTP_TIMEOUT or self._observer_failed:
+            return None
+        if now // 300000 != cached.market.start_s // 300:
+            return None
+        state = self._rounds.get(cached.market.slug)
+        if state is None or state.conflict:
+            return None
+        try:
+            spot, twap = self._latest("spot", now), self._latest("twap60", now)
+            books = []
+            for prior in (cached.up_book, cached.down_book):
+                if self.streams and prior.token_id in self.streams.pending_books:
+                    return None
+                current = self.streams.books.get(prior.token_id, prior) if self.streams else prior
+                self._fresh(
+                    current.timestamp_ms, current.received_ms, now, self.config.data.max_book_age_ms
+                )
+                if any(
+                    level.price % cached.market.tick_size
+                    for level in (*current.bids, *current.asks)
+                ):
+                    return None
+                books.append(current)
+                if self.streams and self._logged_stream_books.get(current.token_id) != current:
+                    self._emit(
+                        "book",
+                        source="polymarket:market-websocket",
+                        token_id=current.token_id,
+                        condition_id=cached.market.condition_id,
+                        source_ms=current.timestamp_ms,
+                        tick_size=str(cached.market.tick_size),
+                        min_order_size=str(cached.market.min_order_size),
+                        bids=[{"price": str(x.price), "size": str(x.size)} for x in current.bids],
+                        asks=[{"price": str(x.price), "size": str(x.size)} for x in current.asks],
+                    )
+                    self._logged_stream_books[current.token_id] = current
+            return replace(
+                cached,
+                now_ms=now,
+                spot=spot,
+                twap60=twap,
+                up_book=books[0],
+                down_book=books[1],
+                history=tuple(self._points["spot"][k] for k in sorted(self._points["spot"])),
+                exchange_history=self.streams.exchange_history if self.streams else (),
+            )
+        except DataUnavailable:
+            return None
+
+    def final_reference(self, market: Market) -> tuple[Decimal, Decimal] | None:
+        """Official public labels for simulated settlement, never chain finality."""
+        state = self._rounds.get(market.slug)
+        if (
+            state is None
+            or state.condition_id != market.condition_id
+            or state.conflict
+            or state.final_conflict
+            or state.official is None
+            or state.final is None
+            or self._now() < market.end_s * 1000
+            or market.reference_price is None
+            or abs(state.official - market.reference_price) > ANCHOR_TOLERANCE
+        ):
+            return None
+        return state.official, state.final
+
+    def retain_markets(self, markets: tuple[Market, ...]) -> None:
+        """Resume official label polling for simulated holdings after restart.
+
+        Stored references are comparison anchors; fresh public metadata still has
+        to verify the rule, identity and final label before simulated settlement.
+        """
+        if len({m.slug for m in markets}) > 6:
+            raise DataUnavailable("TOO_MANY_RETAINED_MARKETS")
+        self._retained_rounds = {m.slug for m in markets}
+        for market in markets:
+            if market.slug not in self._rounds:
+                self._rounds[market.slug] = _Round(
+                    market.slug,
+                    market.start_s,
+                    market.condition_id,
+                    captured=market.reference_price,
+                    next_poll=0,
+                )
+            elif self._rounds[market.slug].condition_id != market.condition_id:
+                raise DataUnavailable("METADATA_IDENTITY_MISMATCH")
+
+    def restore_history(self, records: Iterable[dict[str, Any]]) -> int:
+        """Restore this paper journal's recent source points without renewing freshness.
+
+        Real feed receipt is still required for both streams after startup. Source
+        timestamps, missing seconds and conflicting points retain their meaning.
+        """
+        if self._tasks or any(self._points.values()):
+            raise DataUnavailable("HISTORY_RESTORE_REQUIRES_NEW_ADAPTER")
+        now = self._now()
+        restored = 0
+        for row in records:
+            kind = row.get("kind")
+            if kind == "price_conflict":
+                stream = row.get("stream")
+                if stream in self._conflicting_points:
+                    self._conflicting_points[stream].add(_timestamp(row.get("source_ms")))
+                continue
+            if kind not in ("spot", "twap60"):
+                continue
+            if row.get("source") != (SOURCE if kind == "twap60" else "prices.crypto.chainlink"):
+                raise DataUnavailable("HISTORY_SOURCE_MISMATCH")
+            stamp, received = _timestamp(row.get("source_ms")), _timestamp(row.get("received_ms"))
+            if max(stamp, received) > now or min(stamp, received) < now - self._history_ms:
+                continue
+            point = PricePoint(kind, stamp, received, _decimal(row.get("price")))
+            prior = self._points[kind].get(stamp)
+            if prior is not None and prior.price != point.price:
+                self._conflicting_points[kind].add(stamp)
+            elif prior is None:
+                self._points[kind][stamp] = point
+                restored += 1
+        for kind, points in self._points.items():
+            for old in sorted(points)[: -self._max_points]:
+                del points[old]
+            self._conflicting_points[kind].intersection_update(points)
+        return restored
 
     def _now(self) -> int:
         return int(self._clock() * 1000)
@@ -222,6 +365,8 @@ class MarketData:
             asyncio.create_task(self._consume("spot")),
             asyncio.create_task(self._consume("twap60")),
         ]
+        if self.streams:
+            await self.streams.start()
         return self
 
     async def __aexit__(
@@ -236,6 +381,8 @@ class MarketData:
         if self._closed:
             return
         self._closed = True
+        if self.streams:
+            await self.streams.close()
         for task in self._tasks:
             task.cancel()
         results = await asyncio.gather(
@@ -411,6 +558,18 @@ class MarketData:
 
     async def book(self, token_id: str) -> Book:
         """Read a held asset even with no usable current market or reference feeds."""
+        if self.streams and token_id in self.streams.books:
+            book = self.streams.books[token_id]
+            try:
+                self._fresh(
+                    book.timestamp_ms,
+                    book.received_ms,
+                    self._now(),
+                    self.config.data.max_book_age_ms,
+                )
+                return book
+            except DataUnavailable:
+                self._emit("book_transport", token_id=token_id, code="REST_RECOVERY")
         return (await self._read_book(token_id)).book
 
     def _compare(self, state: _Round) -> None:
@@ -483,7 +642,11 @@ class MarketData:
     def _retire_rounds(self) -> None:
         now = self._now()
         for slug, state in list(self._rounds.items()):
-            if now > (state.start_s + 300 + 3600) * 1000 or len(self._rounds) > 12:
+            if slug in self._retained_rounds:
+                continue
+            if now > (state.start_s + 300 + 3600) * 1000 or len(self._rounds) > 12 + len(
+                self._retained_rounds
+            ):
                 self._emit(
                     "reference_retired",
                     slug=slug,
@@ -546,6 +709,10 @@ class MarketData:
         async with self._snapshot_lock:
             try:
                 await self._poll_due()
+                if self.streams:
+                    cached = self.current_snapshot() if self._mono() - self._cached_at < 2 else None
+                    if cached is not None:
+                        return cached
                 now = self._now() if now_ms is None else _timestamp(now_ms)
                 start = now // 300000 * 300
                 slug = f"btc-updown-5m-{start}"
@@ -665,7 +832,11 @@ class MarketData:
                 spot, twap = self._latest("spot", final_now), self._latest("twap60", final_now)
                 if self._observer_failed:
                     raise DataUnavailable("OBSERVER_FAILED")
-                return Snapshot(
+                if self.streams:
+                    await self.streams.select_market(
+                        (market.up_token, market.down_token), market.condition_id
+                    )
+                result = Snapshot(
                     market,
                     up.book,
                     down.book,
@@ -673,7 +844,10 @@ class MarketData:
                     twap,
                     tuple(self._points["spot"][key] for key in sorted(self._points["spot"])),
                     final_now,
+                    self.streams.exchange_history if self.streams else (),
                 )
+                self._cached_snapshot, self._cached_at = result, self._mono()
+                return result
             except DataUnavailable as exc:
                 self._emit("snapshot_unavailable", code=exc.code)
                 raise

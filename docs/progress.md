@@ -1,4 +1,50 @@
-# Progress: standalone BTC five-minute repair
+# Progress: six-strategy extension
+
+2026-09-07. Branch `feat/six-strategies`, worktree `.worktrees/six-strategies`, based on
+`60615024f1b7fb4a3cc8afe6d606967b00f51a03`. All six policies are implemented and connected to
+the common execution engine. This extension used one agent's implementation, own review and
+tests, as requested. The previous multi-agent repair record below is historical.
+
+## Implemented and checked
+
+- Added `fast_value`, `model_exit`, `passive_pairs` and `inventory_pairs` to the two repaired
+  baselines. [Exact mechanics, assumptions and limits](six-strategies.md).
+- Added anonymous public exchange/book/trade streams, six independent paper accounts, persisted
+  reports, delayed simulated execution, queue-volume fills, restart history and settlement polling.
+- Added explicit operator credential provisioning. The operator generated the trading tuple;
+  subsequent authorized read-only checks verified authentication, wallet association, collateral
+  and approvals. An existing external holding remains a dedicated-account entry blocker.
+- Corrected measured stream-book sequencing/empty-side cases, index precision comparison,
+  full-principal paper BUY execution, queue restart identity, same-price queue accounting and
+  activation-timestamp trade double counting. Each accounting/execution correction has a regression.
+- Each of the six policies is driven through confirmation, submission and a fill in controlled
+  tests. Further tests exercise fair-value math, stale/unaligned feeds, model exits, real pinned-SDK
+  resting-order signing/cancellation with intercepted transport, partial fills, cancellation races,
+  unmatched timeout, two-leg settlement, report attribution, account checks and restart isolation.
+
+Final suite: **475 passed in 72.33 seconds**. Ruff lint/format, mypy (17 source files), locked
+dependency consistency and diff checks passed. Main/paper CLI help also passed. The only later
+Python edit clarifies paper shutdown help: its exposure-monitoring deadline does not include
+the subsequent transport cleanup. That help and static checks were rechecked.
+
+The public comparison capture spans **23:10:37–23:48:42 UTC on September 6** (38.07 minutes),
+across four cleanly stopped runs. It is not an uninterrupted hour despite the local directory
+name `work/paper-six-60m`. The last 45-second segment used the final execution source. Together
+the runs recorded 19,070 books, 9,997 public trades, 5,517 exchange observations, 2,116 Chainlink
+spot observations and three official final references. All four runs exited 0; stderr was empty.
+All six portfolios ended with **zero orders, fills, open positions and unresolved orders**.
+History/window/reference/book guards rejected candidates; fast mode additionally rejected stale
+or unaligned ticks. This verifies public collection, screening, restart and shutdown integration,
+not execution on organic signals or strategy returns. Controlled functional tests supply the
+entry/fill/exit evidence. Public records remain in the ignored local runtime.
+
+No funded order, approval, transfer, merge or redemption was submitted. Automated tests establish
+specified behaviour; they do not establish calibrated probabilities, actual queue priority or ROI.
+Live GTC orders can survive process failure, and live redemption remains manual.
+
+---
+
+# Historical record: standalone BTC five-minute repair
 
 2026-09-06. Branch `feat/standalone-btc5m`, worktree `.worktrees/standalone`.
 Source implementation checkpoint `3f49231b4a57cf6e00934dd86316317e3e275d19`.

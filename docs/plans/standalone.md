@@ -115,11 +115,11 @@ The ellipsis in the type sketch denotes a method body owned by Task1, not unfini
 
 Read design contract/model/sizing sections. Public behaviour is deterministic decisions and reason codes.
 
-- [ ] Write tests first for unknown/invalid configuration, nonfinite numbers, quantity budget vs minimum,
+- [x] Write tests first for unknown/invalid configuration, nonfinite numbers, quantity budget vs minimum,
   stale/crossed/missing-side books, missing anchor, wrong rule, wrong round and insufficient history.
   Sparse sampling requires95% grid coverage, <=12s accepted-source gap and full requiredspan within2s;
   isolated missinggrid is allowed without interpolation, consecutive missinggrids and bad endpoints reject.
-- [ ] Add independently derived numerical tests, including:
+- [x] Add independently derived numerical tests, including:
 
 ```python
 assert fee_for(Decimal('5'), Decimal('.70'), Decimal('.07')) == Decimal('.07350')
@@ -129,17 +129,17 @@ assert probability_up == pytest.approx(0.9405, abs=0.0001)
 # A future-dated tick and a 61-second gap cannot make a fresh, valid history.
 ```
 
-- [ ] Observe failing behavioural tests. Implement domain validation, frozen config, TOML and pure strategy.
+- [x] Observe failing behavioural tests. Implement domain validation, frozen config, TOML and pure strategy.
   Value mode uses zero drift, two variance windows + stress, adverse reference scenario, actual depth,
   selected-side spread, fee allowance and terminal proxy. Momentum mode implements original move/timing
   comparison with same safety (the design labels it a modified upstream reference). Reject extra config keys and incompatible timing; no simulation fills.
-- [ ] Test spend-based depth and tick rounding; small USD5 caps must never round up to exchange minimum.
+- [x] Test spend-based depth and tick rounding; small USD5 caps must never round up to exchange minimum.
   Decision principal is the exact BUY cash amount, estimates are not authoritative holdings. Derive
   minimum shares from principal/limit with conservative supported rounding; reserve worst-case buy fees.
   Assert improved asks deliver more estimated shares without increasing signed principal or reservation.
   Require explicit reference status and market flags; unknown status never permits an entry.
-- [ ] Verify pytest scoped tests, ruff and mypy on owned files; record exact test output and commit.
-- [ ] Independent task review checks maths/units, configuration consumption and real decision failure paths.
+- [x] Verify pytest scoped tests, ruff and mypy on owned files; record exact test output and commit.
+- [x] Independent task review checks maths/units, configuration consumption and real decision failure paths.
 
 ### Task 2: Anonymous market data and trustworthy anchors
 

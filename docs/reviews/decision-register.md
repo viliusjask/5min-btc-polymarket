@@ -37,3 +37,16 @@ for the alternatives, scientific sources and positive as well as negative trader
 ## Additional article and inventory ruling
 
 Adopted the existing valuation/depth/inventory principles; deferred six funded portfolios, passive pairing and automatic merge after scientific review and a bounded complementary-route quote comparison. The user delegated this choice. The hypotheses, evidence limits and opportunity cost are recorded in [inventory strategy ruling](../research/inventory-strategy-ruling.md). Task4 calibration writes now belong to actual publication in provider mode; current-time execution reevaluation cannot invent a new receipt.
+
+## Final integration corrections
+
+The broad review reproduced three defects and all are assigned to one combined fix wave: immediate
+current-round anchor/rule conflict invalidation, sticky final-reference conflict reporting, and
+bounded cooperative shutdown including cleanup. A definitive new conflict must cancel a pending
+entry before any POST even if no replacement snapshot has arrived. An explicit conflict cannot
+be healed by repeating its retained numeric value. The shutdown budget includes task drain and
+resource close, while ownership remains held until execution conclusively stops. Noncooperative
+code or a blocked event loop cannot have a promised hard bound; document termination/reconciliation
+recovery. Costs include skipped entries, fewer usable calibration labels and possibly incomplete
+resource cleanup after the safe execution drain. These are required correctness fixes, not new
+strategy or funded-operation authorization.

@@ -25,7 +25,7 @@ state machine, and a small CLI. No subprocess trading engine and no LLM in execu
 
 Task1 owns `src/btc5m/{__init__,domain,config,strategy}.py`, `config/btc5m.toml`, `tests/test_{config,strategy}.py`.
 Task2 owns `src/btc5m/market_data.py`, `tests/test_market_data.py`, public fixtures in `tests/fixtures/`.
-Task3 owns `src/btc5m/{broker,ledger,engine}.py`, `tests/test_{broker,ledger,engine}.py`.
+Task3 owns `src/btc5m/{broker,ledger,engine,execution_types,rpc}.py`, `tests/test_{broker,ledger,engine,rpc}.py`.
 Task4 owns `src/btc5m/{cli,__main__}.py`, CLI/E2E tests, wrappers, docs, container/CI cleanup.
 Root owns design/research/plan/progress and package/bootstrap metadata until final integration.
 

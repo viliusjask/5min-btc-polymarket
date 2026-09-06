@@ -236,6 +236,7 @@ class Venue:
                 "accepting_orders": True,
                 "closed": False,
                 "neg_risk": False,
+                "minimum_order_size": self.book_min,
                 "tokens": [{"token_id": TOKEN}, {"token_id": TOKEN2}],
             }
         elif path == "/book":
@@ -642,6 +643,213 @@ def test_clock_reversal_before_post_rejects_newly_future_evidence(tmp_path, monk
         venue.now -= 10000
         ack = await broker.post(prepared)
         assert ack.classification == "rejected" and venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize("pending_status", ["MINED", "MATCHED", "RETRYING"])
+def test_same_transaction_mixed_status_never_books_aggregate_receipt(
+    tmp_path, monkeypatch, side, pending_status
+):
+    async def run():
+        from test_engine import held
+
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        if side == "SELL":
+            position = held(ledger, session, venue, minimum=".01")
+            intent = ledger.reserve_exit(position, D(5), D(".67"), "STOP", session, NOW)
+        else:
+            intent = ledger.reserve_entry(decision(), market(), session, NOW)
+        prepared = await broker.prepare(intent, intent.market)
+        ledger.prepare(intent.intent_id, prepared)
+        ledger.mark_submitting(intent.intent_id)
+        venue.order = open_order(prepared.order_hash, trades=("confirmed", "provisional")) | {
+            "side": side,
+            "order_type": "FOK" if side == "BUY" else "FAK",
+        }
+        venue.trades = [
+            [trade(prepared.order_hash, size="2") | {"side": side}],
+            [
+                trade(prepared.order_hash, ident="provisional", status=pending_status, size="3")
+                | {"side": side}
+            ],
+        ]
+        venue.rpc.receipt = receipt(
+            side=0 if side == "BUY" else 1,
+            maker=3500000 if side == "BUY" else 5000000,
+            taker=5000000 if side == "BUY" else 4000000,
+            fee=73500 if side == "BUY" else 56000,
+        )
+        log = venue.rpc.receipt["logs"][0]
+        log["topics"][1] = prepared.order_hash
+        log["topics"][2] = "0x" + "00" * 12 + WALLET[2:]
+        log["logIndex"] = "0x1"
+        before = ledger.summary(NOW)
+        venue.balance = 96426500 if side == "BUY" else 100370500
+        venue.inventory = {TOKEN: 5000000 if side == "BUY" else 0}
+        evidence = await broker.reconcile(ledger.order(intent.intent_id))
+        assert not evidence.terminal and "provisional" in evidence.pending_fill_ids
+        assert not evidence.fills
+        ledger.apply_evidence(intent.intent_id, evidence)
+        after = ledger.summary(NOW)
+        assert (after.cash_movement, after.fees, after.realized_net_pnl, after.inventory) == (
+            before.cash_movement,
+            before.fees,
+            before.realized_net_pnl,
+            before.inventory,
+        )
+        assert len(after.unresolved_orders) == 1
+        venue.trades[1][0]["status"] = "CONFIRMED"
+        evidence = await broker.reconcile(ledger.order(intent.intent_id))
+        assert evidence.terminal and not evidence.pending_fill_ids
+        assert len(evidence.fills) == 1 and evidence.fills[0].quantity == 5
+        ledger.apply_evidence(intent.intent_id, evidence)
+        final = ledger.summary(NOW)
+        assert final.cash_movement == (D("-3.5735") if side == "BUY" else D(".3705"))
+        assert final.realized_net_pnl == (D(0) if side == "BUY" else D(".3705"))
+        assert final.fees == (D(".0735") if side == "BUY" else D(".1295"))
+        ledger.apply_evidence(intent.intent_id, evidence)
+        assert ledger.summary(NOW) == final
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_receipt_quantity_cannot_exceed_confirmed_account_evidence(tmp_path, monkeypatch):
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        intent = ledger.reserve_entry(decision(), market(), session, NOW)
+        prepared = await broker.prepare(intent, intent.market)
+        ledger.prepare(intent.intent_id, prepared)
+        ledger.mark_submitting(intent.intent_id)
+        venue.order = open_order(prepared.order_hash, trades=("confirmed",))
+        venue.trades = [[trade(prepared.order_hash, size="2")]]
+        venue.rpc.receipt["logs"][0]["topics"][1] = prepared.order_hash
+        evidence = await broker.reconcile(ledger.order(intent.intent_id))
+        assert not evidence.fills and not evidence.terminal
+        assert "confirmed" in evidence.pending_fill_ids
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize("change", ["markets_minimum", "fee_taker_only", "fee_schema_extra"])
+def test_final_non_tick_metadata_change_after_eligible_snapshot_blocks_post(
+    tmp_path, monkeypatch, side, change
+):
+    async def run():
+        from test_engine import held, snapshot
+
+        from btc5m.strategy import evaluate
+
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        approved = snapshot()
+        dec = evaluate(approved, Config())
+        assert dec.reason == "ENTRY"
+        if side == "BUY":
+            intent = ledger.reserve_entry(dec, approved.market, session, NOW)
+        else:
+            position = held(ledger, session, venue)
+            intent = ledger.reserve_exit(position, D(5), D(".67"), "STOP", session, NOW)
+            # This authorized tick refinement must not relax another field.
+            venue.current_tick = ".001"
+        original = venue.send
+
+        async def send(client, request, **kwargs):
+            result = await original(client, request, **kwargs)
+            data = result.json()
+            if change == "markets_minimum" and request.url.path.startswith("/markets/"):
+                data["minimum_order_size"] = "6"
+            if request.url.path.startswith("/clob-markets/"):
+                if change == "fee_taker_only":
+                    data["fd"]["to"] = False
+                if change == "fee_schema_extra":
+                    data["fd"]["new_fee_rule"] = True
+            return httpx.Response(result.status_code, json=data, request=request)
+
+        monkeypatch.setattr(venue, "send", send)
+        with pytest.raises(BrokerError):
+            prepared = await broker.prepare(intent, intent.market)
+            ledger.prepare(intent.intent_id, prepared)
+            ledger.mark_submitting(intent.intent_id)
+            venue.ack_hash = prepared.order_hash
+            await broker.post(prepared)
+        assert venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_separate_confirmed_transaction_can_settle_but_missing_pending_trade_stays_pending(
+    tmp_path, monkeypatch
+):
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        intent = ledger.reserve_entry(decision(), market(), session, NOW)
+        prepared = await broker.prepare(intent, intent.market)
+        ledger.prepare(intent.intent_id, prepared)
+        ledger.mark_submitting(intent.intent_id)
+        venue.order = open_order(prepared.order_hash, trades=("confirmed", "provisional"))
+        confirmed = trade(prepared.order_hash, size="2")
+        provisional = trade(
+            prepared.order_hash, ident="provisional", status="MINED", size="3", tx="0x" + "34" * 32
+        )
+        venue.trades = [[confirmed], [provisional]]
+        venue.rpc.receipt = receipt(maker=1400000, taker=2000000, fee=29400)
+        log = venue.rpc.receipt["logs"][0]
+        log["topics"][1] = prepared.order_hash
+        log["topics"][2] = "0x" + "00" * 12 + WALLET[2:]
+        venue.balance, venue.inventory = 98570600, {TOKEN: 2000000}
+        evidence = await broker.reconcile(ledger.order(intent.intent_id))
+        assert len(evidence.fills) == 1 and evidence.fills[0].quantity == 2
+        assert evidence.pending_fill_ids == ("provisional",) and not evidence.terminal
+        ledger.apply_evidence(intent.intent_id, evidence)
+        assert ledger.summary(NOW).cash_movement == D("-1.4294")
+        venue.order = None
+        venue.trades = [[confirmed]]
+        evidence = await broker.reconcile(ledger.order(intent.intent_id))
+        assert "provisional" in evidence.pending_fill_ids and not evidence.terminal
+        assert not evidence.fills
+        ledger.apply_evidence(intent.intent_id, evidence)
+        assert ledger.summary(NOW).cash_movement == D("-1.4294")
+        assert ledger.open_position().quantity == 2
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_conflicting_logs_never_publish_part_of_one_transaction(tmp_path, monkeypatch):
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        intent = ledger.reserve_entry(decision(), market(), session, NOW)
+        prepared = await broker.prepare(intent, intent.market)
+        ledger.prepare(intent.intent_id, prepared)
+        ledger.mark_submitting(intent.intent_id)
+        venue.order = open_order(prepared.order_hash)
+        venue.trades = [[trade(prepared.order_hash)]]
+        venue.rpc.receipt = receipt(maker=1400000, taker=2000000, fee=29400)
+        conflicting = receipt(maker=2100000, taker=3000000, fee=44100)["logs"][0]
+        venue.rpc.receipt["logs"].append(conflicting)
+        for log in venue.rpc.receipt["logs"]:
+            log["topics"][1] = prepared.order_hash
+            log["topics"][2] = "0x" + "00" * 12 + WALLET[2:]
+        evidence = await broker.reconcile(ledger.order(intent.intent_id))
+        assert not evidence.fills and not evidence.terminal
+        assert "confirmed" in evidence.pending_fill_ids
+        assert "RECEIPT_EVIDENCE_INCOMPLETE" in evidence.discrepancies
         await broker.close()
         ledger.close()
 

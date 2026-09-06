@@ -557,3 +557,67 @@ def test_readonly_decisions_exposes_paired_screens_without_private_execution_dat
     assert set(rows[0]["decision"]) == set(asdict(decisions[0]))
     reader.close()
     ledger.close()
+
+
+@pytest.mark.parametrize("existing_transaction", [False, True])
+def test_summary_observes_one_snapshot_during_concurrent_settlement(
+    tmp_path, monkeypatch, existing_transaction
+):
+    writer, session = opened(tmp_path)
+    buy = submitted(writer, session)
+    reader = Ledger(writer.path, WALLET, readonly=True)
+    if existing_transaction:
+        reader.db.execute("BEGIN")
+    original_positions = reader.positions
+    committed = False
+
+    def positions_then_settle():
+        nonlocal committed
+        positions = original_positions()
+        if not committed:
+            writer.apply_evidence(
+                buy.intent_id, evidence([fill(buy)], cash=D("96.4265"), tokens={"up": D(5)})
+            )
+            committed = True
+        return positions
+
+    monkeypatch.setattr(reader, "positions", positions_then_settle)
+    summary = reader.summary(NOW)
+    assert committed and writer.open_position().quantity == 5
+    assert summary.cash == 100 and not summary.inventory
+    assert len(summary.unresolved_orders) == 1 and summary.risk_reserve == D("3.75")
+    assert summary.position_risk == 0 and summary.fees == 0
+    assert reader.db.in_transaction is existing_transaction
+    if existing_transaction:
+        assert reader.summary(NOW) == summary
+        reader.db.rollback()
+    current = reader.summary(NOW)
+    assert current.cash == D("96.4265") and current.inventory[0].quantity == 5
+    assert not current.unresolved_orders and current.risk_reserve == 0
+    assert current.position_risk == D("3.5735")
+    reader.close()
+    writer.close()
+
+
+def test_summary_does_not_commit_callers_uncommitted_write(tmp_path):
+    ledger, _ = opened(tmp_path)
+    reader = Ledger(ledger.path, WALLET, readonly=True)
+    ledger.db.execute("UPDATE meta SET value='101' WHERE key='initial_cash'")
+    assert ledger.summary(NOW).cash == 101
+    assert ledger.db.in_transaction and reader.summary(NOW).cash == 100
+    ledger.db.rollback()
+    assert ledger.summary(NOW).cash == 100
+    reader.close()
+    ledger.close()
+
+
+def test_initial_close_reason_survives_later_control_and_resolution_problems(tmp_path):
+    ledger, session = opened(tmp_path)
+    buy = submitted(ledger, session)
+    ledger.apply_evidence(buy.intent_id, evidence([fill(buy)]))
+    ledger.note_exit(buy.position_id, "STOP", None, NOW)
+    ledger.note_exit(buy.position_id, "SHUTDOWN", "NO_EXIT_BOOK", NOW + 1000)
+    ledger.note_exit(buy.position_id, "RESOLUTION", "RESOLUTION_UNCONFIRMED", NOW + 2000)
+    position = ledger.open_position()
+    assert position.exit_reason == "STOP" and position.exit_problem == "RESOLUTION_UNCONFIRMED"
+    ledger.close()

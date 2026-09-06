@@ -221,6 +221,10 @@ class Engine:
             self.ledger.prepare(intent.intent_id, prepared)
         except BrokerError as exc:
             self.ledger.abandon(intent.intent_id, str(exc))
+            if intent.side == "SELL":
+                self.ledger.note_exit(
+                    intent.position_id, intent.reason, str(exc), self._now(intent.created_ms)
+                )
             return EngineResult("SKIP", str(exc), intent.intent_id)
         if intent.side == "BUY":
             reason = None
@@ -264,7 +268,9 @@ class Engine:
         position = self.ledger.open_position()
         assert position is not None
         reason = (
-            "SHUTDOWN"
+            position.exit_reason
+            if position.exit_reason in ("STOP", "PROFIT", "TIME", "SHUTDOWN")
+            else "SHUTDOWN"
             if self._shutting_down or self.ledger.stop_requested()
             else "TIME"
             if position.market.end_s * 1000 - now_ms <= self.config.execution.exit_seconds * 1000

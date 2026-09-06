@@ -658,3 +658,107 @@ def test_exit_quote_reports_depth_and_estimated_net_separately_from_actual_cash(
         ledger.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("reason,trigger_price", [("STOP", ".62"), ("PROFIT", ".98")])
+@pytest.mark.parametrize("restart", [False, True])
+def test_latched_price_exit_continues_remaining_sparse_depth_after_quote_changes(
+    tmp_path, monkeypatch, reason, trigger_price, restart
+):
+    async def run():
+        from test_broker import open_order, trade
+        from test_rpc import receipt
+
+        from btc5m.ledger import Ledger
+
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        held(ledger, session, venue, minimum=".01")
+        venue.post_loss = True
+        venue.bid, venue.ask = trigger_price, ".99"
+        engine = Engine(broker, ledger, Config(), session)
+        result = await engine.step(None, bid_book(NOW, price=trigger_price), NOW)
+        assert result.action == "SUBMITTED" and venue.posts == 1
+        first = ledger.unresolved_orders()[0]
+        assert first.quantity == 5 and first.reason == reason
+        venue.order = open_order(first.order_hash, matched="2", trades=("partial",)) | {
+            "side": "SELL",
+            "order_type": "FAK",
+        }
+        venue.trades = [[trade(first.order_hash, ident="partial", size="2") | {"side": "SELL"}]]
+        proceeds = D(2) * D(trigger_price)
+        fee = D(2) * D(".07") * D(trigger_price) * (1 - D(trigger_price))
+        venue.rpc.receipt = receipt(
+            side=1, maker=2000000, taker=int(proceeds * 1000000), fee=int(fee * 1000000)
+        )
+        log = venue.rpc.receipt["logs"][0]
+        log["topics"][1] = first.order_hash
+        log["topics"][2] = "0x" + "00" * 12 + WALLET[2:]
+        log["logIndex"] = "0x1"
+        venue.balance = int((D("96.4265") + proceeds - fee) * 1000000)
+        venue.inventory = {TOKEN: 3000000}
+        if restart:
+            path = ledger.path
+            ledger.close()
+            ledger = Ledger(path, WALLET)
+            session = ledger.start_or_resume_session(Config())
+            broker.ledger = ledger
+            engine = Engine(broker, ledger, Config(), session)
+        venue.now += 1000
+        venue.bid, venue.ask = ".80", ".82"
+        # Current .80 satisfies neither original trigger; one share is available,
+        # less than the held remainder. The prior whole-position trigger is latched.
+        result = await engine.step(None, bid_book(venue.now, price=".80", size="1"), venue.now)
+        assert result.action == "SUBMITTED" and venue.posts == 2
+        assert ledger.order(first.intent_id).state == "SETTLED"
+        position = ledger.open_position()
+        assert position.quantity == 3 and position.exit_reason == reason
+        retry = ledger.unresolved_orders()[0]
+        assert retry.quantity == 1 and retry.price_limit == D(".79") and retry.reason == reason
+        # Uncertain retry is never duplicated, even when another stop request arrives.
+        ledger.request_stop()
+        assert (
+            await engine.step(None, bid_book(venue.now), venue.now)
+        ).reason == "ORDER_UNRESOLVED"
+        assert venue.posts == 2 and ledger.open_position().exit_reason == reason
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("reason,trigger_price", [("STOP", ".62"), ("PROFIT", ".98")])
+def test_price_exit_latch_survives_preparation_failure_and_restart(
+    tmp_path, monkeypatch, reason, trigger_price
+):
+    async def run():
+        from btc5m.ledger import Ledger
+
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        held(ledger, session, venue, minimum=".01")
+        engine = Engine(broker, ledger, Config(), session)
+        venue.bid, venue.ask, venue.fee = trigger_price, ".99", ".08"
+        result = await engine.step(None, bid_book(NOW, price=trigger_price), NOW)
+        assert result.reason == "METADATA_CHANGED" and venue.posts == 0
+        assert ledger.open_position().exit_reason == reason and not ledger.unresolved_orders()
+        assert ledger.open_position().exit_problem == "METADATA_CHANGED"
+        path = ledger.path
+        ledger.close()
+        ledger = Ledger(path, WALLET)
+        session = ledger.start_or_resume_session(Config())
+        broker.ledger = ledger
+        engine = Engine(broker, ledger, Config(), session)
+        venue.now += 1000
+        venue.bid, venue.ask, venue.fee = ".80", ".82", ".07"
+        venue.post_loss = True
+        result = await engine.step(None, bid_book(venue.now, price=".80", size="1"), venue.now)
+        assert result.action == "SUBMITTED" and venue.posts == 1
+        assert ledger.unresolved_orders()[0].reason == reason
+        assert ledger.unresolved_orders()[0].quantity == 1
+        position = ledger.open_position()
+        assert position is not None and position.exit_reason == reason
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())

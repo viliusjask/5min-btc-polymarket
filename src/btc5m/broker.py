@@ -309,7 +309,8 @@ class Broker:
                         or flags.get("condition_id") != market.condition_id
                         or not isinstance(fee_wire, dict)
                         or not isinstance(fee_wire.get("fd"), dict)
-                        or not {"r", "e"} <= set(fee_wire["fd"])
+                        or set(fee_wire["fd"]) != {"r", "e", "to"}
+                        or fee_wire["fd"]["to"] is not True
                         or fee_wire.get("ao") is not True
                     ):
                         raise BrokerError("MARKET_NOT_ACCEPTING")
@@ -318,6 +319,7 @@ class Broker:
                         or book.neg_risk
                         or fresh.token_ids != {market.up_token, market.down_token}
                         or book.min_order_size != market.min_order_size
+                        or D(str(flags.get("minimum_order_size"))) != market.min_order_size
                         or D(str(fee_wire.get("mos"))) != market.min_order_size
                         or D(str(fee_wire.get("mts"))) != fresh.tick_size
                         or fee_wire.get("c") != market.condition_id
@@ -538,7 +540,7 @@ class Broker:
 
     async def reconcile(self, order: Intent) -> OrderEvidence:
         fills: dict[tuple[int, str, int], ConfirmedFill] = {}
-        pending: set[str] = set(order.trade_ids)
+        pending: set[str] = set(order.trade_ids) | set(order.pending_fill_ids)
         discrepancies = []
         cash = None
         balances: dict[str, Decimal] = {}
@@ -570,7 +572,7 @@ class Broker:
                 )
                 seen: dict[str, ClobTrade] = {}
                 matched_total = D(0)
-                receipts: dict[str, tuple[ConfirmedFill, ...]] = {}
+                transactions: dict[str, list[tuple[ClobTrade, Decimal]]] = {}
                 for trade in trades:
                     size = self._matched_trade(trade, order)
                     if size is None:
@@ -584,23 +586,45 @@ class Broker:
                         raise BrokerError("TRADE_SIZE_INVALID")
                     matched_total += size
                     pending.discard(trade.id)
-                    if trade.status == "CONFIRMED":
-                        try:
-                            tx = str(trade.transaction_hash).lower()
-                            if tx not in receipts:
-                                receipts[tx] = await self.rpc.confirmed_fills(
-                                    order, tx, int(trade.updated_at.timestamp() * 1000)
-                                )
-                            for fill in receipts[tx]:
-                                key = (fill.chain_id, fill.transaction_hash, fill.log_index)
-                                if key in fills and fills[key] != fill:
-                                    raise BrokerError("FILL_IDENTITY_CONFLICT")
-                                fills[key] = fill
-                        except Exception:
-                            pending.add(trade.id)
-                            discrepancies.append("RECEIPT_EVIDENCE_INCOMPLETE")
-                    elif trade.status != "FAILED":
+                    if trade.status not in ("CONFIRMED", "FAILED"):
                         pending.add(trade.id)
+                    transactions.setdefault(str(trade.transaction_hash).lower(), []).append(
+                        (trade, size)
+                    )
+                # Receipt logs can aggregate several trade IDs. Authorize the
+                # transaction only after all pages/statuses have been inspected;
+                # never split its fee or amounts between provisional trades.
+                unmapped_pending = pending - seen.keys()
+                for tx, related in transactions.items():
+                    confirmed = [
+                        (trade, size) for trade, size in related if trade.status == "CONFIRMED"
+                    ]
+                    if not confirmed:
+                        continue
+                    ids = {trade.id for trade, _ in confirmed}
+                    if unmapped_pending or any(
+                        trade.status not in ("CONFIRMED", "FAILED") for trade, _ in related
+                    ):
+                        pending.update(ids)
+                        continue
+                    try:
+                        receipt_fills = await self.rpc.confirmed_fills(
+                            order, tx, int(confirmed[0][0].updated_at.timestamp() * 1000)
+                        )
+                        transaction_fills: dict[tuple[int, str, int], ConfirmedFill] = {}
+                        for fill in receipt_fills:
+                            key = (fill.chain_id, fill.transaction_hash, fill.log_index)
+                            if key in transaction_fills and transaction_fills[key] != fill:
+                                raise BrokerError("FILL_IDENTITY_CONFLICT")
+                            transaction_fills[key] = fill
+                        if sum((fill.quantity for fill in transaction_fills.values()), D(0)) > sum(
+                            (size for _, size in confirmed), D(0)
+                        ):
+                            raise BrokerError("RECEIPT_EXCEEDS_CONFIRMED_TRADE_QUANTITY")
+                        fills.update(transaction_fills)
+                    except Exception:
+                        pending.update(ids)
+                        discrepancies.append("RECEIPT_EVIDENCE_INCOMPLETE")
                 confirmed_qty = sum((f.quantity for f in fills.values()), D(0))
                 confirmed_principal = sum((f.principal for f in fills.values()), D(0))
                 full = (

@@ -293,6 +293,15 @@ class Ledger:
 
     def summary(self, now_ms: int | None = None) -> LedgerSummary:
         now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        # A savepoint begins a read transaction even on readonly connections;
+        # nested use neither commits nor replaces a caller's existing snapshot.
+        self.db.execute("SAVEPOINT summary_read")
+        try:
+            return self._summary_snapshot(now_ms)
+        finally:
+            self.db.execute("RELEASE SAVEPOINT summary_read")
+
+    def _summary_snapshot(self, now_ms: int) -> LedgerSummary:
         current = self._meta("session")
         rows = self.db.execute("SELECT session_id,day,cash,pnl,fee FROM accounting").fetchall()
         cash_move = sum((D(r[2]) for r in rows), D(0))
@@ -705,7 +714,9 @@ class Ledger:
         self._write()
         with self.db:
             position = next(p for p in self.positions() if p.position_id == position_id)
-            self._save_position(replace(position, exit_reason=reason, exit_problem=problem))
+            self._save_position(
+                replace(position, exit_reason=position.exit_reason or reason, exit_problem=problem)
+            )
             self._event(
                 "EXIT_REASON",
                 now_ms,

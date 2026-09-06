@@ -42,8 +42,11 @@ The opening reference must be same-slot official eventMetadata.priceToBeat, or a
 source-timestamp TWAP60 boundary point under a documented, empirically checked boundary policy.
 Record provenance and later compare it with official metadata. Missing boundary data means skip,
 not interpolation, first-received substitution or reuse of the previous round's reference.
-Captured boundary use must be explicitly enabled after the anonymous probe validates it; until
-then only official live metadata is allowed. This is a visible operating limitation, not a fallback.
+The anonymous probe on 2026-09-06 verified two boundaries, including one whose neighboring
+seconds differed. Enable exact captured-boundary anchors by default for this supported rule;
+retain the explicit setting to require official metadata only. Compare later metadata with an
+absolute USD0.00000001 tolerance for JSON-number rounding. This is a measured initial policy,
+not proof of every future round: missing exact ticks still skip and mismatches pause entries.
 Persist anchor status (official, boundary, missing, conflict), source timestamp when known,
 fetch time and endpoint/query provenance. Use get_event(include_chat=False) with bounded retries;
 this is an observed working route, not a cache-invalidation guarantee. Cached null cannot erase
@@ -136,8 +139,12 @@ it does not isolate which individual filter caused a result.
 No re-entry, opposite-side hedge, GTC fallback or general strategy plugin framework initially.
 An exit attempt may partially execute. Reconcile the unsold remainder before another order.
 If no safe exit is available, persist exposure, emit a prominent reason and continue monitoring.
-Expired residual winners are claimable inventory; automatic redemption/approvals are outside this
-iteration. Report the manual Polymarket claim route and never count claimable shares as settled cash.
+Unexitable fractional holdings remain tracked through expiry. Require verified official resolution
+before moving them out of active uncertain exposure. Resolved winning remnants remain owned claimable
+inventory and are excluded from available cash; their existence alone does not permanently block the
+next active round. Resolved losing remnants realize their remaining basis exactly once, while any
+still-owned tokens stay in account reconciliation. Unknown-resolution remnants retain their risk.
+Automatic redemption/approvals are outside this iteration. Report the manual Polymarket claim route and never count claimable shares as settled cash.
 
 ## Execution, recovery and accounting
 
@@ -181,7 +188,8 @@ CTF V2 exchange OrderFilled events belonging to bot hashes, tokens and wallet. R
 SELL proceeds=(takerAmountFilled-fee)/1e6, quantities use the appropriate opposite field. Reject wrong
 address/topic/status/owner/token or negative/invalid amounts for logs claiming the tracked order.
 Ignore unrelated logs in batched receipts; they do not invalidate an otherwise valid owned fill. Preserve provisional
-state if fee or receipt evidence is missing. Check token decimals against expected six.
+state if fee or receipt evidence is missing. Verify collateral decimals=6; CTF ERC1155 shares use the supported collateral-derived six-decimal
+units and have no standard decimals() method. Never assume a deployed fee cap from source defaults.
 
 SQLite records runs/config hashes, price observations, decisions, intents/signed orders, fill events,
 positions, risk reservations, stop requests and account snapshots. Signed data storage is private;

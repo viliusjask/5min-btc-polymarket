@@ -152,8 +152,9 @@ Consumes Task1 types and config. Produces `MarketData` async context manager wit
   distinguish exact match, mismatch and official metadata still missing.
 - [ ] Implement two official streams (Chainlink spot and TWAP60), bounded history, current market discovery,
   concurrent book snapshot, metadata normalization and explicit source provenance. Use actual SDK methods.
-  Capture source-time boundary points only; do not assume first-received point is correct. Safe default
-  leaves captured-anchor live use disabled until reviewed empirical probe passes.
+  Capture source-time boundary points only; do not assume first-received point is correct. The reviewed
+  2026-09-06 probe now permits captured exact-boundary anchors by default for the supported rule;
+  compare later official metadata within absolute USD1e-8 and halt that round on a mismatch.
 - [ ] Inject public client/clock at boundary for tests; use real parsers/state with complete external fixtures.
   Do not inject a fake implementation of the component itself.
 - [ ] Run scoped tests and anonymous smoke against current market/streams. Record UTC window and access errors.

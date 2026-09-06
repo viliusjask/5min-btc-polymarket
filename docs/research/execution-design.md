@@ -1,3 +1,6 @@
+> Research inputs and proposals below were evaluated in [the binding design](../design.md).
+> See [strategy decisions](strategy-decisions.md) for the selected scope and later probe corrections.
+
 # Execution/API repair design — evidence checked 2026-09-06
 
 Read-only investigation of `/home/vilius/projects/5min-btc-polymarket`; no bot, order, wallet setup, approval, redemption, or dependency installation was executed. Public GETs and one read-only Polygon RPC `eth_chainId` request were made. This is an implementation recommendation, not evidence of a profitable strategy.

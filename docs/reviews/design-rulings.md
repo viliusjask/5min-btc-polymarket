@@ -13,3 +13,15 @@ unrelated batched logs are ignored. SDK private interfaces require exact version
 
 Ruling: proceed to Task1 after these specification corrections. Funded validation is a later explicit
 stage; neither paper infrastructure nor a claimed profitable backtest is a development gate.
+
+Anchor ruling: two measured source boundaries now agree with both prior finalPrice and next
+priceToBeat. The15:40 boundary distinguishes exact second from both neighbors. Permit exact
+captured TWAP60 boundary anchors by default; missing ticks skip, later conflicts pause. Absolute
+USD1e-8 comparison tolerance covers published JSON numeric precision. This enables the intended
+live experiment without substituting a different price source. See docs/research/anchor-probe.md.
+
+Residual ruling: SDK SELL rounding can leave fractional shares. Unknown-resolution residuals remain
+active exposure; verified resolved winners become tracked claimable holdings, never cash, and losing
+remaining basis is realized once. Resolved holdings remain known to reconciliation but do not block
+all future rounds merely because manual claim has not occurred. No undocumented small-SELL exemption
+or actual minimum-size acceptance is assumed. This prevents a one-trade permanent halt on normal dust.

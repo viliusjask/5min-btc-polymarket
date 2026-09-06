@@ -1,3 +1,6 @@
+> Research inputs and proposals below were evaluated in [the binding design](../design.md).
+> See [strategy decisions](strategy-decisions.md) for the selected scope and later probe corrections.
+
 # Trader experience and evidence: BTC 5-minute Polymarket bots
 
 Research date: 2026-09-06. This is a purposive sample of public trader/developer discussions, not a representative survey. No accounts were accessed, traders contacted, or orders submitted. Claims about the supplied @igus_ai screenshot remain claims; this research did not identify an independently confirmed wallet or trading record tying its $250 → $13,000 result to Novals83's code or the alleged Claude modifications.

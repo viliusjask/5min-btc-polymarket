@@ -1,3 +1,6 @@
+> Research inputs and proposals below were evaluated in [the binding design](../design.md).
+> See [strategy decisions](strategy-decisions.md) for the selected scope and later probe corrections.
+
 Research date: 6 September 2026. This report concerns an experimental BTC five-minute Up/Down strategy with entries near 120 seconds remaining, expensive favourite contracts, and early exits. It is a strategy research specification, not a finding of profitability. No strategy was backtested and no live orders were placed in this research subtask.
 
 **Recommendation: replace the fixed $70–$100 BTC-move trigger with a model of the actual settlement quantity, scaled by recent volatility, and trade only a sufficiently large discrepancy between that model and executable contract prices. Preserve and measure the exit policy.** The model should initially be a transparent, explicitly uncalibrated candidate. Momentum and order-flow features deserve a separate incremental test; the literature does not establish that a recent BTC move continues over the next 120 seconds on this venue. The strongest potential improvement is finding contracts priced below a conditional valuation, rather than buying favourites simply because their winning probability is high.

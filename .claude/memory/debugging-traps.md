@@ -72,3 +72,21 @@ the engine's serialized ownership, then refresh real time and preserve all guard
 invalidation generation also retains gaps or identity excursions overwritten while the engine
 awaits. Ordinary same-identity valid updates must not invalidate every preparation. Task 4's
 focused provider tests cover the six-second/five-second case and interrupted preparation.
+
+
+## 2026-09-06: Cached consumption invented a new calibration receipt
+
+CLI publication correctly recorded a snapshot, but Engine changed its timestamp and recorded it
+again on consumption. A pre-window observation then became an in-window calibration sample and
+raw counts doubled. Keep actual receipt/publication writes with the producer; reevaluate cached
+execution input at current time without claiming a new observation. The regression uses a
+pre-window publication, no in-window publication, then a genuine-publication control. Direct-call
+observation behavior is intentionally preserved. Task4 fix2e83025 is independently approved.
+
+## 2026-09-06: Cleanup errors must not strand journal ownership
+
+Transport close can fail while a CLI command is unwinding. Independent cleanup responsibilities
+must still close the ledger and release its owner lock; a single finally block with sequential
+awaits can skip later work after the first exception. Exercise both construction and close failure
+with the real lock, then prove the next owner can acquire it. AsyncExitStack protects independent
+cleanup callbacks. A separate final review checks that asynchronous cleanup also respects deadlines.

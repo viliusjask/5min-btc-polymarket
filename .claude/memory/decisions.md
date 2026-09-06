@@ -37,3 +37,10 @@
 - 2026-09-06: Manual reconciliation is read-only at the venue but writes local execution evidence,
   so it takes the same journal-owner lock as trading. Readonly status/report/account diagnosis
   and the dedicated concurrent stop writer remain available while the trader owns the journal.
+
+- 2026-09-06: The additional article's valuation and inventory principles are useful, but its
+  private algorithms and10M-execution dataset are unverified. Public API checks confirm named
+  account profits; they do not prove causal strategy attribution. The AdanaKebab screenshots are
+  separate from Daniro's August19 article. Current V2 fees are cash-additive for BUY, not the old
+  V1 share-deducted model. A332-book-pair quote comparison found no complementary-exit advantage;
+  defer that extra machinery and six funded portfolios. See inventory-strategy-ruling.md.

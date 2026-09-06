@@ -44,3 +44,9 @@
   separate from Daniro's August19 article. Current V2 fees are cash-additive for BUY, not the old
   V1 share-deducted model. A332-book-pair quote comparison found no complementary-exit advantage;
   defer that extra machinery and six funded portfolios. See inventory-strategy-ruling.md.
+
+- 2026-09-06: Final integrated correction at3f49231 is independently approved, with412 tests and
+  static/lock checks passing. One absolute shutdown deadline covers cooperative drain and cleanup;
+  ownership remains until execution stops. Cancellation suppression, event-loop blockage and final
+  synchronous I/O can exceed the nominal window, so operator termination/reconciliation is explicit.
+  The full35-minute public capture had noentries and cannot establish return/calibration accuracy.

@@ -50,3 +50,7 @@ code or a blocked event loop cannot have a promised hard bound; document termina
 recovery. Costs include skipped entries, fewer usable calibration labels and possibly incomplete
 resource cleanup after the safe execution drain. These are required correctness fixes, not new
 strategy or funded-operation authorization.
+
+All three final corrections were independently approved at3f49231. No source finding remains parked. The existing keep-branch/worktree choice is retained; no merge, external publication or cleanup is required for this local development handoff.
+
+Preserving the branch/worktree also preserves local review evidence and public captures. The cost is their disk usage until the user chooses a retention policy; no destructive cleanup was performed.

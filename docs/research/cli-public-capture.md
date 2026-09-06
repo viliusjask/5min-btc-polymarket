@@ -75,3 +75,13 @@ information confirmation. This later CLI run is separate evidence. Its public ob
 contain the immutable initial six-minute sample used for the complementary-exit quote comparison;
 that analysis's own hash and332-pair/642-direction denominator are recorded in the
 [inventory ruling](inventory-strategy-ruling.md).
+
+
+## Final-source reread
+
+After the combined integration fix at3f49231, the same `report --records` command reproduced the
+completed capture byte for byte (same SHA256 above). This data had no explicit conflicts; the
+producer-to-report conflict regressions supply that missing case. A separate15-second public doctor
+on3f49231 exited0 with14spot,15TWAP60 and46book records, empty stderr and expected warm-up/missing
+reference skips. `uv sync --locked` and CLI help also passed. None of these public checks creates a
+live account session or validates funded execution. Outputs remain in `work/final-*`.

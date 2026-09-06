@@ -215,19 +215,19 @@ market/position and independently fetched bid book. Task2 also provides async bo
 Consumes MarketData/Broker/Ledger/Engine. Owns cli/__main__, tests/test_cli.py, tests/test_end_to_end.py,
 README.md, SKILL.md, CONTOUR.md, examples/run-example.md, scripts/, docker-compose.yml/Dockerfile and CI.
 
-- [ ] Tests first: help/observe do not read credentials or mutate wallet, missing --execute cannot trade,
+- [x] Tests first: help/observe do not read credentials or mutate wallet, missing --execute cannot trade,
   unknown flags fail, safe env-file parsing never evaluates shell, stop preserves unresolved inventory,
   two processes cannot own same live runtime, and reports work after abrupt termination.
-- [ ] Implement commands observe, doctor, run --execute, stop, status, report, reconcile. Finite duration/trade
+- [x] Implement commands observe, doctor, run --execute, stop, status, report, reconcile. Finite duration/trade
   limits. Stream public observations and snapshot skip reasons; do not fabricate paper PnL. Account doctor
   is explicit/read-only. Canonical config path resolves from package/repo, not accidental working directory.
-- [ ] Replace unsafe shell control with thin quoted repo-local CLI delegation. Remove all orphaned legacy
+- [x] Replace unsafe shell control with thin quoted repo-local CLI delegation. Remove all orphaned legacy
   strategy/report engines and unused YAML; update docs and examples to actual verified commands.
-- [ ] Remove the original Docker launcher/compose surface; use verified native WSL/Linux commands.
+- [x] Remove the original Docker launcher/compose surface; use verified native WSL/Linux commands.
   Add CI scoped to pytest/lint/format/type checks and dependency lock consistency.
-- [ ] Synthetic E2E exercises real core+ledger+engine and fake venue transport, including entry->partial exits
+- [x] Synthetic E2E exercises real core+ledger+engine and fake venue transport, including entry->partial exits
   ->confirmed fees->flat report, then interrupted/unknown recovery. No source-string tests.
-- [ ] Run full checks and bounded public observe/doctor. Produce concise research/strategy decisions and live
+- [x] Run full checks and bounded public observe/doctor. Produce concise research/strategy decisions and live
   experiment instructions, known limits and evidence. No actual funded orders in this task.
-- [ ] Final independent whole-branch review and fixes. Update AGENTS verified commands and project memory.
+- [x] Final independent whole-branch review and fixes. Update AGENTS verified commands and project memory.
   Preserve branches/worktrees. User merges; remote publication destination is not assumed to be upstream.

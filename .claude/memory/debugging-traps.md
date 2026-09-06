@@ -35,7 +35,8 @@ The adapter's TRADING_METADATA_CHANGED records did not include compared values, 
 reconstruction of 24 end-round skips. A later anonymous read found disagreeing tick sizes,
 but could not prove that was the earlier cause. Record normalized compared fields and public
 identities at the rejecting branch. Do not infer historical payloads from a later endpoint read.
-The narrow integration fix is assigned to Task 4; entry checks remain unchanged.
+Task4 completed the narrow producer-to-ledger diagnostic fix; the final public CLI capture
+retained169 tick comparisons with expected0.001 versus actual0.01. Entry checks remain unchanged.
 
 ## 2026-09-06: One confirmed trade authorized provisional receipt amounts
 
@@ -90,3 +91,31 @@ must still close the ledger and release its owner lock; a single finally block w
 awaits can skip later work after the first exception. Exercise both construction and close failure
 with the real lock, then prove the next owner can acquire it. AsyncExitStack protects independent
 cleanup callbacks. A separate final review checks that asynchronous cleanup also respects deadlines.
+
+
+## 2026-09-06: A producer conflict did not invalidate the consumer cache
+
+MarketData retained an anchor conflict, but LatestInput only invalidated stream errors. During
+awaited polling or order preparation, Engine could still see the old eligible snapshot and post.
+Test the real producer emission before the replacement snapshot exists, including a later cached
+valid overwrite and unrelated historical-round controls. Definitive current-round rule/reference
+invalidity must advance generation immediately; persistent adapter state alone is insufficient.
+
+## 2026-09-06: A conflict flag matters even when its retained number is unchanged
+
+The final-reference producer preserved the original numeric value after a conflicting later price,
+then emitted status=conflict. A reducer that compared only numbers incorrectly retained official.
+Test actual producer events through a reopened journal/report. Explicit conflict must be sticky;
+compatible duplicates and unrelated rounds must remain independent. Do not reconstruct authority
+from a retained number while dropping its status/provenance.
+
+
+## 2026-09-06: A controller timeout did not bound asynchronous cleanup
+
+SHUTDOWN_DEADLINE was persisted, but a cooperative SDK close could keep run_live pending and its
+wallet owner locked indefinitely. AsyncExitStack handles exceptions, not an enclosing time budget.
+Carry one absolute budget through drain and resource close, including flat early exit; shield the
+finalization ownership boundary against repeated caller cancellation. An interrupted submitted
+order becomes UNKNOWN before cancellation propagates. Do not release ownership while execution
+can survive. Prompt cancellation acknowledgement and local scheduling/I/O remain explicit limits;
+noncooperative code requires external termination followed by journal inspection/reconciliation.

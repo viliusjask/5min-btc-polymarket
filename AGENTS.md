@@ -31,8 +31,10 @@ uv run --locked btc5m observe --duration 2100 --runtime work/observe-35m/ledger.
 uv run --locked btc5m report --runtime work/observe-35m/ledger.sqlite
 ```
 
-Public smoke verified the doctor/observe/report paths with bounded short durations; the advertised
-35-minute collection is the operator protocol. Funded operation remains unverified. Read README.md
+The 35-minute anonymous observe/report path completed on ac32575; final-source 3f49231 doctor/help
+and retrospective report checks also passed. Full final suite 412 passed; independent rereview approved.
+These are dated evidence, not a substitute for checks after changes. Funded operation remains
+unverified. Read README.md
 before explicit account/run/reconcile commands; no account setup occurs automatically.
 `run --execute --duration ...` is the only trading mode. `scripts/btc5m_ctl.sh` forwards exact CLI
 arguments, never execution consent. Status/report/stop use an explicit runtime path without secrets.

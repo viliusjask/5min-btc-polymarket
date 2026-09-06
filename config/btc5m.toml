@@ -1,0 +1,43 @@
+# Research hypotheses for a bounded experiment; no profitability claim.
+[strategy]
+mode = "value"
+entry_min_seconds = 60
+entry_max_seconds = 180
+volatility_short_seconds = 300
+volatility_long_seconds = 1800
+volatility_stress_multiplier = 1.25
+adverse_reference_usd = 10
+value_min_ask = 0.60
+value_max_ask = 0.92
+min_terminal_surplus = 0.02
+extra_price_allowance = 0.01
+max_spread = 0.03
+momentum_min_move_usd = 70
+momentum_min_ask = 0.70
+momentum_max_ask = 0.95
+momentum_min_seconds = 90
+momentum_max_seconds = 150
+
+[risk]
+allocation_usd = 100
+trade_budget_usd = 5
+daily_loss_usd = 10
+session_loss_usd = 10
+max_entries_per_day = 20
+
+[data]
+max_price_age_ms = 5000
+max_book_age_ms = 5000
+future_tolerance_ms = 1000
+sample_seconds = 5
+sample_tolerance_ms = 2000
+max_sample_gap_ms = 7000
+# Exact source-timestamp boundary policy verified by the anonymous probe.
+allow_captured_anchor = true
+
+[execution]
+stop_loss_per_share = 0.08
+take_profit_bid = 0.98
+exit_seconds = 20
+buy_slippage = 0.01
+sell_slippage = 0.01

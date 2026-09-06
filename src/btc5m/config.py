@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import tomllib
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from decimal import Decimal
@@ -46,6 +47,8 @@ class StrategyConfig:
             raise ValueError("momentum timing must fit the shared entry window")
         if not 60 <= self.volatility_short_seconds < self.volatility_long_seconds <= 86400:
             raise ValueError("volatility windows must be ordered and bounded")
+        if not math.isfinite(float(self.volatility_stress_multiplier)):
+            raise ValueError("volatility stress must have a finite float representation")
         if self.volatility_stress_multiplier < 1:
             raise ValueError("volatility stress cannot reduce sigma")
         for low, high in (

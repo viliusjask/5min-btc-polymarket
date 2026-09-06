@@ -81,3 +81,19 @@ def test_sampling_configuration_rejects_forward_fill_and_incompatible_windows():
         replace(config.data, sample_tolerance_ms=5000)
     with pytest.raises(ValueError):
         replace(config, strategy=replace(config.strategy, volatility_short_seconds=301))
+
+
+def test_stress_multiplier_must_have_finite_float_representation():
+    with pytest.raises(ValueError):
+        replace(Config().strategy, volatility_stress_multiplier=Decimal("1e309"))
+
+
+def test_toml_rejects_finite_decimal_stress_that_overflows_model_float(tmp_path):
+    path = tmp_path / "bad.toml"
+    path.write_text(
+        CONFIG_PATH.read_text().replace(
+            "volatility_stress_multiplier = 1.25", "volatility_stress_multiplier = 1e309"
+        )
+    )
+    with pytest.raises(ValueError):
+        load_config(path)

@@ -449,3 +449,38 @@ def test_decision_rejects_nonfinite_or_underreserved_cash():
         replace(decision, max_total_reserved=D("1"))
     with pytest.raises(ValueError):
         replace(decision, probability_up=float("nan"))
+
+
+@pytest.mark.parametrize("failure", ["stress_overflow", "horizon_overflow", "variance_overflow"])
+def test_model_overflow_returns_finite_nonentry_decision(failure):
+    snap = make_snapshot()
+    config = Config()
+    if failure == "stress_overflow":
+        # Both factors are finite, but sqrt(5) * 1e308 is not.
+        config = replace(
+            config, strategy=replace(config.strategy, volatility_stress_multiplier=D("1e308"))
+        )
+    elif failure == "horizon_overflow":
+        # Stressed sigma stays finite, but sigma * sqrt(model_tau-40) overflows.
+        config = replace(
+            config, strategy=replace(config.strategy, volatility_stress_multiplier=D("1e307"))
+        )
+    else:
+        # Finite source prices overflow squared-dollar float variance.
+        snap = replace(
+            snap,
+            history=tuple(
+                replace(point, price=D("1e155") if i % 2 else D("1"))
+                for i, point in enumerate(snap.history)
+            ),
+        )
+    decision = evaluate(snap, config)
+    assert decision.reason == "INVALID_MODEL"
+    assert decision.side is None
+    assert decision.buy_principal == 0
+    assert decision.max_total_reserved == 0
+    assert decision.probability_up is None
+    assert decision.scenario_floor is None
+    assert all(
+        isinstance(value, str) or math.isfinite(value) for value in decision.features.values()
+    )

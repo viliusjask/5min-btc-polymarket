@@ -335,6 +335,8 @@ def evaluate(snapshot: Snapshot, config: Config) -> Decision:
         if short[0] == 0 or long[0] == 0:
             return _skip(snapshot, "ZERO_VARIANCE", features)
         stress = max(short[0], long[0]) * float(strategy.volatility_stress_multiplier)
+        if not math.isfinite(stress):
+            raise ValueError("nonfinite stressed volatility")
         sigmas = (short[0], long[0], stress)
         reference = market.reference_price
         assert reference is not None  # The common safety gate already rejects missing references.

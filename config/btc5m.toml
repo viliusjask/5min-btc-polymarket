@@ -31,7 +31,8 @@ max_book_age_ms = 5000
 future_tolerance_ms = 1000
 sample_seconds = 5
 sample_tolerance_ms = 2000
-max_sample_gap_ms = 7000
+max_sample_gap_ms = 12000
+min_sample_coverage = 0.95
 # Exact source-timestamp boundary policy verified by the anonymous probe.
 allow_captured_anchor = true
 

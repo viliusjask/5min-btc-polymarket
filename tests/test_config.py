@@ -97,3 +97,14 @@ def test_toml_rejects_finite_decimal_stress_that_overflows_model_float(tmp_path)
     )
     with pytest.raises(ValueError):
         load_config(path)
+
+
+@pytest.mark.parametrize("coverage", [Decimal("NaN"), Decimal(".949"), Decimal("1.001")])
+def test_sampling_coverage_cannot_weaken_approved_completeness(coverage):
+    with pytest.raises(ValueError):
+        replace(Config().data, min_sample_coverage=coverage)
+
+
+def test_sampling_gap_cannot_allow_two_consecutive_missing_grids():
+    with pytest.raises(ValueError):
+        replace(Config().data, max_sample_gap_ms=13000)

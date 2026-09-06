@@ -94,7 +94,8 @@ class DataConfig:
     future_tolerance_ms: int = 1000
     sample_seconds: int = 5
     sample_tolerance_ms: int = 2000
-    max_sample_gap_ms: int = 7000
+    max_sample_gap_ms: int = 12000
+    min_sample_coverage: Decimal = Decimal(".95")
     allow_captured_anchor: bool = True
 
     def __post_init__(self) -> None:
@@ -105,8 +106,10 @@ class DataConfig:
             raise ValueError(
                 "supported source grid is five seconds with at most two seconds tolerance"
             )
-        if not self.sample_seconds * 1000 <= self.max_sample_gap_ms <= 7000:
-            raise ValueError("sample gap must be between five and seven seconds")
+        if not self.sample_seconds * 1000 <= self.max_sample_gap_ms <= 12000:
+            raise ValueError("sample gap must be between five and twelve seconds")
+        if not Decimal(".95") <= self.min_sample_coverage <= 1:
+            raise ValueError("sample coverage must be between .95 and one")
         if self.future_tolerance_ms > min(self.max_price_age_ms, self.max_book_age_ms):
             raise ValueError("future tolerance exceeds freshness budget")
 

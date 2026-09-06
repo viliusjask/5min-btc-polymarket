@@ -2,7 +2,7 @@
 
 import math
 from bisect import bisect_right
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
 from statistics import NormalDist
 
@@ -139,10 +139,21 @@ def _safety_reason(snapshot: Snapshot, config: Config) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _SampleWindow:
+    sigma: float | None
+    span_seconds: float
+    sample_count: int
+    requested_count: int
+    coverage: float
+    max_gap_ms: int
+    rejection: str | None
+
+
 def _sample_window(
     history: tuple[PricePoint, ...], source_end_ms: int, window_seconds: int, config: Config
-) -> tuple[float, float, int] | None:
-    """Accept distinct observations on every UTC grid point without forward-filling."""
+) -> _SampleWindow:
+    """Measure available distinct UTC-grid samples; never fill a missing observation."""
     data = config.data
     step_ms = data.sample_seconds * 1000
     end_grid = source_end_ms // step_ms * step_ms
@@ -152,27 +163,48 @@ def _sample_window(
     for grid in range(start_grid, end_grid + 1, step_ms):
         index = bisect_right(times, grid) - 1
         if index < 0:
-            return None
+            continue
         point = history[index]
         if grid - point.timestamp_ms > data.sample_tolerance_ms:
-            return None
-        if (
-            samples
-            and not 0 < point.timestamp_ms - samples[-1].timestamp_ms <= data.max_sample_gap_ms
-        ):
-            return None
+            continue
+        if samples and point.timestamp_ms == samples[-1].timestamp_ms:
+            continue
         samples.append(point)
-    elapsed = (samples[-1].timestamp_ms - samples[0].timestamp_ms) / 1000
-    if elapsed < window_seconds - data.sample_tolerance_ms / 1000:
-        return None
-    # Decimal subtraction retains precise source values; float is isolated to variance math.
-    changes = [
-        float(right.price - left.price) for left, right in zip(samples, samples[1:], strict=False)
+    count = len(samples)
+    requested = window_seconds // data.sample_seconds + 1
+    elapsed = (samples[-1].timestamp_ms - samples[0].timestamp_ms) / 1000 if count >= 2 else 0.0
+    gaps = [
+        right.timestamp_ms - left.timestamp_ms
+        for left, right in zip(samples, samples[1:], strict=False)
     ]
-    variance_rate = math.fsum(change * change for change in changes) / elapsed
-    if not math.isfinite(variance_rate):
-        raise ValueError("nonfinite variance")
-    return math.sqrt(variance_rate), elapsed, len(samples)
+    result = _SampleWindow(
+        None, elapsed, count, requested, count / requested, max(gaps, default=0), None
+    )
+    if count < 2:
+        return replace(result, rejection="INSUFFICIENT_SAMPLES")
+    if samples[0].timestamp_ms > start_grid:
+        return replace(result, rejection="MISSING_START")
+    if samples[-1].timestamp_ms < end_grid - data.sample_tolerance_ms:
+        return replace(result, rejection="MISSING_END")
+    if elapsed < window_seconds - data.sample_tolerance_ms / 1000:
+        return replace(result, rejection="INSUFFICIENT_SPAN")
+    if Decimal(count) < data.min_sample_coverage * requested:
+        return replace(result, rejection="INSUFFICIENT_COVERAGE")
+    if result.max_gap_ms > data.max_sample_gap_ms:
+        return replace(result, rejection="EXCESSIVE_GAP")
+    # A gap contributes the actual endpoint change over its actual elapsed time.
+    # Decimal subtraction retains source precision; only variance math uses float.
+    try:
+        changes = [
+            float(right.price - left.price)
+            for left, right in zip(samples, samples[1:], strict=False)
+        ]
+        variance_rate = math.fsum(change * change for change in changes) / elapsed
+        if not math.isfinite(variance_rate):
+            return replace(result, rejection="INVALID_VARIANCE")
+    except (ValueError, OverflowError):
+        return replace(result, rejection="INVALID_VARIANCE")
+    return replace(result, sigma=math.sqrt(variance_rate))
 
 
 def _quote(
@@ -322,26 +354,37 @@ def evaluate(snapshot: Snapshot, config: Config) -> Decision:
             strategy.volatility_long_seconds,
             config,
         )
-        if short is None or long is None:
-            return _skip(snapshot, "INSUFFICIENT_HISTORY", features)
-        for label, (sigma, span, count) in (("short", short), ("long", long)):
+        for label, window in (("short", short), ("long", long)):
             features.update(
                 {
-                    f"{label}_sigma": sigma,
-                    f"{label}_span_seconds": span,
-                    f"{label}_sample_count": count,
+                    f"{label}_span_seconds": window.span_seconds,
+                    f"{label}_sample_count": window.sample_count,
+                    f"{label}_requested_sample_count": window.requested_count,
+                    f"{label}_sample_coverage": window.coverage,
+                    f"{label}_max_sample_gap_ms": window.max_gap_ms,
+                    f"{label}_sampling_status": window.rejection or "VALID",
                 }
             )
-        if short[0] == 0 or long[0] == 0:
+            if window.sigma is not None:
+                features[f"{label}_sigma"] = window.sigma
+        if short.rejection or long.rejection:
+            reason = (
+                "INVALID_MODEL"
+                if "INVALID_VARIANCE" in (short.rejection, long.rejection)
+                else "INSUFFICIENT_HISTORY"
+            )
+            return _skip(snapshot, reason, features)
+        assert short.sigma is not None and long.sigma is not None
+        if short.sigma == 0 or long.sigma == 0:
             return _skip(snapshot, "ZERO_VARIANCE", features)
-        stress = max(short[0], long[0]) * float(strategy.volatility_stress_multiplier)
+        stress = max(short.sigma, long.sigma) * float(strategy.volatility_stress_multiplier)
         if not math.isfinite(stress):
             raise ValueError("nonfinite stressed volatility")
-        sigmas = (short[0], long[0], stress)
+        sigmas = (short.sigma, long.sigma, stress)
         reference = market.reference_price
         assert reference is not None  # The common safety gate already rejects missing references.
         probability_up = terminal_probability_up(
-            snapshot.spot.price, reference, short[0], model_tau
+            snapshot.spot.price, reference, short.sigma, model_tau
         )
         features["central_probability_down"] = 1 - probability_up
         features["stress_sigma"] = stress

@@ -224,7 +224,7 @@ def test_unknown_reference_status_cannot_construct_valid_market():
 
 
 @pytest.mark.parametrize(
-    "history_change", ["short", "long_gap", "short_gap", "future", "repeated", "twap"]
+    "history_change", ["short", "long_gap", "consecutive_gap", "future", "repeated", "twap"]
 )
 def test_incomplete_or_invalid_spot_history_cannot_pass_warmup(history_change):
     snap = make_snapshot()
@@ -233,8 +233,8 @@ def test_incomplete_or_invalid_spot_history_cannot_pass_warmup(history_change):
         history = history[-60:]
     elif history_change == "long_gap":
         history = tuple(p for p in history if not NOW - 100_000 < p.timestamp_ms < NOW - 39_000)
-    elif history_change == "short_gap":
-        history = history[:330] + history[331:]
+    elif history_change == "consecutive_gap":
+        history = history[:330] + history[332:]
     elif history_change == "future":
         history = history[:-1] + (replace(history[-1], timestamp_ms=NOW + 61_000),)
     elif history_change == "repeated":
@@ -410,11 +410,13 @@ def test_future_observation_within_clock_tolerance_does_not_fill_missing_grid():
     assert evaluate(replace(snap, history=history), Config()).reason == "INSUFFICIENT_HISTORY"
 
 
-def test_grid_rejects_observation_older_than_tolerance_and_gap_over_seven_seconds():
+def test_grid_discards_overage_observation_and_honors_tighter_gap_limit():
     snap = make_snapshot()
     too_old = replace(snap.history[330], timestamp_ms=snap.history[330].timestamp_ms - 2001)
     history = snap.history[:330] + (too_old,) + snap.history[331:]
-    assert evaluate(replace(snap, history=history), Config()).reason == "INSUFFICIENT_HISTORY"
+    decision = evaluate(replace(snap, history=history), Config())
+    assert decision.side is Side.UP
+    assert decision.features["short_sample_count"] == 60
     smaller_gap = replace(Config(), data=replace(Config().data, max_sample_gap_ms=6000))
     delayed = replace(snap.history[330], timestamp_ms=snap.history[330].timestamp_ms - 2000)
     history = snap.history[:330] + (delayed,) + snap.history[331:]
@@ -481,6 +483,109 @@ def test_model_overflow_returns_finite_nonentry_decision(failure):
     assert decision.max_total_reserved == 0
     assert decision.probability_up is None
     assert decision.scenario_floor is None
+    assert all(
+        isinstance(value, str) or math.isfinite(value) for value in decision.features.values()
+    )
+
+
+def test_isolated_missing_grid_uses_actual_change_and_elapsed_with_coverage():
+    snap = make_snapshot()
+    history = snap.history[:330] + snap.history[331:]
+    decision = evaluate(replace(snap, history=history), Config())
+    assert decision.side is Side.UP
+    # The omitted alternating point removes two $5 changes, replacing them with a zero change.
+    assert decision.features["short_sigma"] == pytest.approx(math.sqrt(1450 / 300))
+    assert decision.features["long_sigma"] == pytest.approx(math.sqrt(8950 / 1800))
+    assert decision.features["short_span_seconds"] == 300
+    assert decision.features["long_span_seconds"] == 1800
+    assert decision.features["short_sample_count"] == 60
+    assert decision.features["long_sample_count"] == 360
+    assert decision.features["short_sample_coverage"] == pytest.approx(60 / 61)
+    assert decision.features["long_sample_coverage"] == pytest.approx(360 / 361)
+
+
+def test_complete_grid_keeps_original_math_and_reports_full_coverage():
+    decision = evaluate(make_snapshot(), Config())
+    assert decision.side is Side.UP
+    assert decision.features["short_sigma"] == pytest.approx(math.sqrt(5))
+    assert decision.features["long_sigma"] == pytest.approx(math.sqrt(5))
+    assert decision.features["short_sample_coverage"] == 1
+    assert decision.features["long_sample_coverage"] == 1
+
+
+@pytest.mark.parametrize("window", ["short", "long"])
+def test_missing_grid_coverage_rejects_even_with_bounded_individual_gaps(window):
+    snap = make_snapshot()
+    # Every missing point is isolated, so each accepted-sample gap stays at 10 seconds.
+    missing = {310, 320, 330, 340} if window == "short" else set(range(10, 191, 10))
+    history = tuple(point for i, point in enumerate(snap.history) if i not in missing)
+    assert evaluate(replace(snap, history=history), Config()).reason == "INSUFFICIENT_HISTORY"
+
+
+def test_coverage_setting_is_consumed_and_can_require_stricter_windows():
+    snap = make_snapshot()
+    history = snap.history[:330] + snap.history[331:]
+    snap = replace(snap, history=history)
+    config = Config()
+    assert evaluate(snap, config).side is Side.UP
+    stricter = replace(config, data=replace(config.data, min_sample_coverage=D(".99")))
+    assert evaluate(snap, stricter).reason == "INSUFFICIENT_HISTORY"
+
+
+@pytest.mark.parametrize("endpoint", ["first", "last"])
+def test_missing_endpoint_rejects_despite_enough_coverage(endpoint):
+    snap = make_snapshot()
+    history = snap.history[1:] if endpoint == "first" else snap.history[:-1]
+    assert evaluate(replace(snap, history=history), Config()).reason == "INSUFFICIENT_HISTORY"
+
+
+def test_endpoint_with_two_second_shortfall_is_accepted():
+    snap = make_snapshot()
+    final = replace(snap.history[-1], timestamp_ms=NOW - 2000)
+    decision = evaluate(replace(snap, history=snap.history[:-1] + (final,)), Config())
+    assert decision.side is Side.UP
+    assert decision.features["short_span_seconds"] == 298
+    assert decision.features["long_span_seconds"] == 1798
+
+
+def test_one_missing_grid_permits_exact_twelve_second_source_gap():
+    snap = make_snapshot()
+    previous = replace(snap.history[329], timestamp_ms=snap.history[329].timestamp_ms - 2000)
+    history = snap.history[:329] + (previous,) + snap.history[331:]
+    assert evaluate(replace(snap, history=history), Config()).side is Side.UP
+
+
+def test_two_missing_grids_reject_even_at_minimum_thirteen_second_source_gap():
+    snap = make_snapshot()
+    following = replace(snap.history[332], timestamp_ms=snap.history[332].timestamp_ms - 2000)
+    history = snap.history[:330] + (following,) + snap.history[333:]
+    assert evaluate(replace(snap, history=history), Config()).reason == "INSUFFICIENT_HISTORY"
+
+
+@pytest.mark.parametrize(
+    "missing,window,reason,count,span,max_gap",
+    [
+        (set(range(361)), "long", "INSUFFICIENT_SAMPLES", 0, 0, 0),
+        ({0}, "long", "MISSING_START", 360, 1795, 5000),
+        ({360}, "long", "MISSING_END", 360, 1795, 5000),
+        ({330, 331}, "short", "EXCESSIVE_GAP", 59, 300, 15000),
+        ({310, 320, 330, 340}, "short", "INSUFFICIENT_COVERAGE", 57, 300, 10000),
+    ],
+)
+def test_rejected_sampling_retains_finite_measured_diagnostics(
+    missing, window, reason, count, span, max_gap
+):
+    snap = make_snapshot()
+    history = tuple(point for i, point in enumerate(snap.history) if i not in missing)
+    decision = evaluate(replace(snap, history=history), Config())
+    assert decision.reason == "INSUFFICIENT_HISTORY"
+    assert decision.features[f"{window}_sampling_status"] == reason
+    assert decision.features[f"{window}_sample_count"] == count
+    assert decision.features[f"{window}_span_seconds"] == span
+    assert decision.features[f"{window}_max_sample_gap_ms"] == max_gap
+    assert decision.features[f"{window}_sample_coverage"] == pytest.approx(
+        count / (61 if window == "short" else 361)
+    )
     assert all(
         isinstance(value, str) or math.isfinite(value) for value in decision.features.values()
     )

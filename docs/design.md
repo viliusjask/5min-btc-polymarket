@@ -137,6 +137,12 @@ source gap: this does not fully synchronize the current inputs. Raw paired scree
 remain unchanged and separate from execution confirmation. This is an experimental response to a
 captured information-lag event, not evidence of improved ROI or an optimized delay.
 
+Once a price-triggered close has been requested from a valid whole-position quote, it remains a
+request to unwind the remaining position, even if the quote recovers after a partial fill or restart.
+Subsequent attempts may consume currently available protected partial depth. Preserve the original
+reason and all freshness, actual-quantity, metadata and uncertain-order guards. Current protected
+prices can differ from the initial trigger; no original stop or target price is guaranteed.
+
 Default exit triggers are an 0.08/share drop from actual entry price, selected bid at 0.98, or
 20 seconds before expiry. These are experimental risk/profit/time choices, not optimized scientific
 claims. Stop/take-profit triggers use depth-weighted executable gross price for the whole held quantity,

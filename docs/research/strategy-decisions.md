@@ -37,6 +37,8 @@ The value metric estimates the final payout's value. Because we also stop, take 
 before expiry, it is not a forecast of the complete strategy's profit. Measured stopped-trade
 outcomes stay separate from probability calibration. Default exits are an 8c drop from actual
 entry price, a 98c depth-weighted bid, or 20 seconds remaining. Those numbers are initial hypotheses.
+Once triggered, a close remains active for the unsold remainder across changing quotes and restart.
+Retries use protected current prices; the initial stop or target price is not guaranteed.
 
 Both executable modes now require a second information check before reserving money: the underlying
 source must advance to at least the original candidate's book timestamp, and the same side must still

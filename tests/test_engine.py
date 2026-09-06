@@ -762,3 +762,144 @@ def test_price_exit_latch_survives_preparation_failure_and_restart(
         ledger.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "shutdown,stale,cross_expiry",
+    [(False, False, False), (True, False, False), (False, True, False), (False, False, True)],
+)
+def test_provider_reads_held_book_after_account_and_refreshes_time(
+    tmp_path, monkeypatch, shutdown, stale, cross_expiry
+):
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        held(ledger, session, venue)
+        venue.now = NOW + 100000
+        start = venue.now
+        entered, release, discovery_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = broker.preflight
+
+        async def account():
+            entered.set()
+            await release.wait()
+            venue.now += 6000
+            return await original()
+
+        monkeypatch.setattr(broker, "preflight", account)
+
+        async def book(token):
+            assert token == TOKEN and release.is_set() and venue.now >= start + 6000
+            assert not discovery_done.is_set()
+            if cross_expiry:
+                venue.now = market().end_s * 1000
+            return bid_book(start if stale else venue.now)
+
+        async def discovery():
+            await discovery_done.wait()
+
+        discovery_task = asyncio.create_task(discovery())
+        engine = Engine(broker, ledger, Config(), session, read_exit_book=book)
+        venue.post_loss = True
+        task = asyncio.create_task(
+            engine.shutdown(None, start) if shutdown else engine.step(None, bid_book(start), start)
+        )
+        await entered.wait()
+        release.set()
+        result = await task
+        if cross_expiry:
+            assert result.reason == "RESOLUTION_UNCONFIRMED" and venue.posts == 0
+        elif stale:
+            assert result.reason == "STALE_EXIT_BOOK" and venue.posts == 0
+        else:
+            assert result.action == "SUBMITTED" and venue.posts == 1
+        assert not discovery_done.is_set()
+        discovery_done.set()
+        await discovery_task
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_input_generation_cancels_pending_after_account_even_if_valid_overwrites_gap(
+    tmp_path, monkeypatch
+):
+    from btc5m.execution_types import SnapshotInput
+
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        latest = SnapshotInput(confirmation_snapshot(), 0)
+        engine = Engine(broker, ledger, Config(), session, read_snapshot=lambda: latest)
+        await engine.step(None, None, NOW)
+        assert engine.pending_candidate is not None
+        original = broker.preflight
+
+        async def account():
+            nonlocal latest
+            latest = SnapshotInput(None, 1)
+            venue.now += 1000
+            latest = SnapshotInput(confirmation_snapshot(venue.now), 1)
+            return await original()
+
+        monkeypatch.setattr(broker, "preflight", account)
+        result = await engine.step(None, None, NOW)
+        assert result.reason == "ENTRY_CONFIRMATION_WAITING" and venue.posts == 0
+        assert engine.pending_candidate.initial_spot_source_ms == venue.now
+        assert any(row.get("code") == "INPUT_INVALIDATED" for row in ledger.observations())
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "change", ["generation", "missing", "identity", "rejection", "budget", "normal", "looser_limit"]
+)
+def test_buy_provider_revalidates_current_authorization_after_preparation(
+    tmp_path, monkeypatch, change
+):
+    from btc5m.execution_types import SnapshotInput
+
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        latest = SnapshotInput(confirmation_snapshot(), 0)
+        engine = Engine(broker, ledger, Config(), session, read_snapshot=lambda: latest)
+        await engine.step(None, None, NOW)
+        venue.now += 1000
+        latest = SnapshotInput(confirmation_snapshot(venue.now), 0)
+        original = broker.prepare
+
+        async def prepare(intent, m):
+            nonlocal latest
+            prepared = await original(intent, m)
+            venue.now += 1000
+            snap = confirmation_snapshot(venue.now)
+            if change == "identity":
+                snap = replace(snap, market=replace(snap.market, reference_price=D("80001")))
+            elif change == "rejection":
+                snap = replace(snap, spot=replace(snap.spot, price=D("80000")))
+            elif change == "budget":
+                snap = replace(snap, up_book=replace(snap.up_book, asks=(Level(D(".60"), D("8")),)))
+            elif change == "looser_limit":
+                snap = confirmation_snapshot(venue.now, ask=".71")
+            latest = SnapshotInput(
+                None if change == "missing" else snap, 1 if change == "generation" else 0
+            )
+            return prepared
+
+        monkeypatch.setattr(broker, "prepare", prepare)
+        venue.post_loss = True
+        result = await engine.step(None, None, venue.now)
+        if change in ("normal", "looser_limit"):
+            assert result.action == "SUBMITTED" and venue.posts == 1, result
+        else:
+            assert result.action == "SKIP" and venue.posts == 0, result
+            assert not ledger.unresolved_orders()
+            assert ledger.order(result.intent_id).state == "REJECTED"
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())

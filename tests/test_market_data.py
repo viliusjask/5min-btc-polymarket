@@ -950,3 +950,77 @@ def test_delayed_current_metadata_unavailability_remains_retryable(
             assert (await data.snapshot()).market.reference_status == "boundary"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "case,field,expected,actual",
+    [
+        ("book_tick", "tick_size", ".01", ".001"),
+        ("book_minimum", "min_order_size", "5", "6"),
+        ("book_condition", "condition_id", None, "0x" + "ab" * 32),
+        ("flags_tick", "tick_size", ".01", ".001"),
+        ("flags_minimum", "min_order_size", "5", "6"),
+        ("unsupported_tick", "tick_size", None, ".02"),
+    ],
+)
+def test_rejected_metadata_public_diagnostic_survives_ledger(
+    tmp_path, case, field, expected, actual
+):
+    from btc5m.ledger import Ledger
+
+    async def run():
+        venue = Venue()
+        ledger = Ledger(tmp_path / "observe.sqlite", "0x" + "00" * 20)
+        first = next(iter(venue.books.values()))
+        if case == "book_tick":
+            first["tick_size"] = actual
+        elif case == "book_minimum":
+            first["min_order_size"] = actual
+        elif case == "book_condition":
+            first["market"] = actual
+        elif case == "flags_tick":
+            venue.market["minimum_tick_size"] = actual
+        elif case == "flags_minimum":
+            venue.market["minimum_order_size"] = actual
+        else:
+            venue.fees["mts"] = actual
+        data = MarketData(
+            Config(),
+            client=venue.client,
+            http_client=venue.http,
+            clock=venue.clock.wall,
+            monotonic=venue.clock.mono,
+            observer=ledger.record_observation,
+        )
+        async with data:
+            await venue.emit()
+            with pytest.raises(DataUnavailable, match="^TRADING_METADATA_CHANGED$"):
+                await data.snapshot()
+        rows = [r for r in ledger.observations() if r["kind"] == "metadata_rejected"]
+        assert rows and rows[0]["compared_field"] == field
+        row = rows[0]
+        assert (
+            row["slug"] == venue.event["slug"]
+            and row["condition_id"] == venue.market["condition_id"]
+        )
+        assert (
+            row["endpoint"] and row["actual"] == str(Decimal(actual))
+            if field != "condition_id"
+            else row["actual"] == actual
+        )
+        if case == "unsupported_tick":
+            assert set(row["supported_ticks"]) == {
+                "0.1",
+                "0.01",
+                "0.005",
+                "0.001",
+                "0.0025",
+                "0.0001",
+            }
+        elif field == "condition_id":
+            assert row["expected"] == venue.market["condition_id"]
+        else:
+            assert Decimal(row["expected"]) == Decimal(expected)
+        ledger.close()
+
+    asyncio.run(run())

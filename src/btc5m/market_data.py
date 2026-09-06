@@ -587,7 +587,28 @@ class MarketData:
                     flags, fees, slug, condition, tokens
                 )
                 for book in (up, down):
-                    if (book.condition_id, book.tick, book.minimum) != (condition, tick, minimum):
+                    mismatches = [
+                        (name, expected, actual)
+                        for name, expected, actual in (
+                            ("condition_id", condition, book.condition_id),
+                            ("tick_size", tick, book.tick),
+                            ("min_order_size", minimum, book.minimum),
+                        )
+                        if expected != actual
+                    ]
+                    for name, expected, actual in mismatches:
+                        self._emit(
+                            "metadata_rejected",
+                            code="TRADING_METADATA_CHANGED",
+                            slug=slug,
+                            condition_id=condition,
+                            token_id=book.book.token_id,
+                            endpoint=f"{CLOB}/book",
+                            compared_field=name,
+                            expected=str(expected),
+                            actual=str(actual),
+                        )
+                    if mismatches:
                         raise DataUnavailable("TRADING_METADATA_CHANGED")
                 # now_ms chooses the initial round; final validation always uses
                 # the advancing injected UTC clock after all network work.
@@ -727,10 +748,35 @@ class MarketData:
         if rate > 1 or exponent != exponent.to_integral_value() or exponent > 10:
             raise DataUnavailable("UNSUPPORTED_FEE_SCHEMA")
         tick, minimum = _decimal(fees.get("mts")), _decimal(fees.get("mos"))
-        if (
-            tick not in TICKS
-            or _decimal(flags.get("minimum_tick_size")) != tick
-            or _decimal(flags.get("minimum_order_size")) != minimum
+        mismatches = []
+        if tick not in TICKS:
+            self._emit(
+                "metadata_rejected",
+                code="TRADING_METADATA_CHANGED",
+                slug=slug,
+                condition_id=condition,
+                endpoint=f"{CLOB}/clob-markets/{condition}",
+                compared_field="tick_size",
+                expected="supported_tick_set",
+                actual=str(tick),
+                supported_ticks=sorted(str(value) for value in TICKS),
+            )
+        for name, expected, actual in (
+            ("tick_size", tick, _decimal(flags.get("minimum_tick_size"))),
+            ("min_order_size", minimum, _decimal(flags.get("minimum_order_size"))),
         ):
+            if expected != actual:
+                mismatches.append(name)
+                self._emit(
+                    "metadata_rejected",
+                    code="TRADING_METADATA_CHANGED",
+                    slug=slug,
+                    condition_id=condition,
+                    endpoint=f"{CLOB}/markets/{condition}",
+                    compared_field=name,
+                    expected=str(expected),
+                    actual=str(actual),
+                )
+        if tick not in TICKS or mismatches:
             raise DataUnavailable("TRADING_METADATA_CHANGED")
         return tick, minimum, rate, int(exponent)

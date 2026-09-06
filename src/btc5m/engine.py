@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, replace
 from decimal import ROUND_DOWN, Decimal
 
 from btc5m.broker import Broker, BrokerError
 from btc5m.config import Config
 from btc5m.domain import Book, Decision, Market, Side, Snapshot
-from btc5m.execution_types import EngineResult, Intent, PendingCandidate, PreflightEvidence
+from btc5m.execution_types import (
+    EngineResult,
+    Intent,
+    PendingCandidate,
+    PreflightEvidence,
+    SnapshotInput,
+)
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.strategy import fee_for
 
@@ -17,9 +24,20 @@ D = Decimal
 
 
 class Engine:
-    def __init__(self, broker: Broker, ledger: Ledger, config: Config, session_id: str) -> None:
+    def __init__(
+        self,
+        broker: Broker,
+        ledger: Ledger,
+        config: Config,
+        session_id: str,
+        *,
+        read_exit_book: Callable[[str], Awaitable[Book | None]] | None = None,
+        read_snapshot: Callable[[], SnapshotInput] | None = None,
+    ) -> None:
         self.broker, self.ledger, self.config, self.session_id = broker, ledger, config, session_id
         self._lock = asyncio.Lock()
+        self._read_exit_book, self._read_snapshot = read_exit_book, read_snapshot
+        self._input_generation: int | None = None
         self._last_exit_book: Book | None = None
         self._shutting_down = False
         self.preflight: PreflightEvidence | None = None
@@ -57,12 +75,20 @@ class Engine:
         self, snapshot: Snapshot | None, exit_book: Book | None, now_ms: int
     ) -> EngineResult:
         async with self._lock:
-            if snapshot is None:
+            if snapshot is None and self._read_snapshot is None:
                 self._cancel_pending("NO_SNAPSHOT", None, now_ms)
             if exit_book is not None:
                 self._last_exit_book = exit_book
             await self.reconcile()
             now_ms = self._now(now_ms)
+            if self._read_snapshot is not None:
+                current_input = self._read_snapshot()
+                snapshot = current_input.snapshot
+                if current_input.invalidation_generation != self._input_generation:
+                    self._cancel_pending("INPUT_INVALIDATED", snapshot, now_ms)
+                self._input_generation = current_input.invalidation_generation
+            if snapshot is None:
+                self._cancel_pending("NO_SNAPSHOT", None, now_ms)
             self.ledger.record_clock(now_ms)
             if self.ledger.unresolved_orders():
                 self._cancel_pending("ORDER_UNRESOLVED", snapshot, now_ms)
@@ -70,6 +96,13 @@ class Engine:
             position = self.ledger.open_position()
             if position is not None:
                 self._cancel_pending("POSITION_OPEN", snapshot, now_ms)
+            if (
+                position is not None
+                and now_ms < position.market.end_s * 1000
+                and self._read_exit_book is not None
+            ):
+                exit_book = await self._read_exit_book(position.token_id)
+                now_ms = self._now(now_ms)
             if position is not None and now_ms >= position.market.end_s * 1000:
                 resolution = await self.broker.resolve(position.market)
                 if resolution is None:
@@ -122,7 +155,7 @@ class Engine:
             return await self._submit(intent, current)
 
     @staticmethod
-    def _candidate_identity(market: Market, side: Side) -> tuple[object, ...]:
+    def candidate_identity(market: Market, side: Side) -> tuple[object, ...]:
         return (
             market.slug,
             market.condition_id,
@@ -178,7 +211,7 @@ class Engine:
             if (
                 pending.side != decision.side
                 or pending.config_fingerprint != self.config.fingerprint
-                or prior != self._candidate_identity(market, decision.side)
+                or prior != self.candidate_identity(market, decision.side)
             ):
                 self._cancel_pending("CANDIDATE_IDENTITY_CHANGED", snapshot, snapshot.now_ms)
                 pending = None
@@ -230,27 +263,34 @@ class Engine:
             reason = None
             if self.ledger.stop_requested():
                 reason = "STOP_REQUESTED_BEFORE_POST"
-            elif snapshot is not None:
-                assert intent.decision is not None
-                from btc5m.strategy import evaluate
+            else:
+                if self._read_snapshot is not None:
+                    latest = self._read_snapshot()
+                    snapshot = latest.snapshot
+                    if latest.invalidation_generation != self._input_generation:
+                        reason = "INPUT_INVALIDATED_BEFORE_POST"
+                if reason is None and snapshot is None:
+                    reason = "NO_SNAPSHOT_BEFORE_POST"
+                if reason is None and snapshot is not None:
+                    assert intent.decision is not None and intent.decision.side is not None
+                    from btc5m.strategy import evaluate
 
-                current = evaluate(
-                    replace(snapshot, now_ms=self._now(intent.created_ms)), self.config
-                )
-                if current.reason != "ENTRY":
-                    reason = current.reason
-                elif (
-                    current.side,
-                    current.buy_principal,
-                    current.max_total_reserved,
-                    current.price_limit,
-                ) != (
-                    intent.decision.side,
-                    intent.principal,
-                    intent.reserved_cash,
-                    intent.price_limit,
-                ):
-                    reason = "DECISION_CHANGED_BEFORE_POST"
+                    current = evaluate(
+                        replace(snapshot, now_ms=self._now(intent.created_ms)), self.config
+                    )
+                    if current.reason != "ENTRY":
+                        reason = current.reason
+                    elif current.side != intent.decision.side or self.candidate_identity(
+                        snapshot.market, intent.decision.side
+                    ) != self.candidate_identity(intent.market, intent.decision.side):
+                        reason = "CANDIDATE_IDENTITY_CHANGED_BEFORE_POST"
+                    elif (
+                        current.price_limit is None
+                        or current.buy_principal != intent.principal
+                        or current.max_total_reserved < intent.reserved_cash
+                        or current.price_limit < intent.price_limit
+                    ):
+                        reason = "DECISION_CHANGED_BEFORE_POST"
             if reason is not None:
                 self.ledger.abandon(intent.intent_id, reason)
                 return EngineResult("SKIP", reason, intent.intent_id)

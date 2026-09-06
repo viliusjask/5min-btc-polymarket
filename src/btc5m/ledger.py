@@ -836,6 +836,25 @@ class Ledger:
             "estimated_net_proceeds",
         }
         safe = {key: value for key, value in record.items() if key in allowed}
+        if record.get("kind") == "metadata_rejected":
+            field = record.get("compared_field")
+            if field not in ("condition_id", "tick_size", "min_order_size"):
+                raise LedgerError("INVALID_PUBLIC_OBSERVATION")
+            safe["compared_field"] = field
+            for key in ("expected", "actual"):
+                value = record.get(key)
+                if not isinstance(value, str | Decimal) or len(str(value)) > 128:
+                    raise LedgerError("INVALID_PUBLIC_OBSERVATION")
+                safe[key] = str(value)
+            if "supported_ticks" in record:
+                ticks = record["supported_ticks"]
+                if (
+                    not isinstance(ticks, list | tuple)
+                    or any(not re.fullmatch(r"0\.[0-9]{1,8}", str(tick)) for tick in ticks)
+                    or len(ticks) > 8
+                ):
+                    raise LedgerError("INVALID_PUBLIC_OBSERVATION")
+                safe["supported_ticks"] = [str(tick) for tick in ticks]
         kind = safe.get("kind")
         stamp = safe.get("received_ms")
         if not isinstance(kind, str) or type(stamp) is not int or len(_json(safe)) > 200000:

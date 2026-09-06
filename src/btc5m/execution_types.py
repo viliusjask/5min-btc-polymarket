@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal
 
-from btc5m.domain import Decision, Market, Side
+from btc5m.domain import Decision, Market, Side, Snapshot
 
 OrderState = Literal["RESERVED", "PREPARED", "SUBMITTING", "ACK", "UNKNOWN", "SETTLED", "REJECTED"]
 
@@ -210,3 +210,9 @@ class PendingCandidate:
     initial_spot_source_ms: int
     original_book_source_ms: int
     original_decision_ms: int
+
+
+@dataclass(frozen=True)
+class SnapshotInput:
+    snapshot: Snapshot | None
+    invalidation_generation: int

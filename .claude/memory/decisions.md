@@ -8,3 +8,15 @@
   stopped-policy profit. Do not make simulator construction a prerequisite for a bounded live trial.
 - 2026-09-06: Current contracts identify Chainlink TWAP60; verify observed boundary anchoring
   against official metadata before treating captured boundary values as reliable live references.
+- 2026-09-06: Two anonymous boundary comparisons passed, including a boundary distinct from
+  neighboring seconds. Captured exact-boundary anchors are enabled; cached null metadata cannot
+  erase them. Evidence and the current rule remain in docs/research/anchor-probe.md.
+- 2026-09-06: Actual source gaps made a complete five-second grid unusable for long windows.
+  A reviewed policy permits isolated missing samples with at least95% coverage and at most12s
+  between accepted points; full-span/endpoints and current-price freshness remain required.
+  In the completed32-minute raw-feed replay,24/24 long windows passed versus0/24 strict windows.
+  This establishes operating availability, not more accurate probabilities or higher returns.
+- 2026-09-06: Public positions discovery must request sizeThreshold=0 and includeArchived=true.
+  Pinned SDK0.9 lacks the archive argument, so a narrow anonymous HTTP adapter is intentional.
+  The index supplies candidate tokens for onchain checks; it cannot prove exhaustive absence of
+  foreign ERC1155 holdings. Use a dedicated wallet and preserve the ledger through restarts.

@@ -344,3 +344,53 @@ no-retry/UNKNOWN policy therefore need not disable a hidden SDK retry mechanism.
 property with a transport-count fixture when testing timeout-after-acceptance. SDK transport logging
 can include an exception's text, so do not enable its request-failure logger on authenticated paths;
 the application reports sanitized error classes/reason codes instead.
+
+## Account setup documentation handoff
+
+Current official instructions distinguish CLOB L2 credentials (key, secret, passphrase) from
+Relayer API keys and Builder credentials. Their similar names do not make them interchangeable.
+The bot consumes existing CLOB credentials and the explicit account wallet address. The website's
+Settings → API Keys → Relayer API Keys route authorizes wallet operations; it is not the source of
+the CLOB tuple. Link the official CLOB provisioning instructions for a separate user-controlled
+setup step, without embedding an automatic SDK create/derive flow in doctor or run.
+[Wallets and Authentication](https://docs.polymarket.com/trading/wallets-auth).
+
+For a website-managed account, use Polymarket's own portfolio position claim/redeem action after
+resolution. A separately created EOA may require a separate official wallet transaction route;
+do not promise its holdings appear in a different website wallet. Our app performs no redemption,
+and a claimable balance remains distinct from spendable cash.
+[Position management](https://docs.polymarket.com/trading/positions/manage).
+
+## Indexed holdings discovery without the default dust filter
+
+Pinned `AsyncPublicClient` signature:
+
+```python
+list_positions(*, user: str, market: str | Sequence[str] | None=None,
+               event_id: int | Sequence[int] | None=None,
+               size_threshold: float | None=None,
+               redeemable: bool | None=None, mergeable: bool | None=None,
+               sort_by: PositionSortBy | None=None,
+               sort_direction: SortDirection | None=None,
+               title: str | None=None, page_size: int=20)
+    -> AsyncPaginator[Position]
+```
+
+Use `size_threshold=0`, not omission: a synthetic request-spec check confirmed the SDK retains numeric zero as wire `sizeThreshold=0`; `None` omits it and the documented server default is **1 share**. Iterate all pages without awaiting `list_positions()` itself. SDK page size permits 1–500 and advances `offset` by page size until a short page; it makes an extra empty request after an exact multiple. The documented server offset maximum is 10000; a full final allowable page, timeout, repeated page, or parse failure cannot count as complete enumeration. [Pinned request builder](https://github.com/Polymarket/py-sdk/blob/polymarket-client-v0.9.0/src/polymarket/_internal/actions/data.py), [SDK pagination](https://github.com/Polymarket/py-sdk/blob/polymarket-client-v0.9.0/src/polymarket/_internal/pagination.py).
+
+**SDK gap:** current `/positions` also defaults `includeArchived=false`; 0.9.0 has no `include_archived` parameter. For the preflight discovery scan use a narrow existing-httpx public GET adapter, with these fixed parameters and incrementing offsets:
+
+```text
+https://data-api.polymarket.com/positions
+user=<verified_funder>&sizeThreshold=0&includeArchived=true&limit=500&offset=0
+```
+
+Omit market, event, title, redeemable, and mergeable filters. Parse each row with `polymarket.models.data.portfolio.Position.model_validate`, retaining Decimal sizes. This includes both active and redeemable indexed positions rather than only the current BTC round. The archive flag is documented to include positions in archived markets that remain active. [Current endpoint contract](https://docs.polymarket.com/api-reference/core/get-current-positions-for-a-user).
+
+Anonymous September 6 probe: choosing a holder from the current BTC market's public market-position index, the unrestricted zero-threshold/archive-enabled scan returned **6 rows: 2 nonredeemable and 4 redeemable; all 4 redeemable rows had positive size below one share and zero current value**. Adding `redeemable=true` returned only those 4. Thus the omitted flag demonstrably includes both states; `redeemable=true` is not a winner/positive-payout certificate. No public wallet identity or profile details were retained. Synthetic model fixtures also preserved size `0.000001` with value zero, a redeemable dust row, and a zero-size row without local filtering.
+
+Identity fields: `Position.wallet` maps wire `proxyWallet`; `asset_id` maps `asset`; `condition_id`, `size`, `current_value`, `cur_price`, `redeemable`, `negative_risk`, and outcome fields are available. Most fields except condition ID are optional: missing wallet/token/size must remain incomplete evidence, not zero. Require wallet equality with the configured funder. Secure-client `wallet`, `signer`, and `wallet_type` are distinct properties; wallet types are `EOA`, `POLY_PROXY`, `GNOSIS_SAFE`, `DEPOSIT_WALLET` (signature types 0–3 respectively). Secure `list_positions(user=None,...)` defaults to `client.wallet`; public `user` is mandatory. The positions response and `PublicProfile` contain no wallet-type proof. [Position model](https://github.com/Polymarket/py-sdk/blob/polymarket-client-v0.9.0/src/polymarket/models/data/portfolio.py), [wallet types](https://github.com/Polymarket/py-sdk/blob/polymarket-client-v0.9.0/src/polymarket/_internal/wallet.py).
+
+Related routes are not interchangeable: `list_closed_positions(user=...,page_size=20)` reads `/closed-positions` (max page 50) and its model has no current size, so history cannot prove current ownership. `list_market_positions(market=condition,user=funder,status="ALL")` reads `/v1/market-positions`; it includes indexed dust for a **known** market (`OPEN` alone excludes sizes <=0.01), not unknown-market discovery. Combo holdings have a separate `list_combo_positions` route `/v1/positions/combos`; ordinary positions enumeration must not be claimed to cover every protocol. [Market-position endpoint](https://docs.polymarket.com/api-reference/core/get-positions-for-a-market).
+
+Preflight limitation: this is candidate discovery from a mutable public index, without an at-block snapshot or documented exhaustive ERC1155 ownership guarantee. Zero current value does not mean zero inventory, and an empty scan does not prove the absence of unindexed transfers, unsupported positions, or omitted/later-indexed tokens. Confirm each discovered/ledger-known candidate with the appropriate onchain balance and payout reads. Keep the dedicated-wallet and persisted-ledger boundary explicit; do not claim full onchain absence from this API, overwrite the ledger from it, or count indexed claim value as cash. Fixtures should cover the emitted archive/zero flags, multiple pages plus cap exhaustion, positive zero-value dust, wallet mismatch/null identity, and foreign candidate detection.

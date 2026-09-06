@@ -127,7 +127,11 @@ A USD100 dedicated wallet is the outer experimental allocation. No automatic rel
 Default exit triggers are an 0.08/share drop from actual entry price, selected bid at 0.98, or
 20 seconds before expiry. These are experimental risk/profit/time choices, not optimized scientific
 claims. Stop/take-profit triggers use depth-weighted executable gross price for the whole held quantity,
-while reporting also subtracts expected sell fees. If full depth is missing, do not fabricate a
+while reporting also subtracts expected sell fees. Actual entry price is confirmed BUY principal
+divided by confirmed received shares, excluding
+the buy fee. Inventory cost basis includes that fee and is allocated proportionally across partial
+sales for realized net profit and risk accounting; do not use fee-inclusive basis as the price trigger.
+If full depth is missing, do not fabricate a
 full liquidation quote: time/shutdown triggers still permit a protected partial close against
 available bids; remaining inventory stays unresolved. Evaluate sell-depth for actual held quantity; a last price or a best bid with insufficient
 size is not a full liquidation quote. Triggering a stop requests a price-protected exit; it does not

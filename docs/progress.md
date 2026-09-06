@@ -7,7 +7,7 @@
 - Design independently reviewed; six execution and five strategy findings incorporated.
 - Anonymous boundary probe passed two comparisons, including exact second vs neighboring seconds.
 - Task1 complete and independently approved;122tests,lint/format/mypy pass.
-- Task2 implemented at2e5cd84;50 adapter tests and172 combined tests pass, with two bounded anonymous feed/book smokes. Independent task review is running; tasks3..4 pending. No real orders or account actions.
+- Task2 complete and independently approved at05c808e. Two review findings fixed with targeted regressions;60 adapter tests and182 combined tests pass, lint/format/mypy clean. Two bounded anonymous feed/book smokes are recorded. Tasks3..4 remain. No real orders or account actions.
 
 Decisions: default experimental value filter plus modified upstream momentum comparison; no fitted drift,
 no passive market-making, no micro-hedge. Exact captured TWAP60 opening anchors enabled on probe evidence; missing boundaries still skip.

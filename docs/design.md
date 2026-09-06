@@ -224,8 +224,9 @@ permissions; logs cannot expose secrets in exception representations.
 
 Replace/remove unsafe orphaned scripts and YAML rather than retain two strategy engines. Keep a thin
 repo-local control wrapper if useful, with no implicit --execute. Rewrite README/SKILL/CONTOUR/examples
-to describe real commands and limitations. Docker, if retained, gets only an explicit runtime mount,
-no parent-workspace/home access and no credentials on default observe; do not claim untested builds.
+to describe real commands and limitations. This repair uses the verified native WSL/Linux route.
+Remove the original Docker launcher/compose surface; Docker is unavailable in this WSL distro and
+the old host-directory mount is unsafe. Do not add an unverified replacement container workflow.
 Use CLAUDE.md -> AGENTS.md for shared context; .worktreeinclude must not copy .env/live data. Dependencies
 and dev tools are pinned in pyproject/uv.lock. CI runs meaningful tests, lint, format and type checks.
 

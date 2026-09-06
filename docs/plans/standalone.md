@@ -219,8 +219,8 @@ README.md, SKILL.md, CONTOUR.md, examples/run-example.md, scripts/, docker-compo
   is explicit/read-only. Canonical config path resolves from package/repo, not accidental working directory.
 - [ ] Replace unsafe shell control with thin quoted repo-local CLI delegation. Remove all orphaned legacy
   strategy/report engines and unused YAML; update docs and examples to actual verified commands.
-- [ ] Retain Docker only with an explicit runtime mount and no parent directory or default secrets; document
-  any unverified build. Add CI scoped to pytest/lint/format/type checks and dependency lock consistency.
+- [ ] Remove the original Docker launcher/compose surface; use verified native WSL/Linux commands.
+  Add CI scoped to pytest/lint/format/type checks and dependency lock consistency.
 - [ ] Synthetic E2E exercises real core+ledger+engine and fake venue transport, including entry->partial exits
   ->confirmed fees->flat report, then interrupted/unknown recovery. No source-string tests.
 - [ ] Run full checks and bounded public observe/doctor. Produce concise research/strategy decisions and live

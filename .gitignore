@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 .env
 .env.*
+.worktrees/
+.venv/
+runtime/
+work/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/

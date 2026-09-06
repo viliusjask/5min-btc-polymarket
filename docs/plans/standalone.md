@@ -117,6 +117,8 @@ Read design contract/model/sizing sections. Public behaviour is deterministic de
 
 - [ ] Write tests first for unknown/invalid configuration, nonfinite numbers, quantity budget vs minimum,
   stale/crossed/missing-side books, missing anchor, wrong rule, wrong round and insufficient history.
+  Sparse sampling requires95% grid coverage, <=12s accepted-source gap and full requiredspan within2s;
+  isolated missinggrid is allowed without interpolation, consecutive missinggrids and bad endpoints reject.
 - [ ] Add independently derived numerical tests, including:
 
 ```python

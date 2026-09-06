@@ -72,11 +72,15 @@ an empirically fitted coefficient. Exact discrete feed construction remains mode
 Use five-second sampled spot differences, time-based variance sum(delta_price**2)/elapsed,
 with 300-second and 1800-second windows. Build five-second UTC source-time grid points;
 choose the last observation at or before each grid point only if its age is <=2 seconds.
-Each grid point must use a distinct source observation. A missing grid point invalidates that
-window; do not forward-fill. Maximum accepted sampled-observation gap is 7 seconds. Derive
+Each accepted grid point must use a distinct source observation. Skip isolated unavailable grid
+points without interpolation or forward-fill; require at least95% of requested grid points and a
+maximum12-second gap between accepted source observations. At five-second spacing with two-second
+timing tolerance, this permits one missing grid but rejects two consecutive missing grids. Derive
 variance denominator from actual accepted timestamps, not an assumed tick count. Required span
-may fall short by at most the 2-second sampling tolerance. Include shorter missing-segment tests.
-Require 1800 seconds of clean warm-up by default and
+may fall short by at most the2-second sampling tolerance; missing endpoints therefore still reject.
+These completeness bounds were selected from anonymous feed-availability evidence, not trading PnL.
+The replay preserved every previously valid volatility estimate and recovered isolated-gap windows;
+see docs/research/volatility-sampling.md. Require1800seconds of valid warm-up by default and
 explicitly report effective spans/counts. Retain jumps. Stress the larger variance-rate estimate
 by a multiplier 1.25 on sigma. For each side take the minimum probability across both estimates
 and the stress, with an adverse USD10 reference shift. These are sensitivity scenarios, NOT

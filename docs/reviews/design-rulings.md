@@ -25,3 +25,9 @@ active exposure; verified resolved winners become tracked claimable holdings, ne
 remaining basis is realized once. Resolved holdings remain known to reconciliation but do not block
 all future rounds merely because manual claim has not occurred. No undocumented small-SELL exemption
 or actual minimum-size acceptance is assumed. This prevents a one-trade permanent halt on normal dust.
+
+Sampling ruling: anonymous feed gaps made strict complete-grid warm-up reject usable histories.
+Adopt95% minimum grid coverage, maximum12-second actual accepted interval, unchanged2-second
+source selection age and endpoint span tolerance. Preserve gaps without interpolation and reject
+consecutive missinggridpoints. Complete-grid estimates are unchanged. See volatility-sampling research;
+this is an availability correction with explicit model limitations, not return-threshold optimization.

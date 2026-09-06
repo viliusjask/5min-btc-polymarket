@@ -5,6 +5,8 @@ __pycache__/
 .worktrees/
 .venv/
 runtime/
+.runtime/
+.observations/
 work/
 .pytest_cache/
 .ruff_cache/

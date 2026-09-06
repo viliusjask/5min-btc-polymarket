@@ -36,3 +36,29 @@ reconstruction of 24 end-round skips. A later anonymous read found disagreeing t
 but could not prove that was the earlier cause. Record normalized compared fields and public
 identities at the rejecting branch. Do not infer historical payloads from a later endpoint read.
 The narrow integration fix is assigned to Task 4; entry checks remain unchanged.
+
+## 2026-09-06: One confirmed trade authorized provisional receipt amounts
+
+A transaction containing two confirmed shares and three provisional shares credited its full
+five-share aggregate receipt to final accounting. Grouping by transaction/hash was insufficient:
+one CONFIRMED account row authorized every decoded owned amount in that transaction. Test BUY
+and SELL with mixed statuses sharing a receipt, then advance status without changing the receipt.
+When an aggregate cannot be reliably split, retain it as provisional until matching confirmed
+account evidence supports the whole amount; never invent a prorated fee. Execution review fix
+round 1 adds the regression and preserves receipt identity deduplication.
+
+## 2026-09-06: Final preparation weakened approved metadata checks
+
+A freshly changed raw minimum, an unsupported fee flag or an unknown fee-object field still
+reached a synthetic POST despite the public snapshot parser rejecting those conditions. Compare
+the final preparer's authorities with the approved snapshot parser, including values that change
+after the snapshot. The authorized SELL tick exception does not relax minimum or fee schema checks.
+
+## 2026-09-06: Concurrent SELECTs fabricated a flat financial summary
+
+A readonly report combined old cash/no position with a newly settled absence of pending orders.
+The writer actually held five shares. Multiple SELECTs without an explicit read transaction can
+observe different committed SQLite versions; a connection context manager alone does not start
+the needed read snapshot. Deterministically commit settlement between the reader's queries and
+require a coherent before-or-after result. Use a nested-safe read transaction without acquiring
+the trading-owner lock. Execution review fix round 1 covers the interleaving.

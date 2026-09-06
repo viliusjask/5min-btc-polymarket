@@ -29,6 +29,8 @@ Task3 owns `src/btc5m/{broker,ledger,engine,execution_types,rpc}.py`, `tests/tes
 Task4 owns `src/btc5m/{cli,__main__}.py`, CLI/E2E tests, wrappers, docs, container/CI cleanup.
 Task4 also owns the narrow rejected-metadata diagnostic addition in `market_data.py` and its tests,
 as specified by the public-probe finding in its task brief; entry validation remains unchanged.
+Task4 also owns the matching Ledger public-observation sink, and the narrow Engine/execution_types
+fresh-input provider integration plus focused tests defined in its enriched brief.
 Root owns design/research/plan/progress and package/bootstrap metadata until final integration.
 
 Domain interfaces established by Task1 (other tasks consume these names):
@@ -183,12 +185,12 @@ step(snapshot_or_none,exit_book_or_none,now_ms), reconcile(), and shutdown(snaps
 Exit processing must remain possible when reference-feed/history is unavailable; it uses the stored
 market/position and independently fetched bid book. Task2 also provides async book(token_id)->Book.
 
-- [ ] Define observable ledger transitions RESERVED->PREPARED->SUBMITTING->ACK/UNKNOWN->SETTLED/REJECTED,
+- [x] Define observable ledger transitions RESERVED->PREPARED->SUBMITTING->ACK/UNKNOWN->SETTLED/REJECTED,
   separately tracking cumulative confirmed fills, outstanding quantity and risk reservations.
-- [ ] Tests first: lost POST response after acceptance, restart after each persistence boundary, duplicate
+- [x] Tests first: lost POST response after acceptance, restart after each persistence boundary, duplicate
   fill callback, partial sell then retry remainder, mixed failed/confirmed fills, receipt fee accounting,
   not-found order, exit without bids, foreign inventory, wrong chain/receipt and single-process lock.
-- [ ] Include independent cash arithmetic:
+- [x] Include independent cash arithmetic:
 
 ```python
 # Confirmed BUY receipt:5 shares, price.70, actual fee.0735 => inventory5, cash debit3.5735.
@@ -197,15 +199,15 @@ market/position and independently fetched bid book. Task2 also provides async bo
 # Unknown buy with zero visible fills must retain reserve and prevent another entry after restart.
 ```
 
-- [ ] Implement SQLite with atomic reserves/unique round intent and private signed payloads. No budget reset
+- [x] Implement SQLite with atomic reserves/unique round intent and private signed payloads. No budget reset
   on restart. Default wallet-scoped common-root runtime, restrictive permissions and process lock.
-- [ ] Implement secure SDK factory only on explicit live path, preflight balances/allowances/foreign orders,
+- [x] Implement secure SDK factory only on explicit live path, preflight balances/allowances/foreign orders,
   canonical EIP712 hash, protected FOK entry and FAK exit, persist-before-post, owned-order reconciliation.
   Receipt decoding filters chain/exchange/hash/token/wallet; actual fees finalize cash. Read-only RPC helper.
-- [ ] Engine evaluates entry only while flat/reconciled; risk limits count unknown and provisional exposure.
+- [x] Engine evaluates entry only while flat/reconciled; risk limits count unknown and provisional exposure.
   Actual held shares and depth drive exits. Stop/time/profit triggers share reliable close handling.
   No GTC/penny fallback, auto approval, auto redemption or false success on partial fills.
-- [ ] Verify scoped tests, independently crosscheck hash vector or read-only hashOrder, replay crash scenarios;
+- [x] Verify scoped tests, independently crosscheck hash vector or read-only hashOrder, replay crash scenarios;
   anonymous RPC check only. Commit and task review of safety/accounting and spec compliance.
 
 ### Task 4: CLI, operations, documentation and integration

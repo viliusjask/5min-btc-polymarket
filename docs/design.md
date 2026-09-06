@@ -124,6 +124,15 @@ Confirmed worthless residual inventory realizes its remaining basis loss even wi
 Never round up a position to satisfy minimum size if doing so exceeds the authorized reservation.
 A USD100 dedicated wallet is the outer experimental allocation. No automatic reload or compounding.
 
+The CLI supplies read-only latest-input and held-book providers to the execution engine. The
+engine samples current inputs after account reconciliation and reads the held token book afterward,
+so account latency cannot age an already-passed quote beyond its freshness limit. A monotonic
+invalidation counter preserves observed gaps, raw selected-strategy rejections and material identity
+excursions even if a valid snapshot arrives before the engine consumes them. Ordinary valid updates
+do not increment it. The engine alone consumes that state under its lock; it rechecks the latest
+input and prepared economic bounds before posting a BUY. Missing/invalid intervening data abandons
+known-unposted preparation. No replay or repricing loop is added. Shutdown uses the same fresh-book path.
+
 An eligible screen is not yet an opening order. For either selected mode, arm one pending candidate
 with its side, round/config identity, initial spot source, initial selected-book source timestamp and
 decision time. Keep that original book timestamp fixed. Confirm only on a subsequent fresh snapshot

@@ -30,3 +30,10 @@
 - 2026-09-06: Native WSL/Linux is the verified runtime target. Docker Desktop's shim is present
   but WSL integration is unavailable; remove the old launcher rather than advertise an untested
   replacement container workflow. Preserve feature branches/worktrees for the user to merge.
+- 2026-09-06: Once a whole-position STOP/PROFIT condition requests a close, keep that request
+  active across partial fills, changing quotes and restart. Continue protected current partial
+  attempts when safe, retain the original reason, and never confuse a trigger with a guaranteed
+  price or successful sale. This resolves an ambiguous policy, not an optimized-return claim.
+- 2026-09-06: Manual reconciliation is read-only at the venue but writes local execution evidence,
+  so it takes the same journal-owner lock as trading. Readonly status/report/account diagnosis
+  and the dedicated concurrent stop writer remain available while the trader owns the journal.

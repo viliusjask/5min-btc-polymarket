@@ -144,7 +144,12 @@ No re-entry, opposite-side hedge, GTC fallback or general strategy plugin framew
 An exit attempt may partially execute. Reconcile the unsold remainder before another order.
 If no safe exit is available, persist exposure, emit a prominent reason and continue monitoring.
 Unexitable fractional holdings remain tracked through expiry. Require verified official resolution
-before moving them out of active uncertain exposure. Resolved winning remnants remain owned claimable
+before moving them out of active uncertain exposure. Verify binary payout mappings at one explicit
+finalized Polygon block, retain/recheck its hash, and derive CTF singleton token IDs with underlying
+USDC.e (distinct from trading-cash pUSD) to match saved tokens without relying on label order.
+Require two slots and payouts exactly(1,0) or(0,1); zero denominator, fractional payouts, unknown
+mapping/finality or outstanding order ambiguity remains unresolved. The verified public vector and
+read-only ABI are in docs/research/sdk-contract.md. Resolved winning remnants remain owned claimable
 inventory and are excluded from available cash; their existence alone does not permanently block the
 next active round. Resolved losing remnants realize their remaining basis exactly once, while any
 still-owned tokens stay in account reconciliation. Unknown-resolution remnants retain their risk.

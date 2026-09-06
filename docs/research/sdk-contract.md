@@ -288,3 +288,51 @@ Minimal ledger policy:
 - A later manual redemption becomes cash only after confirmed redemption and balance reconciliation. No automatic redemption or new implementation route is required here. Official guidance says resolved winning tokens redeem for 1 pUSD each and losing tokens for zero. [Position management](https://docs.polymarket.com/trading/positions/manage).
 
 Bounded fixtures: partial close leaving 4.99 shares; 3.257891 shares signed as 3.25 with 0.007891 retained; resolved winning dust permits a new round but cannot fund it; resolved losing dust writes off basis once; unresolved/ambiguous residual continues blocking. Actual minimum SELL acceptance can be tested later within the authorized small live trial; it is not a prerequisite for implementing this honest conservative behavior.
+
+## Verified read-only CTF resolution and outcome identity
+
+**Yes: standard CTF payout reads establish resolution independently of Gamma/CLOB flags.** Polymarket's CTF source exposes the public payout mappings, forbids setting a previously nonzero denominator again, and uses that denominator to gate redemption. The payout for singleton outcome index `i` is `payoutNumerators(conditionId,i) / payoutDenominator(conditionId)`. Query at a finalized Polygon block; finality of the block remains necessary even though the contract's reported payout cannot subsequently be overwritten. [Pinned CTF source](https://github.com/Polymarket/conditional-tokens-contracts/blob/a927b5a52cf9ace712bf1b5fe1d92bf76399e692/contracts/ConditionalTokens.sol).
+
+All calls below target CTF `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045` on chain 137. Exact ABI signatures and deployed-call selectors:
+
+| Function signature | Selector | Return ABI |
+|---|---|---|
+| `getOutcomeSlotCount(bytes32)` | `0xd42dc0c2` | `uint256` |
+| `payoutDenominator(bytes32)` | `0xdd34de67` | `uint256` |
+| `payoutNumerators(bytes32,uint256)` | `0x0504c814` | `uint256` |
+| `getCollectionId(bytes32,bytes32,uint256)` | `0x856296f7` | `bytes32` |
+| `getPositionId(address,bytes32)` | `0x39dd7530` | `uint256` |
+
+`getCollectionId` arguments are parent collection (32 zero bytes), condition ID, index set. For binary singleton index `i`, index set is `1 << i`, thus 1 and 2. `getPositionId` takes **underlying USDC.e** `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` and that collection ID. This is distinct from wallet cash pUSD. The current adapter derives standard CTF positions from its USDCE field and wraps redeemed collateral into pUSD; its pUSD-facing function argument does not redefine the underlying CTF IDs. [Pinned adapter source](https://github.com/Polymarket/ctf-exchange-v2/blob/ccc0596074f4dfd62c944fbca4de252893b82b4b/src/adapters/CtfCollateralAdapter.sol).
+
+Anonymous query evidence, September 6, 2026:
+
+- Gamma `GET /events?slug=btc-updown-5m-1788631200&include_chat=false` identifies a standard (`negRisk=false`) BTC market ending September 5 at 18:05 UTC; `umaResolutionStatus=resolved`, labels `[Up,Down]`, prices `[0,1]`, anchor `80065.42201137073`, final `80036.77431728777`. These metadata corroborate the onchain outcome; they are not its finality proof. [Public event payload](https://gamma-api.polymarket.com/events?slug=btc-updown-5m-1788631200&include_chat=false).
+- Condition: `0x36734a624c2b5aeee164162536fe811bb82677ad927050b50cc46838fe67d494`.
+- RPC `https://polygon.drpc.org` returned chain ID `0x89`. `eth_getBlockByNumber("finalized",false)` returned block **93338017**, hex `0x59039a1`, timestamp `2026-09-06T16:27:39Z`, hash `0x800b15e3c168c04eb194dd3cd8892b96b5fc742470d68001ce71664f83cdaba8`. Every subsequent call used that explicit block number, and a later block-by-number read returned the same hash.
+- At that block: outcome slot count **2**, denominator **1**, numerator index 0 **0**, numerator index 1 **1**.
+
+Exact identity vectors from deployed `eth_call`, also matching both Gamma `clobTokenIds`:
+
+| CTF index / index set | Collection ID | USDC.e-derived token ID | Matched label / payout |
+|---|---|---|---|
+| 0 / 1 | `0x473b89f4c4a2a8702819d50cc597500f9cddc34a375bafcff9352b4a60956396` | `93464131606378261331338471789927052245553593563803080458303202347805601920785` | Up / 0 |
+| 1 / 2 | `0x4c7f1253b450efe9b852240a245ead472fc24c4cf96a83bf55c6d1bbc6eef597` | `54587822891934720131108562415940344642217988714969692821005775518682216077925` | Down / 1 |
+
+Negative control: pUSD-derived index-set-1 token was `18167158608228514079914336201797985869660722887513875858583226140523299196062`, which does **not** match the traded Up token. This catches accidental reuse of the exchange cash address for CTF identity.
+
+Reproduction encoding: calldata is `keccak(text=signature)[:4] + eth_abi.encode(argument_types, arguments)`; decode the result according to the return ABI above. For example, the denominator request is:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"0x4D97DCd97eC945f40cF65F87097ACe5EA0476045","data":"0xdd34de6736734a624c2b5aeee164162536fe811bb82677ad927050b50cc46838fe67d494"},"0x59039a1"]}
+```
+
+Expected result: `0x0000000000000000000000000000000000000000000000000000000000000001`. Numerator arguments append one uint256 ABI word for index 0 or 1; collection and position arguments follow the table. No signer, account, balance, relayer, or transaction broadcast is involved.
+
+Minimal runtime contract: require standard CTF/non-negative-risk, slot count 2, distinct derived IDs matching the saved market's **set of token IDs**, and a tracked held token matching exactly one derived ID. Assign payouts to that token ID; only afterward associate the saved human label. Never infer CTF index from list position or assume Up means index 0. Require denominator `d>0` and vector exactly `(d,0)` or `(0,d)`, allowing any positive normalization d while accepting only economic payouts 0 or 1. Denominator zero, fractional payout, unprepared/nonbinary condition, mapping mismatch, RPC failure, unavailable finalized block, or conflicting evidence remains visibly unresolved under the initial policy. This conservatively leaves fractional-but-onchain-resolved conditions unsupported rather than inventing a binary winner.
+
+Read all related state at one explicit finalized block number, retain block hash/number and raw vector, and verify the block hash remains consistent before committing the ledger transition. Add only these CTF selectors and `eth_getBlockByNumber` to the existing read allowlist. Resolution releases directional exposure only after outstanding order/trade ambiguity is cleared; winning residual becomes claimable noncash inventory and losing basis is realized once, as above. This operation performs no redemption.
+
+SDK 0.9.0 has no equivalent payout-mapping/collection/position-ID getter: an exhaustive source search found none of the five names. Its position helper consumes API token IDs and its `redeem_positions` method submits a wallet transaction, so it must not be used as a resolution probe. Existing httpx/eth_abi/eth_utils suffice. [Pinned position helper](https://github.com/Polymarket/py-sdk/blob/polymarket-client-v0.9.0/src/polymarket/_internal/actions/relayer/positions.py).
+
+Fixtures: this full vector, reversed metadata outcome ordering, pUSD-derived mismatch, denominator zero, fractional `[1,1]/2`, nonbinary slot count, changed finalized block hash, and successful resolution with an unresolved submit still blocking transition. The anonymous RPC evidence verifies this resolution path without a funded trial.

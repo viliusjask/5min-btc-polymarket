@@ -39,3 +39,31 @@ Real BTC and oracle observations need not satisfy that Brownian/exogenous-sampli
 There are **no eligible 1800-second windows** in either fixed replay dataset. Do not infer a demonstrated successful 30-minute warm-up from the five-minute availability result. One unavailable grid can poison every strict rolling window containing it for up to the entire window length. In this current capture, the bad 15:57:40 grid will remain inside strict 1800-second windows until after 16:27:40, later than a 32-minute capture beginning around 15:54:14 would finish. The proposed policy should remove that particular obstacle if the rest of the eventual 30-minute history satisfies its conditions, but the final full-span replay remains the direct verification.
 
 The implementation consequence is bounded: make the coverage threshold explicit; skip and count unavailable/duplicate historical grid selections; reject inadequate coverage, excessive actual accepted-sample gaps or inadequate endpoint span; calculate variation from the accepted actual observations; and expose coverage, skipped grids, span and largest interval in diagnostics. Preserve raw data for later analysis. Meaningful checks are one missing internal grid accepted, consecutive missing grids rejected by the 12-second cap, a missing endpoint rejected by span, a below-95% history rejected even with separated omissions, and unchanged estimates on complete history. This is a volatility-history viability correction, not permission to trade on stale current quotes or approximate an exact settlement boundary.
+
+## Completed 30-minute availability check
+
+The bounded collector subsequently completed 1,920.3 seconds of anonymous collection. Source history
+covers2026-09-06 15:54:14–16:26:13UTC (1,919seconds), with1,835 spot observations and1,835 TWAP events.
+The final1,036,785-byte JSONL has SHA256
+d0753ea1ba26fbe2bd7b87fd3aea698e44638588e5d093c7a66ce25aaac6eb99.
+
+Root replayed this complete capture through the actual reviewed sampler at commit3b1c70f, using the
+new defaults and a strict100%/7second configuration for comparison:
+
+| Requested history | Eligible overlapping windows | Strict valid | Sparse valid |
+|---|---:|---:|---:|
+|300seconds|324|221|321|
+|1800seconds|24|0|24|
+
+The three rejected short windows had missing endpoints. Every one of the221 commonly valid short
+windows retained exactly the same sigma. There were no commonly valid long windows, so no unchanged-
+estimate claim is made for that comparison. The latest long window has359/361 acceptedpoints
+(99.44598% coverage), exactly1,800seconds span and a10second maximum accepted interval. Its estimated
+sigma is2.086654694377782 USD/sqrt(second). Both histories now produce operationally usable estimates
+in this capture. These overlapping windows are availability checks, not independent trials, probability
+calibration or evidence of trading profit.
+
+Reproduction artifacts remain under the active worktree's work/: volatility-probe.py,
+volatility-probe.jsonl, analyze-volatility-probe.py and volatility-availability-final.json. The collector
+stopped at its bound and made no authenticated/account calls. The earlier prefix-based scientific
+review above remains unchanged so its original scope and evidence are auditable.

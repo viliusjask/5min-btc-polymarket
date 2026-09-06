@@ -14,4 +14,4 @@ Terminal surplus is a valuation proxy, distinct from stopped-policy profit. Full
 All parameters remain hypotheses. Actual funded validation remains a later explicit user step.
 
 Observed feed gaps prompted a reviewed sparse-history policy:>=95% grid coverage,<=12s accepted
-source gaps, unchanged2s sampling tolerance and5s currentquote freshness. Full30minute replay pending.
+source gaps, unchanged2s sampling tolerance and5s currentquote freshness. Completed32minute feed capture:24/24 eligible1800second windows pass revisedsampler; strictpolicy0/24.

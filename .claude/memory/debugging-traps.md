@@ -62,3 +62,13 @@ observe different committed SQLite versions; a connection context manager alone 
 the needed read snapshot. Deterministically commit settlement between the reader's queries and
 require a coherent before-or-after result. Use a nested-safe read transaction without acquiring
 the trading-owner lock. Execution review fix round 1 covers the interleaving.
+
+## 2026-09-06: Slow reconciliation aged every pre-fetched exit book
+
+A frozen Book passed into Engine.step was checked only after awaited account work. If every
+account pass exceeded the five-second book age limit, refreshing a separate CLI cache could
+never rescue that already-passed object. Fetch the held token's book after reconciliation under
+the engine's serialized ownership, then refresh real time and preserve all guards. A latest-input
+invalidation generation also retains gaps or identity excursions overwritten while the engine
+awaits. Ordinary same-identity valid updates must not invalidate every preparation. Task 4's
+focused provider tests cover the six-second/five-second case and interrupted preparation.

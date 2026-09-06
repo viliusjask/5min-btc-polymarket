@@ -9,6 +9,7 @@
 - Task1 complete and independently approved;122tests,lint/format/mypy pass.
 - Task2 complete and independently approved at05c808e. Two review findings fixed with targeted regressions;60 adapter tests and182 combined tests pass, lint/format/mypy clean. Two bounded anonymous feed/book smokes are recorded.
 - Task 3 is independently approved at fbe3e9e. Three reproduced defects were fixed, with 144 execution tests passing (+25 regressions) and static checks clean. Task 4 CLI/integration now starts, including independently reviewed fresh-input scheduling. No real orders or account actions.
+- Task 4 fresh-input and metadata-diagnostic integration passes 152 focused tests with static checks clean. CLI lifecycle and end-to-end operator tests are in progress.
 - The 35-minute anonymous adapter/core run completed at 17:42 UTC: 1,702 snapshots, seven opening anchors, six official comparisons and five final labels. Its one eligible value screen exposed delayed underlying information; an independently reviewed confirmation experiment is being implemented. Rejected-field diagnostics and the researched SELL tick-update policy are recorded for integration.
 
 Decisions: default experimental value filter plus modified upstream momentum comparison; no fitted drift,

@@ -515,6 +515,9 @@ class MarketData:
                         candidate.resolution.source != SOURCE
                         or " ".join((candidate.description or "").split()) != RULE
                     ):
+                        # This is incompatible official evidence for an already
+                        # matched contract, not a retryable transport failure.
+                        state.conflict = True
                         raise DataUnavailable("UNSUPPORTED_RULE")
                 if (
                     event.schedule.start_time is None
@@ -586,8 +589,9 @@ class MarketData:
                 for book in (up, down):
                     if (book.condition_id, book.tick, book.minimum) != (condition, tick, minimum):
                         raise DataUnavailable("TRADING_METADATA_CHANGED")
-                # Network duration cannot make a quote or the discovered round stay fresh.
-                final_now = self._now() if now_ms is None else now
+                # now_ms chooses the initial round; final validation always uses
+                # the advancing injected UTC clock after all network work.
+                final_now = self._now()
                 if final_now // 300000 != start // 300:
                     raise DataUnavailable("ROUND_CHANGED")
                 for book in (up.book, down.book):

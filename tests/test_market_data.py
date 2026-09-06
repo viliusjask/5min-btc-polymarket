@@ -402,7 +402,7 @@ def test_empty_asks_are_preserved_for_strategy_visible_skip() -> None:
             await venue.emit()
             result = await data.snapshot()
             assert not result.up_book.asks and not result.down_book.asks
-            assert evaluate(result, Config()).side is None
+            assert evaluate(result, Config()).reason == "MISSING_BOOK_SIDE"
 
     asyncio.run(scenario())
 
@@ -800,5 +800,153 @@ def test_delayed_official_rule_change_cannot_supply_calibration_label() -> None:
                 r["kind"] == "metadata_unavailable" and r["code"] == "UNSUPPORTED_RULE"
                 for r in venue.records
             )
+
+    asyncio.run(scenario())
+
+
+async def advance_fixture_feeds(venue: Venue, milliseconds: int) -> None:
+    """Advance only the external clock/SDK payloads, preserving real adapter state."""
+    venue.clock.ms += milliseconds
+    venue.clock.elapsed += milliseconds / 1000
+    for book in venue.books.values():
+        book["timestamp"] = str(venue.clock.ms - 1000)
+    for row in fixture("boundary-events")[-2:]:
+        raw = copy.deepcopy(row["event"])
+        raw["payload"]["timestamp"] = venue.clock.ms - 1000
+        if raw["topic"].endswith(".twap"):
+            venue.client.twap.queue.put_nowait(CryptoPricesChainlinkTwapEvent.model_validate(raw))
+        else:
+            venue.client.spot.queue.put_nowait(CryptoPricesChainlinkEvent.model_validate(raw))
+    await settle()
+
+
+@pytest.mark.parametrize(
+    "advance_ms,book_age_ms,expected_code",
+    [
+        (1000, 1000, None),
+        (4000, 1000, "STALE_DATA"),
+        (2000, 4000, "STALE_DATA"),
+        (297000, 1000, "ROUND_CHANGED"),
+    ],
+    ids=[
+        "returned_time_advances",
+        "price_ages_during_metadata",
+        "book_ages_during_metadata",
+        "round_changes_during_metadata",
+    ],
+)
+def test_explicit_snapshot_time_advances_during_metadata(
+    advance_ms: int,
+    book_age_ms: int,
+    expected_code: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        venue = Venue()
+        initial = venue.clock.ms
+        finished_books = asyncio.Event()
+        completed = 0
+        original_book = venue.client.get_order_book
+
+        async def read_book(*, token_id: str) -> OrderBook:
+            nonlocal completed
+            result = await original_book(token_id=token_id)
+            completed += 1
+            if completed == 2:
+                finished_books.set()
+            return result
+
+        async def delayed_metadata(request: httpx.Request) -> httpx.Response:
+            if request.url.path.startswith("/clob-markets/"):
+                await finished_books.wait()
+                venue.clock.ms += advance_ms
+                venue.clock.elapsed += advance_ms / 1000
+            return venue.request(request)
+
+        monkeypatch.setattr(venue.client, "get_order_book", read_book)
+        await venue.http.aclose()
+        venue.http = httpx.AsyncClient(transport=httpx.MockTransport(delayed_metadata))
+        for raw in venue.books.values():
+            raw["timestamp"] = str(initial - book_age_ms)
+        async with venue.adapter() as data:
+            await venue.emit()
+            if expected_code is not None:
+                with pytest.raises(DataUnavailable, match=expected_code):
+                    await data.snapshot(now_ms=initial)
+            else:
+                result = await data.snapshot(now_ms=initial)
+                assert result.now_ms == initial + advance_ms
+                assert result.now_ms - result.spot.timestamp_ms == 4000
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("target", ["event", "market"])
+@pytest.mark.parametrize("field", ["description", "resolutionSource"])
+def test_delayed_current_rule_conflict_survives_cached_supported_discovery(
+    target: str,
+    field: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        venue = Venue()
+        delayed = copy.deepcopy(venue.event)
+
+        async def get_event(*, slug: str, include_chat: bool) -> Event:
+            assert slug == delayed["slug"] and include_chat is False
+            return Event.model_validate(delayed)
+
+        monkeypatch.setattr(venue.client, "get_event", get_event)
+        async with venue.adapter() as data:
+            await venue.emit()
+            assert (await data.snapshot()).market.reference_status == "boundary"
+            candidate = delayed if target == "event" else delayed["markets"][0]
+            candidate[field] = "unsupported spot settlement rule"
+            await advance_fixture_feeds(venue, 31000)
+            result = await data.snapshot()
+            assert result.market.reference_status == "conflict"
+            assert evaluate(result, Config()).reason == "REFERENCE_CONFLICT"
+            assert any(
+                r["kind"] == "metadata_unavailable" and r["code"] == "UNSUPPORTED_RULE"
+                for r in venue.records
+            )
+            # Both subsequent raw and SDK cached supported copies cannot undo
+            # incompatible official evidence already observed for this identity.
+            delayed.clear()
+            delayed.update(copy.deepcopy(venue.event))
+            await advance_fixture_feeds(venue, 31000)
+            assert (await data.snapshot()).market.reference_status == "conflict"
+            assert any(
+                r["kind"] == "anchor"
+                and r["status"] == "conflict"
+                and "SDK get_event" in str(r["provenance"])
+                for r in venue.records
+            )
+            assert (await data.book(result.market.up_token)).bids
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["network_error", "missing_optional_anchor"])
+def test_delayed_current_metadata_unavailability_remains_retryable(
+    outcome: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        venue = Venue()
+
+        async def get_event(*, slug: str, include_chat: bool) -> Event:
+            if outcome == "network_error":
+                raise ConnectionError("synthetic read failure")
+            raw = copy.deepcopy(venue.event)
+            raw["eventMetadata"] = None
+            return Event.model_validate(raw)
+
+        monkeypatch.setattr(venue.client, "get_event", get_event)
+        async with venue.adapter() as data:
+            await venue.emit()
+            await data.snapshot()
+            await advance_fixture_feeds(venue, 31000)
+            assert (await data.snapshot()).market.reference_status == "boundary"
 
     asyncio.run(scenario())

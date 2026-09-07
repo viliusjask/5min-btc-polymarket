@@ -311,3 +311,20 @@ def test_cancelled_order_shows_execution_outcome_and_old_model_warning(
         ledger.close()
 
     asyncio.run(run())
+
+
+def test_history_budget_explanation_distinguishes_insufficient_coverage_from_warmup():
+    from btc5m.dashboard import explain
+
+    category, message = explain(
+        "INSUFFICIENT_HISTORY",
+        {
+            "short_sampling_status": "VALID",
+            "long_sampling_status": "INSUFFICIENT_INTERVAL_COVERAGE",
+            "long_regular_time_coverage": 0.94,
+            "required_history_coverage": ".95",
+        },
+    )
+    assert category == "data"
+    assert "94.0%" in message and "95.0%" in message
+    assert "Small gaps are allowed" in message

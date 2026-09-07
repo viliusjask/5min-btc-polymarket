@@ -1,3 +1,37 @@
+# Progress: recover from brief history gaps
+
+2026-09-07. Branch `fix/history-resilience`, isolated worktree `.worktrees/history-resilience`,
+based on merged fork main d26e799 (PR4). The user explicitly requested correcting the overly
+strict history rule. Own review, no subagents or new dependencies.
+
+- Replaced the hard largest-gap veto with at least95% point coverage and95% regular-interval
+  time coverage. Intervals over12seconds consume the remaining time budget. Both5minute and
+  30minute histories must pass. Observed moves across gaps remain in the variance estimate;
+  missing endpoints, large outages, stale/future prices and insufficient coverage still reject.
+- Separated the15second feed inactivity deadline from the5second current-price freshness limit.
+  Delayed feeds can resume on the same subscription while entries remain paused. Genuine
+  transport errors and persistent silence still reconnect.
+- Dashboard readiness uses the newest sampling check, rather than all historical failures or
+  an older strategy's successful sample. Shows coverage and time in long intervals. Historical
+  simulator warnings remain visible without overriding current history readiness.
+- Recorded-data replay:392 additional long-window checks and112 additional short-window checks
+  became usable. All1673 previously valid estimates stayed exactly unchanged. The windows
+  overlap; this measures availability, not profit or independent statistical evidence.
+  Policy rationale, fingerprinted capture and limitations: [sampling research](research/volatility-sampling.md).
+- **516 tests passed in112.67seconds**. Ruff lint/format, mypy, lock, JavaScript syntax and diff
+  checks passed. Desktop/mobile browser fixtures verified both current readiness overriding
+  historical failures and a new failure overriding an old valid sample, with no JavaScript
+  errors or page overflow. The reconnect regression fails against the original consumer and
+  passes with the fix.
+- Repointed both systemd user services to this checkout and reloaded at02:52:46–02:52:51UTC.
+  All seven journal sessions, prior orders, fills and events were preserved. Balances remain
+  USD100 each; no retrospective fills were injected and funded execution remains off.
+  At02:54:42UTC all six latest history checks reported VALID under BOUNDED_INTERVALS_V1;
+  pairing portfolios had resumed order submission (62 attempts each, zero fills at that check).
+  Healthy history permits strategy evaluation; it does not guarantee fills or returns.
+
+## Earlier quote and service checkpoints
+
 # Progress: continuous services and corrected quote cancellation
 
 2026-09-07, follow-up to the 0/98 screenshot. The matching fix alone did not repair the

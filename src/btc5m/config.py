@@ -97,7 +97,7 @@ class DataConfig:
     future_tolerance_ms: int = 1000
     sample_seconds: int = 5
     sample_tolerance_ms: int = 2000
-    max_sample_gap_ms: int = 12000
+    max_sample_gap_ms: int = 12000  # Larger intervals consume the history's irregular-time budget.
     min_sample_coverage: Decimal = Decimal(".95")
     allow_captured_anchor: bool = True
 

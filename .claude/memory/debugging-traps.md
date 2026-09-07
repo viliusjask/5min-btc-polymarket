@@ -174,3 +174,10 @@ noncooperative code requires external termination followed by journal inspection
   owned quote while its own risk/edge constraints hold; record the actual cancellation trigger
   by order identity. One of 25 original-order public replays then filled; the other 24 did not.
   A passing isolated matcher regression is not evidence that strategy-plus-execution works.
+
+- 2026-09-07: A15-second sampled gap disabled every30-minute model window despite roughly99%
+  coverage. It was an application policy, not an external blocker. Evaluate total history quality
+  and current freshness separately; preserve observed returns across missing intervals. Also
+  separate the stale-price deadline from connection recycling, so a brief delay does not itself
+  create a resubscription gap. Current dashboard readiness must use the newest sampling check,
+  not lifetime rejection counts or an older strategy's last valid sample.

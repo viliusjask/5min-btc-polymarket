@@ -234,7 +234,7 @@ def test_incomplete_or_invalid_spot_history_cannot_pass_warmup(history_change):
     elif history_change == "long_gap":
         history = tuple(p for p in history if not NOW - 100_000 < p.timestamp_ms < NOW - 39_000)
     elif history_change == "consecutive_gap":
-        history = history[:330] + history[332:]
+        history = history[:330] + history[333:]
     elif history_change == "future":
         history = history[:-1] + (replace(history[-1], timestamp_ms=NOW + 61_000),)
     elif history_change == "repeated":
@@ -420,7 +420,10 @@ def test_grid_discards_overage_observation_and_honors_tighter_gap_limit():
     smaller_gap = replace(Config(), data=replace(Config().data, max_sample_gap_ms=6000))
     delayed = replace(snap.history[330], timestamp_ms=snap.history[330].timestamp_ms - 2000)
     history = snap.history[:330] + (delayed,) + snap.history[331:]
-    assert evaluate(replace(snap, history=history), smaller_gap).reason == "INSUFFICIENT_HISTORY"
+    relaxed = evaluate(replace(snap, history=history), smaller_gap)
+    assert relaxed.features["short_irregular_seconds"] == 7
+    strict = replace(smaller_gap, data=replace(smaller_gap.data, min_sample_coverage=D(1)))
+    assert evaluate(replace(snap, history=history), strict).reason == "INSUFFICIENT_HISTORY"
 
 
 def test_stale_received_time_rejects_even_when_source_is_fresh():
@@ -555,11 +558,14 @@ def test_one_missing_grid_permits_exact_twelve_second_source_gap():
     assert evaluate(replace(snap, history=history), Config()).side is Side.UP
 
 
-def test_two_missing_grids_reject_even_at_minimum_thirteen_second_source_gap():
+def test_two_missing_grids_fit_a_bounded_irregular_interval():
     snap = make_snapshot()
     following = replace(snap.history[332], timestamp_ms=snap.history[332].timestamp_ms - 2000)
     history = snap.history[:330] + (following,) + snap.history[333:]
-    assert evaluate(replace(snap, history=history), Config()).reason == "INSUFFICIENT_HISTORY"
+    result = evaluate(replace(snap, history=history), Config())
+    assert result.side is Side.UP
+    assert result.features["short_irregular_seconds"] == 13
+    assert result.features["short_regular_time_coverage"] == pytest.approx(287 / 300)
 
 
 @pytest.mark.parametrize(
@@ -568,7 +574,7 @@ def test_two_missing_grids_reject_even_at_minimum_thirteen_second_source_gap():
         (set(range(361)), "long", "INSUFFICIENT_SAMPLES", 0, 0, 0),
         ({0}, "long", "MISSING_START", 360, 1795, 5000),
         ({360}, "long", "MISSING_END", 360, 1795, 5000),
-        ({330, 331}, "short", "EXCESSIVE_GAP", 59, 300, 15000),
+        ({330, 331, 332}, "short", "INSUFFICIENT_INTERVAL_COVERAGE", 58, 300, 20000),
         ({310, 320, 330, 340}, "short", "INSUFFICIENT_COVERAGE", 57, 300, 10000),
     ],
 )
@@ -589,3 +595,40 @@ def test_rejected_sampling_retains_finite_measured_diagnostics(
     assert all(
         isinstance(value, str) or math.isfinite(value) for value in decision.features.values()
     )
+
+
+@pytest.mark.parametrize("old_gap", [False, True])
+def test_fifteen_second_gap_keeps_observed_jump_and_usable_history(old_gap):
+    snap = make_snapshot()
+    begin = 100 if old_gap else 330
+    history = tuple(
+        replace(point, price=point.price + (D(100) if i > begin + 1 else D(0)))
+        for i, point in enumerate(snap.history)
+        if i not in (begin, begin + 1)
+    )
+    result = evaluate(replace(snap, history=history), Config())
+    assert result.reason != "INSUFFICIENT_HISTORY"
+    for window in ("short", "long"):
+        assert result.features[f"{window}_sampling_status"] == "VALID"
+    selected = [p for p in history if p.timestamp_ms >= NOW - 1800000]
+    expected = math.sqrt(
+        sum(float(b.price - a.price) ** 2 for a, b in zip(selected, selected[1:], strict=False))
+        / 1800
+    )
+    assert result.features["long_sigma"] == expected
+    assert result.features["long_irregular_seconds"] == 15
+    assert result.features["long_regular_time_coverage"] == pytest.approx(1785 / 1800)
+    if not old_gap:
+        assert result.features["short_regular_time_coverage"] == 0.95
+        assert result.features["short_effective_increments"] == pytest.approx(54.54545454545)
+
+
+def test_large_old_outage_exceeds_long_interval_budget_despite_sample_count():
+    snap = make_snapshot()
+    history = tuple(p for i, p in enumerate(snap.history) if i not in range(100, 118))
+    result = evaluate(replace(snap, history=history), Config())
+    assert result.reason == "INSUFFICIENT_HISTORY"
+    assert result.features["short_sampling_status"] == "VALID"
+    assert result.features["long_sample_coverage"] > 0.95
+    assert result.features["long_sampling_status"] == "INSUFFICIENT_INTERVAL_COVERAGE"
+    assert result.features["long_irregular_seconds"] == 95

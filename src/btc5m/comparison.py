@@ -21,6 +21,7 @@ from btc5m.ledger import Ledger, LedgerError
 from btc5m.market_data import DataUnavailable, MarketData
 from btc5m.paper import PAPER_MATCHING_MODEL, PaperBroker
 from btc5m.service import atomic_json, notify
+from btc5m.strategy import SAMPLING_POLICY
 
 MASTER_WALLET = "0x" + "00" * 20
 
@@ -226,6 +227,7 @@ async def run_paper(
                 "received_ms": int(time.time() * 1000),
                 "status": "started",
                 "code": PAPER_MATCHING_MODEL,
+                "source": SAMPLING_POLICY,
             }
         )
         lifecycle_started = True

@@ -78,9 +78,10 @@ Use five-second sampled spot differences, time-based variance sum(delta_price**2
 with 300-second and 1800-second windows. Build five-second UTC source-time grid points;
 choose the last observation at or before each grid point only if its age is <=2 seconds.
 Each accepted grid point must use a distinct source observation. Skip isolated unavailable grid
-points without interpolation or forward-fill; require at least95% of requested grid points and a
-maximum12-second gap between accepted source observations. At five-second spacing with two-second
-timing tolerance, this permits one missing grid but rejects two consecutive missing grids. Derive
+points without interpolation or forward-fill; require at least95% of requested grid points.
+The September 7 correction also requires at least95% of elapsed time to lie in intervals no
+longer than12seconds; larger intervals together consume the remaining5% budget. A single15second
+interval therefore fits a300second window, rather than poisoning all30minute checks. Derive
 variance denominator from actual accepted timestamps, not an assumed tick count. Required span
 may fall short by at most the2-second sampling tolerance; missing endpoints therefore still reject.
 These completeness bounds were selected from anonymous feed-availability evidence, not trading PnL.

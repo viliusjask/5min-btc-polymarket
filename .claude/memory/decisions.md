@@ -24,7 +24,7 @@
 - 2026-09-06: Two anonymous boundary comparisons passed, including a boundary distinct from
   neighboring seconds. Captured exact-boundary anchors are enabled; cached null metadata cannot
   erase them. Evidence and the current rule remain in docs/research/anchor-probe.md.
-- 2026-09-06: Actual source gaps made a complete five-second grid unusable for long windows.
+- 2026-09-06 (superseded by the bounded-interval policy below): Actual source gaps made a complete five-second grid unusable for long windows.
   A reviewed policy permits isolated missing samples with at least95% coverage and at most12s
   between accepted points; full-span/endpoints and current-price freshness remain required.
   In the completed32-minute raw-feed replay,24/24 long windows passed versus0/24 strict windows.
@@ -74,3 +74,11 @@
   the 66 earlier passive orders, without injecting counterfactual fills or resetting cash/risk
   limits. A single captured order proves the omission; replayed five shares are not live-run
   results or a full strategy backtest. Rapid quote cancellation remains an unoptimized policy.
+
+- 2026-09-07: The user explicitly requested fixing history-induced stalls. BOUNDED_INTERVALS_V1
+  replaces the hard largest-gap veto with at least95% point and regular-interval time coverage.
+  Price moves across gaps remain in the variance estimator; no interpolation, return deletion,
+  fresh-timestamp substitution, probability threshold change or cash reset. Feed inactivity
+  timeout is separate from current-price freshness. Research/verification is in
+  docs/research/volatility-sampling.md. The services run from .worktrees/history-resilience;
+  runtime/config/account-file locations and all six balances are retained.

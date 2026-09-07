@@ -179,19 +179,33 @@ function topSummary() {
     );
     container.append(e);
   }
-  const gap = Object.values(state.decisions).some(
-    (d) => (d.history_reasons.EXCESSIVE_GAP || 0) > 0,
+  const samplingChecks = Object.values(state.decisions)
+    .map((d) => d.sampling)
+    .filter(Boolean);
+  const latestCheck = Math.max(0, ...samplingChecks.map((s) => s.at_ms));
+  const historyChecks = samplingChecks
+    .filter((s) => s.at_ms === latestCheck)
+    .map((s) => s.features);
+  const historyReady = historyChecks.some(
+    (f) => f.short_sampling_status === "VALID" && f.long_sampling_status === "VALID",
+  );
+  const gap = !historyReady && historyChecks.some(
+    (f) => [f.short_sampling_status, f.long_sampling_status].some(
+      (s) => s === "EXCESSIVE_GAP" || s === "INSUFFICIENT_INTERVAL_COVERAGE",
+    ),
   );
   $("insight-title").textContent = !c.caught_up
     ? "Loading the full capture"
     : fills === 0
-      ? "Awaiting first bot trade"
+      ? historyReady
+        ? "History checks passed · awaiting a trade"
+        : gap ? "Entries paused by history coverage" : "Awaiting first bot trade"
       : "Recorded paper execution · simulated fills";
   $("insight-body").textContent = !c.caught_up
     ? `Read ${count(c.events_loaded)} of ${count(c.events_available)} events. Counts are incomplete while the capture loads.`
     : fills === 0
       ? gap
-        ? "The capture includes history gaps that blocked entries after the initial warm-up. A full 30 minutes on the clock is not enough when the sampling window contains a disallowed gap. Inspect each policy's last decision and the history breakdown below."
+        ? "The latest history checks exceed the allowed gap budget. Brief interruptions are allowed when enough samples and regular intervals remain. Inspect the timestamped history details below."
         : "The policies have not recorded a fill. Scheduled waits, incomplete data and strategy filters are shown separately below. A quiet recorder does not establish whether a strategy is profitable."
       : "These results use actual paper-journal accounting. Inspect open holdings, unconfirmed orders and uncertain rounds alongside realized profit. Simulated queue position and fills still need comparison with venue execution.";
   if (c.caught_up && fills === 0)
@@ -200,10 +214,9 @@ function topSummary() {
       $("insight-body").textContent;
   const legacyOrders = sum(p, "legacy_matching_orders");
   if (legacyOrders > 0) {
-    $("insight-title").textContent = "Earlier passive fills were undercounted";
     $("insight-body").textContent =
-      `${count(legacyOrders)} historical orders used a simulator that omitted buying of the opposite outcome. Their original results are preserved and cannot be used to assess the corrected strategies. New orders use the corrected matching model. ` +
-      $("insight-body").textContent;
+      $("insight-body").textContent +
+      ` Earlier passive fills were undercounted: ${count(legacyOrders)} historical orders used a simulator that omitted buying of the opposite outcome. Their original results are preserved and cannot assess the corrected strategies.`;
   }
   $("runtime-label").textContent =
     `${state.runtime_name} · ${count(c.events_loaded)} journal events · ${Math.max(0, c.restart_times.length - 1)} recorder restarts`;
@@ -251,12 +264,14 @@ function portfolioCards() {
     const latest = state.decisions[name]?.latest,
       exec = p.last_execution;
     const reason = latest?.reason || exec?.code;
-    const gap = latest?.features?.long_sampling_status === "EXCESSIVE_GAP";
+    const gap = ["short", "long"].some(
+      (label) => ["EXCESSIVE_GAP", "INSUFFICIENT_INTERVAL_COVERAGE"].includes(latest?.features?.[label + "_sampling_status"]),
+    );
     const decision = node(
       "div",
       "decision-status",
       gap
-        ? "History gap · " + latest.features.long_max_sample_gap_ms / 1000 + "s"
+        ? "History coverage below requirement"
         : human(reason),
     );
     decision.title = latest?.explanation || human(reason);
@@ -651,6 +666,11 @@ function feedHealth() {
         `${human(label)}: ${features[label + "_sample_count"]}/${features[label + "_requested_sample_count"]} samples · largest gap ${(features[label + "_max_sample_gap_ms"] || 0) / 1000}s · ${human(features[label + "_sampling_status"])}`,
       );
       h.append(row);
+      if (features[label + "_regular_time_coverage"] !== undefined) {
+        h.append(node("div", "",
+          `${human(label)}: ${(Number(features[label + "_regular_time_coverage"]) * 100).toFixed(1)}% of time in regular intervals · ${features[label + "_irregular_seconds"]}s in long gaps`,
+        ));
+      }
     }
   } else
     h.append(
@@ -665,7 +685,7 @@ function feedHealth() {
       node(
         "div",
         "",
-        `Recorded configuration matches: ${state.thresholds.history_seconds / 60}m history · max sampled gap ${state.thresholds.max_gap_ms / 1000}s · ${Number(state.thresholds.coverage) * 100}% minimum coverage.`,
+        `Recorded configuration matches: ${state.thresholds.history_seconds / 60}m history · intervals above ${state.thresholds.max_gap_ms / 1000}s consume the gap budget · ${Number(state.thresholds.coverage) * 100}% minimum sample and regular-time coverage.`,
       ),
     );
   else

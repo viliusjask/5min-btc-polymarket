@@ -58,6 +58,20 @@ def explain(reason: str, features: dict[str, Any] | None = None) -> tuple[str, s
     features = features or {}
     if reason == "INSUFFICIENT_HISTORY":
         statuses = [features.get(f"{label}_sampling_status") for label in ("short", "long")]
+        if "INSUFFICIENT_INTERVAL_COVERAGE" in statuses:
+            labels = [
+                label
+                for label in ("short", "long")
+                if features.get(f"{label}_sampling_status") == "INSUFFICIENT_INTERVAL_COVERAGE"
+            ]
+            coverage = min(
+                float(features.get(f"{label}_regular_time_coverage", 0)) for label in labels
+            )
+            required = float(features.get("required_history_coverage", 0.95))
+            return (
+                "data",
+                f"Too much history lies in long observation gaps: regular intervals cover {coverage:.1%}; {required:.1%} is required. Small gaps are allowed within that budget.",
+            )
         if "EXCESSIVE_GAP" in statuses:
             gap = max(
                 float(features.get(f"{label}_max_sample_gap_ms", 0)) for label in ("short", "long")

@@ -57,6 +57,7 @@ ROUND_RE = re.compile(r"btc-updown-5m-([0-9]{10})\Z")
 CONDITION_RE = re.compile(r"0x[0-9a-fA-F]{64}\Z")
 TICKS = frozenset(map(Decimal, (".1", ".01", ".005", ".001", ".0025", ".0001")))
 HTTP_TIMEOUT = 5.0
+PRICE_STREAM_IDLE_TIMEOUT = 15.0
 ANCHOR_TOLERANCE = Decimal("0.00000001")
 
 
@@ -404,8 +405,12 @@ class MarketData:
                 async with asyncio.timeout(HTTP_TIMEOUT):
                     handle = await self._client.subscribe(spec)
                 while not self._closed:
-                    # asyncio's timeout uses the event loop's monotonic clock.
-                    async with asyncio.timeout(self.config.data.max_price_age_ms / 1000):
+                    # Freshness is independently enforced by _latest/_fresh. Give
+                    # a delayed healthy stream time to resume before tearing it
+                    # down and losing more observations during resubscription.
+                    async with asyncio.timeout(
+                        max(PRICE_STREAM_IDLE_TIMEOUT, self.config.data.max_price_age_ms / 1000)
+                    ):
                         event = await anext(handle)
                     self._ingest(kind, event)
             except asyncio.CancelledError:

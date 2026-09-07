@@ -28,6 +28,7 @@ _AMOUNT_DECIMALS = {
     Decimal(".0001"): 6,
 }
 _ZERO = Decimal(0)
+SAMPLING_POLICY = "BOUNDED_INTERVALS_V1"
 
 
 def fee_for(shares: Decimal, price: Decimal, rate: Decimal, exponent: int = 1) -> Decimal:
@@ -148,6 +149,9 @@ class _SampleWindow:
     coverage: float
     max_gap_ms: int
     rejection: str | None
+    regular_time_coverage: float = 0.0
+    irregular_seconds: float = 0.0
+    effective_increments: float = 0.0
 
 
 def _sample_window(
@@ -177,8 +181,19 @@ def _sample_window(
         right.timestamp_ms - left.timestamp_ms
         for left, right in zip(samples, samples[1:], strict=False)
     ]
+    total_ms = sum(gaps)
+    irregular_ms = sum(gap for gap in gaps if gap > data.max_sample_gap_ms)
     result = _SampleWindow(
-        None, elapsed, count, requested, count / requested, max(gaps, default=0), None
+        None,
+        elapsed,
+        count,
+        requested,
+        count / requested,
+        max(gaps, default=0),
+        None,
+        (total_ms - irregular_ms) / total_ms if total_ms else 0.0,
+        irregular_ms / 1000,
+        total_ms**2 / sum(gap**2 for gap in gaps) if total_ms else 0.0,
     )
     if count < 2:
         return replace(result, rejection="INSUFFICIENT_SAMPLES")
@@ -190,8 +205,12 @@ def _sample_window(
         return replace(result, rejection="INSUFFICIENT_SPAN")
     if Decimal(count) < data.min_sample_coverage * requested:
         return replace(result, rejection="INSUFFICIENT_COVERAGE")
-    if result.max_gap_ms > data.max_sample_gap_ms:
-        return replace(result, rejection="EXCESSIVE_GAP")
+    # A single delayed interval must not veto an otherwise usable half-hour.
+    # Bound the total time in intervals above the normal-gap threshold using
+    # the same completeness requirement as point coverage. Keep ALL observed
+    # endpoint changes below: dropping gap returns would discard observed jumps.
+    if Decimal(irregular_ms) > (1 - data.min_sample_coverage) * total_ms:
+        return replace(result, rejection="INSUFFICIENT_INTERVAL_COVERAGE")
     # A gap contributes the actual endpoint change over its actual elapsed time.
     # Decimal subtraction retains source precision; only variance math uses float.
     try:
@@ -412,6 +431,8 @@ def fair_value(snapshot: Snapshot, config: Config) -> FairValue:
     point = snapshot.spot
     features: dict[str, float | str] = {
         "mode": strategy.mode,
+        "sampling_policy": SAMPLING_POLICY,
+        "required_history_coverage": str(data.min_sample_coverage),
         "config_hash": config.fingerprint,
         "entry_tau_seconds": (market.end_s * 1000 - snapshot.now_ms) / 1000,
         "model_tau_seconds": (market.end_s * 1000 - point.timestamp_ms) / 1000,
@@ -462,6 +483,9 @@ def fair_value(snapshot: Snapshot, config: Config) -> FairValue:
                     f"{label}_requested_sample_count": window.requested_count,
                     f"{label}_sample_coverage": window.coverage,
                     f"{label}_max_sample_gap_ms": window.max_gap_ms,
+                    f"{label}_regular_time_coverage": window.regular_time_coverage,
+                    f"{label}_irregular_seconds": window.irregular_seconds,
+                    f"{label}_effective_increments": window.effective_increments,
                     f"{label}_sampling_status": window.rejection or "VALID",
                 }
             )

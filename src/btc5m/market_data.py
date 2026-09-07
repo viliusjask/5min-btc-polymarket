@@ -5,8 +5,8 @@ HTTP discovery deliberately reads wire dictionaries: SDK Gamma normalization dro
 Only ``AsyncPublicClient`` is constructed. No account or order API is used.
 
 Raw spot history is bounded by the configured long window plus 60 seconds and a
-hard point count. Missing source seconds remain missing. Snapshot callers drive
-metadata retries (30 seconds per round, at most two reads per call), retaining at
+hard point count. Missing source seconds remain missing. An owned background task
+retries settlement metadata (30 seconds per round, at most two reads per pass), retaining at
 most 12 rounds for one hour after expiry. Delayed labels beyond this horizon are
 reported missing, not inferred. The synchronous observer must persist promptly;
 a failure prevents entry snapshots while the independent held-token book remains
@@ -90,6 +90,14 @@ class _BookRead:
     condition_id: str
     tick: Decimal
     minimum: Decimal
+
+
+@dataclass(frozen=True)
+class _MarketCache:
+    market: Market
+    up_book: Book
+    down_book: Book
+    book_revision: int
 
 
 def _decimal(value: object, *, positive: bool = True) -> Decimal:
@@ -199,6 +207,7 @@ class MarketData:
         self._closed = False
         self._observer_failed = False
         self._snapshot_lock = asyncio.Lock()
+        self._reference_poll_wakeup = asyncio.Event()
         self._history_ms = (config.strategy.volatility_long_seconds + 60) * 1000
         self._max_points = (config.strategy.volatility_long_seconds + 60) * 2 + 100
         self.streams = (
@@ -208,30 +217,43 @@ class MarketData:
             if enhanced
             else None
         )
-        self._cached_snapshot: Snapshot | None = None
+        self._cached_market: _MarketCache | None = None
         self._cached_at = float("-inf")
+        self._book_revision = 0
+        self._book_invalidation_reason: str | None = None
+        self._metadata_invalidation_reason: str | None = None
         self._logged_stream_books: dict[str, Book] = {}
         self.snapshot_status: dict[str, Any] = {"code": "NOT_CHECKED"}
         self._discovery_failure: dict[str, Any] | None = None
 
     def _stream_observation(self, record: dict[str, object]) -> None:
         if record.get("kind") == "stream_unavailable" and record.get("stream") == "books":
-            self._cached_at = float("-inf")
+            self._book_revision += 1
+            self._book_invalidation_reason = str(record.get("code", "BOOK_UNAVAILABLE"))
+            if record.get("code") == "TICK_SIZE_CHANGED":
+                self._metadata_invalidation_reason = "TICK_SIZE_CHANGED"
         self._emit(str(record["kind"]), **{k: v for k, v in record.items() if k != "kind"})
 
     def current_snapshot(self) -> Snapshot | None:
         """Fresh model input independent of whether a new entry is currently eligible."""
-        cached, now = self._cached_snapshot, self._now()
+        return self._assemble_snapshot(allow_reference_conflict=False)
+
+    def _assemble_snapshot(self, *, allow_reference_conflict: bool) -> Snapshot | None:
+        cached, now = self._cached_market, self._now()
         # Diagnose the first failed check; never change the snapshot's admission rules.
         status: dict[str, Any] = {"received_ms": now, "component": "metadata"}
         if self._discovery_failure:
             status["last_discovery_failure"] = self._discovery_failure
         if cached:
             status["slug"] = cached.market.slug
+            status["metadata_age_ms"] = max(0, int((self._mono() - self._cached_at) * 1000))
         self.snapshot_status = status
         try:
             if cached is None:
                 raise DataUnavailable("NO_METADATA")
+            if self._metadata_invalidation_reason:
+                status["metadata_invalidation_reason"] = self._metadata_invalidation_reason
+                raise DataUnavailable("METADATA_INVALIDATED")
             if self._mono() - self._cached_at > HTTP_TIMEOUT:
                 raise DataUnavailable("METADATA_CACHE_EXPIRED")
             if self._observer_failed:
@@ -240,7 +262,7 @@ class MarketData:
             if now // 300000 != cached.market.start_s // 300:
                 raise DataUnavailable("ROUND_CHANGED")
             state = self._rounds.get(cached.market.slug)
-            if state is None or state.conflict:
+            if state is None or state.conflict and not allow_reference_conflict:
                 raise DataUnavailable(
                     "ROUND_REFERENCE_CONFLICT" if state else "ROUND_STATE_MISSING"
                 )
@@ -267,7 +289,12 @@ class MarketData:
                 status.pop("receipt_age_ms", None)
                 if self.streams and prior.token_id in self.streams.pending_books:
                     raise DataUnavailable("BOOK_RESYNC_PENDING")
-                current = self.streams.books.get(prior.token_id, prior) if self.streams else prior
+                current = self.streams.books.get(prior.token_id) if self.streams else None
+                if current is None:
+                    if cached.book_revision != self._book_revision:
+                        status["book_invalidation_reason"] = self._book_invalidation_reason
+                        raise DataUnavailable("BOOK_RESYNC_PENDING")
+                    current = prior
                 status["source_age_ms"] = now - current.timestamp_ms
                 status["receipt_age_ms"] = now - current.received_ms
                 self._fresh(
@@ -296,8 +323,10 @@ class MarketData:
                         asks=[{"price": str(x.price), "size": str(x.size)} for x in current.asks],
                     )
                     self._logged_stream_books[current.token_id] = current
-            result = replace(
-                cached,
+            result = Snapshot(
+                market=replace(cached.market, reference_status="conflict")
+                if state.conflict
+                else cached.market,
                 now_ms=now,
                 spot=spot,
                 twap60=twap,
@@ -427,6 +456,7 @@ class MarketData:
         self._tasks = [
             asyncio.create_task(self._consume("spot")),
             asyncio.create_task(self._consume("twap60")),
+            asyncio.create_task(self._poll_references()),
         ]
         if self.streams:
             await self.streams.start()
@@ -444,10 +474,10 @@ class MarketData:
         if self._closed:
             return
         self._closed = True
-        if self.streams:
-            await self.streams.close()
         for task in self._tasks:
             task.cancel()
+        if self.streams:
+            await self.streams.close()
         results = await asyncio.gather(
             self._client.close(), self._http.aclose(), *self._tasks, return_exceptions=True
         )
@@ -727,6 +757,17 @@ class MarketData:
                 )
                 del self._rounds[slug]
 
+    async def _poll_references(self) -> None:
+        """Slow label lookups never hold the current-market refresh lock."""
+        while not self._closed:
+            self._reference_poll_wakeup.clear()
+            await self._poll_due()
+            try:
+                async with asyncio.timeout(0.5):
+                    await self._reference_poll_wakeup.wait()
+            except TimeoutError:
+                pass
+
     async def _poll_due(self) -> None:
         self._retire_rounds()
         mono = self._mono()
@@ -775,158 +816,195 @@ class MarketData:
         if self._closed:
             raise DataUnavailable("CLOSED")
         async with self._snapshot_lock:
-            try:
-                await self._poll_due()
-                if self.streams:
-                    cached = self.current_snapshot() if self._mono() - self._cached_at < 2 else None
-                    if cached is not None:
-                        return cached
-                now = self._now() if now_ms is None else _timestamp(now_ms)
-                start = now // 300000 * 300
-                slug = f"btc-updown-5m-{start}"
-                provenance = f"{GAMMA}/events/slug/{slug}?include_chat=false"
-                event = await self._raw(
-                    f"{GAMMA}/events/slug/{slug}", params={"include_chat": "false"}
+            self._reference_poll_wakeup.set()
+            self._retire_rounds()
+            now = self._now() if now_ms is None else _timestamp(now_ms)
+            cached = self._cached_market
+            if (
+                not self.streams
+                or cached is None
+                or self._mono() - self._cached_at >= 2
+                or self._metadata_invalidation_reason
+                or now // 300000 != cached.market.start_s // 300
+            ):
+                try:
+                    await self._refresh_market(now)
+                except DataUnavailable as exc:
+                    self._discovery_failure = {"code": exc.code, "received_ms": self._now()}
+                    # Transport failures do not revoke still-young, validated
+                    # metadata. Contradictory or malformed responses do.
+                    if exc.code not in {
+                        "HTTP_UNAVAILABLE",
+                        "BOOK_UNAVAILABLE",
+                        "CROSSED_BOOK",
+                        "BOOK_GENERATION_CHANGED",
+                        "ROUND_CHANGED",
+                        "STALE_DATA",
+                        "CLOCK_SKEW",
+                    }:
+                        self._metadata_invalidation_reason = exc.code
+                    self._emit("snapshot_unavailable", code=exc.code)
+                    raise
+                except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                    self._metadata_invalidation_reason = "INVALID_METADATA"
+                    self._discovery_failure = {
+                        "code": "INVALID_METADATA",
+                        "received_ms": self._now(),
+                    }
+                    self._emit(
+                        "snapshot_unavailable",
+                        code="INVALID_METADATA",
+                        error_type=type(exc).__name__,
+                    )
+                    raise DataUnavailable("INVALID_METADATA") from exc
+            # Discovery callers retain the explicit conflict result for strategy
+            # diagnostics. The synchronous capture path rejects that input.
+            result = self._assemble_snapshot(allow_reference_conflict=True)
+            if result is None:
+                code = str(self.snapshot_status["code"])
+                self._emit("snapshot_unavailable", code=code)
+                raise DataUnavailable(code)
+            return result
+
+    async def _refresh_market(self, now_ms: int) -> None:
+        now = _timestamp(now_ms)
+        start = now // 300000 * 300
+        slug = f"btc-updown-5m-{start}"
+        provenance = f"{GAMMA}/events/slug/{slug}?include_chat=false"
+        event = await self._raw(f"{GAMMA}/events/slug/{slug}", params={"include_chat": "false"})
+        self._emit(
+            "discovery",
+            slug=slug,
+            source_ms=start * 1000,
+            stage="received",
+            provenance=provenance,
+            raw_event=event,
+        )
+        raw = self._parse_event(event, slug, start)
+        condition = _condition(raw.get("conditionId"))
+        tokens = _token_map(_array(raw.get("outcomes")), _array(raw.get("clobTokenIds")))
+        if slug not in self._rounds:
+            point = self._points["twap60"].get(start * 1000)
+            self._rounds[slug] = _Round(
+                slug,
+                start,
+                condition,
+                captured=point.price if point is not None else None,
+                next_poll=self._mono() + 30,
+            )
+        self._retire_rounds()
+        state = self._rounds[slug]
+        if state.condition_id != condition:
+            state.conflict = True
+            raise DataUnavailable("MARKET_IDENTITY_CHANGED")
+        if start * 1000 in self._conflicting_points["twap60"]:
+            state.conflict = True
+        self._metadata(state, event.get("eventMetadata"), provenance)
+        if self.streams:
+            await self.streams.select_market((tokens["Up"], tokens["Down"]), condition)
+        # A reconnect or tick change during these reads invalidates their books.
+        book_revision = self._book_revision
+        flags, fees, up, down = await asyncio.gather(
+            self._raw(f"{CLOB}/markets/{condition}"),
+            self._raw(f"{CLOB}/clob-markets/{condition}"),
+            self._read_book(tokens["Up"]),
+            self._read_book(tokens["Down"]),
+        )
+        if book_revision != self._book_revision:
+            raise DataUnavailable("BOOK_GENERATION_CHANGED")
+        tick, minimum, rate, exponent = self._trading_metadata(flags, fees, slug, condition, tokens)
+        for book in (up, down):
+            tick_compatible = self._compatible_reported_tick(
+                tick, book.tick, slug, condition, f"{CLOB}/book", book.book.token_id
+            )
+            mismatches = [
+                (name, expected, actual)
+                for name, expected, actual in (
+                    ("condition_id", condition, book.condition_id),
+                    ("tick_size", tick, book.tick),
+                    ("min_order_size", minimum, book.minimum),
                 )
+                if (not tick_compatible if name == "tick_size" else expected != actual)
+            ]
+            for name, expected, actual in mismatches:
                 self._emit(
-                    "discovery",
+                    "metadata_rejected",
+                    code="TRADING_METADATA_CHANGED",
                     slug=slug,
-                    source_ms=start * 1000,
-                    stage="received",
-                    provenance=provenance,
-                    raw_event=event,
+                    condition_id=condition,
+                    token_id=book.book.token_id,
+                    endpoint=f"{CLOB}/book",
+                    compared_field=name,
+                    expected=str(expected),
+                    actual=str(actual),
                 )
-                raw = self._parse_event(event, slug, start)
-                condition = _condition(raw.get("conditionId"))
-                tokens = _token_map(_array(raw.get("outcomes")), _array(raw.get("clobTokenIds")))
-                if slug not in self._rounds:
-                    point = self._points["twap60"].get(start * 1000)
-                    self._rounds[slug] = _Round(
-                        slug,
-                        start,
-                        condition,
-                        captured=point.price if point is not None else None,
-                        next_poll=self._mono() + 30,
-                    )
-                self._retire_rounds()
-                state = self._rounds[slug]
-                if state.condition_id != condition:
-                    state.conflict = True
-                    raise DataUnavailable("MARKET_IDENTITY_CHANGED")
-                if start * 1000 in self._conflicting_points["twap60"]:
-                    state.conflict = True
-                self._metadata(state, event.get("eventMetadata"), provenance)
-                flags, fees, up, down = await asyncio.gather(
-                    self._raw(f"{CLOB}/markets/{condition}"),
-                    self._raw(f"{CLOB}/clob-markets/{condition}"),
-                    self._read_book(tokens["Up"]),
-                    self._read_book(tokens["Down"]),
-                )
-                tick, minimum, rate, exponent = self._trading_metadata(
-                    flags, fees, slug, condition, tokens
-                )
-                for book in (up, down):
-                    mismatches = [
-                        (name, expected, actual)
-                        for name, expected, actual in (
-                            ("condition_id", condition, book.condition_id),
-                            ("tick_size", tick, book.tick),
-                            ("min_order_size", minimum, book.minimum),
-                        )
-                        if expected != actual
-                    ]
-                    for name, expected, actual in mismatches:
-                        self._emit(
-                            "metadata_rejected",
-                            code="TRADING_METADATA_CHANGED",
-                            slug=slug,
-                            condition_id=condition,
-                            token_id=book.book.token_id,
-                            endpoint=f"{CLOB}/book",
-                            compared_field=name,
-                            expected=str(expected),
-                            actual=str(actual),
-                        )
-                    if mismatches:
-                        raise DataUnavailable("TRADING_METADATA_CHANGED")
-                # now_ms chooses the initial round; final validation always uses
-                # the advancing injected UTC clock after all network work.
-                final_now = self._now()
-                if final_now // 300000 != start // 300:
-                    raise DataUnavailable("ROUND_CHANGED")
-                for book in (up.book, down.book):
-                    self._fresh(
-                        book.timestamp_ms,
-                        book.received_ms,
-                        final_now,
-                        self.config.data.max_book_age_ms,
-                    )
-                value, status = self._reference(state)
-                market = Market(
-                    slug,
-                    condition,
-                    start,
-                    start + 300,
-                    tokens["Up"],
-                    tokens["Down"],
-                    value,
-                    "eventMetadata.priceToBeat"
-                    if state.official is not None
-                    else "chainlink_twap60_exact_boundary"
-                    if value is not None
-                    else None,
-                    SOURCE,
-                    tick,
-                    minimum,
-                    rate,
-                    exponent,
-                    True,
-                    True,
-                    status,
-                    start * 1000 if value is not None else None,
-                    state.received_ms,
-                    state.provenance,
-                )
+            if mismatches:
+                raise DataUnavailable("TRADING_METADATA_CHANGED")
+            off_grid = next(
+                (level.price for level in (*book.book.bids, *book.book.asks) if level.price % tick),
+                None,
+            )
+            if off_grid is not None:
                 self._emit(
-                    "discovery",
+                    "book_grid_rejected",
+                    code="BOOK_TICK_MISMATCH",
                     slug=slug,
-                    source_ms=start * 1000,
-                    provenance=provenance,
-                    stage="validated",
-                    raw_clob_market=flags,
-                    raw_clob_fees=fees,
-                    reference_status=status,
+                    condition_id=condition,
+                    token_id=book.book.token_id,
+                    endpoint=f"{CLOB}/book",
+                    tick_size=str(tick),
+                    price=str(off_grid),
                 )
-                spot, twap = self._latest("spot", final_now), self._latest("twap60", final_now)
-                if self._observer_failed:
-                    raise DataUnavailable("OBSERVER_FAILED")
-                if self.streams:
-                    await self.streams.select_market(
-                        (market.up_token, market.down_token), market.condition_id
-                    )
-                result = Snapshot(
-                    market,
-                    up.book,
-                    down.book,
-                    spot,
-                    twap,
-                    tuple(self._points["spot"][key] for key in sorted(self._points["spot"])),
-                    final_now,
-                    self.streams.exchange_history if self.streams else (),
-                )
-                self._cached_snapshot, self._cached_at = result, self._mono()
-                self._discovery_failure = None
-                return result
-            except DataUnavailable as exc:
-                self._discovery_failure = {"code": exc.code, "received_ms": self._now()}
-                self._emit("snapshot_unavailable", code=exc.code)
-                raise
-            except (ValueError, TypeError, KeyError, AttributeError) as exc:
-                self._discovery_failure = {"code": "INVALID_METADATA", "received_ms": self._now()}
-                self._emit(
-                    "snapshot_unavailable", code="INVALID_METADATA", error_type=type(exc).__name__
-                )
-                raise DataUnavailable("INVALID_METADATA") from exc
+                raise DataUnavailable("BOOK_TICK_MISMATCH")
+        # now_ms chooses the initial round; final validation always uses
+        # the advancing injected UTC clock after all network work.
+        final_now = self._now()
+        if final_now // 300000 != start // 300:
+            raise DataUnavailable("ROUND_CHANGED")
+        value, status = self._reference(state)
+        market = Market(
+            slug,
+            condition,
+            start,
+            start + 300,
+            tokens["Up"],
+            tokens["Down"],
+            value,
+            "eventMetadata.priceToBeat"
+            if state.official is not None
+            else "chainlink_twap60_exact_boundary"
+            if value is not None
+            else None,
+            SOURCE,
+            tick,
+            minimum,
+            rate,
+            exponent,
+            True,
+            True,
+            status,
+            start * 1000 if value is not None else None,
+            state.received_ms,
+            state.provenance,
+        )
+        self._emit(
+            "discovery",
+            slug=slug,
+            source_ms=start * 1000,
+            provenance=provenance,
+            stage="validated",
+            raw_clob_market=flags,
+            raw_clob_fees=fees,
+            reference_status=status,
+        )
+        if self._observer_failed:
+            raise DataUnavailable("OBSERVER_FAILED")
+        # Cache market settings independently of price-feed freshness. Freshness
+        # and synchronization are checked whenever a complete input is assembled.
+        self._cached_market = _MarketCache(market, up.book, down.book, book_revision)
+        self._cached_at = self._mono()
+        self._metadata_invalidation_reason = None
+        self._discovery_failure = None
 
     def _parse_event(
         self, event: dict[str, Any], slug: str, start: int, *, duration_seconds: int = 300
@@ -960,6 +1038,36 @@ class MarketData:
         if market.get("negRisk") is not False:
             raise DataUnavailable("UNSUPPORTED_MARKET_STATE")
         return market
+
+    def _compatible_reported_tick(
+        self,
+        canonical: Decimal,
+        reported: Decimal,
+        slug: str,
+        condition: str,
+        endpoint: str,
+        token_id: str | None = None,
+    ) -> bool:
+        if canonical not in TICKS or reported not in TICKS:
+            return False
+        if canonical == reported:
+            return True
+        if canonical > reported or reported % canonical:
+            return False
+        # The fresh SDK signing grid refines the reported header grid. This
+        # does not change observed prices or imply synchronized endpoint clocks.
+        self._emit(
+            "metadata_tick_compatible",
+            code="COMPATIBLE_TICK_REFINEMENT",
+            slug=slug,
+            condition_id=condition,
+            token_id=token_id,
+            endpoint=endpoint,
+            source=f"{CLOB}/clob-markets/{condition}",
+            tick_size=str(canonical),
+            provenance={"canonical_tick": str(canonical), "reported_tick": str(reported)},
+        )
+        return True
 
     def _trading_metadata(
         self,
@@ -1021,6 +1129,10 @@ class MarketData:
             ("min_order_size", minimum, flags.get("minimum_order_size")),
         ):
             actual = _decimal(wire_value)
+            if name == "tick_size" and self._compatible_reported_tick(
+                tick, actual, slug, condition, f"{CLOB}/markets/{condition}"
+            ):
+                continue
             if expected != actual:
                 self._emit(
                     "metadata_rejected",

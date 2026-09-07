@@ -157,3 +157,24 @@ PIDs, unit files, configuration and registration hashes were preserved. Code val
 681 tests; PR12 CI passed. The dashboard marks the cutover and explains that lifetime totals
 include the earlier policies. Further deployment details and backups remain in the active
 checkout's ignored `work/deployment/` and `work/value-audit/policy-migration/` directories.
+
+## Independent market refresh and book recovery
+
+The metadata-refresh repair separates settlement-result polling from current-market HTTP
+refreshes. A slow delayed result no longer holds the refresh lock. The settlement task is
+cancelled and joined with the other feed tasks during shutdown. Market settings retain their
+five-second validation lifetime; price and book source/receipt timestamps are never renewed
+by cache reuse. A valid settings response can be retained while the BTC price feed recovers.
+
+Book transport interruptions now require synchronized depth without expiring market settings.
+Cached REST depth from before an interruption cannot be reused, and a response completed after
+a newer invalidation cannot restore it. Tick changes require fresh authoritative metadata; supported coarse headers may be accepted
+only under the documented dividing-grid refinement with compatible actual prices. Other
+inconsistent venue settings remain rejected. The CLI immediately invalidates prepared-entry input on book failure.
+
+Capture diagnostics distinguish `METADATA_INVALIDATED`, with its original reason, from actual
+`METADATA_CACHE_EXPIRED` and `BOOK_RESYNC_PENDING`. The dashboard shows settings age and the
+latest underlying reason. Historical expiry counts include the old collector's mixed meanings;
+they remain intact. Ratios in the cause table use rejected samples, not every sample or trade.
+No runtime configuration, accounting schema, wallet session, or study registration changes are
+required for this code-only restart. Both study workers retain their registered checkouts.

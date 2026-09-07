@@ -290,3 +290,28 @@ when deploying collector/dashboard diagnostics.
   a changed schema requires a separate new config path for updated collector/dashboard. Keep
   full backup verification online; avoid multi-GB offline copies turning deployment into a
   multi-minute capture gap. Never recover by restoring stale financial rows.
+
+## 2026-09-08: Metadata expiry hid book recovery and a settlement bottleneck
+
+- Symptom: `METADATA_CACHE_EXPIRED` accounted for about91% of rejected capture samples.
+  That percentage used rejected samples as denominator, not all samples. Inspect the
+  aggregate counters and timestamped diagnostic frames before calling it91% data loss.
+- `_cached_at = -inf` encoded every book invalidation, while cache publication also required
+  healthy price feeds. A delayed settlement request held the same refresh path. Preserve
+  separate metadata age, sticky metadata contradictions and book synchronization identity;
+  move settlement lookups to an owned background task. Never fix this by extending stale
+  quote timestamps or accepting cached REST depth after a newer stream invalidation.
+- Test the interleaving: capture an HTTP book, invalidate the stream, complete the request.
+  An older completion must not overwrite the invalidation. The CLI's already-published
+  entry input needs immediate book-event invalidation too, including during preparation.
+- A crossed REST book is a depth failure, not contradictory market settings. Keep it rejected
+  without disabling otherwise fresh synchronized WebSocket depth under still-valid metadata.
+  Preserve explicit tick changes until a consistent metadata refresh; reconnect alone is
+  insufficient. Historical expiry counters cannot be retrospectively separated with certainty.
+
+- Follow-through: the first six-minute control comparison stayed at roughly65% usable inputs.
+  Relabeling errors did not solve the dominant admission loss. Recorded raw endpoint comparisons
+  showed fresh `mts=.001` versus legacy `/markets=.01`; exact equality was our policy, not a
+  documented atomic venue contract. Use the pinned SDK's authoritative grid and prove the
+  narrow supported coarse-to-fine compatibility mathematically; never waive token/fee/size
+  checks. Verify through the real ledger filter so new diagnostic fields are not silently lost.

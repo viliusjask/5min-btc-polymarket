@@ -1,3 +1,42 @@
+# Progress: metadata refresh and book recovery
+
+2026-09-08 (Kyiv). `fix/metadata-refresh`, isolated `.worktrees/metadata-refresh`,
+based on merged PR12 (`46246df`). The screenshot's 91.1% describes the share of rejected
+samples attributed to metadata expiry. The historical diagnostic period had approximately
+20% rejected snapshots overall, not 91% missing observations.
+
+- Reproduced the settlement-poll bottleneck, unrelated book errors expiring metadata, lost
+  validated metadata during price-feed outages, and in-flight refreshes erasing newer
+  invalidation events. Separated their state and retained five-second metadata validation.
+- Added an owned settlement-poll task, versioned book admission and sticky metadata
+  contradictions. Complete recovered stream books can be used while validated settings
+  remain young. Old REST books cannot survive a newer interruption. Crossed REST depth
+  stays rejected without poisoning valid market settings.
+- CLI book events now immediately invalidate published entry input. Synthetic integration
+  tests show a disconnect/tick change during preparation results in zero order submissions.
+- Capture diagnostics and dashboard distinguish causes and show the settings age. Older
+  cause totals stay intact; there is no retrospective reclassification or invented data.
+- The fresh side-by-side comparison showed 471 old versus 470 new usable samples out of
+  719 each: the refresh/concurrency repair alone did not improve availability in that period.
+  This triggered a separate review of tick-source authority, rather than claiming success
+  from renamed counters. See [the bounded collection refinement](research/tick-change-contract.md).
+- No strategy parameters, budgets, fees, public interfaces, dependencies or journal schemas
+  changed. Existing loss limits and historical uncertainty remain in force.
+
+Validation: **712 tests passed in 181.86 seconds**; Ruff lint/format, mypy (33 sources),
+locked dependencies, CLI help and whitespace checks passed. The covering cases include
+new race, expiry, recovery, background-label and shutdown checks. A bounded Astra review
+found the crossed-book categorization defect; a failing regression verified its correction.
+Browser checks passed at 1440px and 390px: actual counters render, synthetic invalidation
+reasons/age and denominator are correct, and no JavaScript errors or Real-account requests
+occurred. Two unit files passed verification using an isolated temporary XDG_RUNTIME_DIR.
+
+Fresh anonymous comparison and code-only deployment evidence are recorded below when complete.
+Local ignored artifacts: `work/live-old.json`, `work/live-new.json`, `work/full-tests.log`,
+`work/market-data-review.md`, and `work/deployment/`. No funded orders are part of these checks.
+
+---
+
 # Progress: Momentum and execution policy corrections
 
 2026-09-07. `fix/strategy-policy-audit`, isolated `.worktrees/strategy-policy-audit`.

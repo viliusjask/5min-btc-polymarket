@@ -394,7 +394,9 @@ class LatestInput:
             self.invalidate(str(record.get("code", "ANCHOR_CONFLICT")))
         if record.get("kind") in ("stream_unavailable", "price_conflict") and record.get(
             "stream"
-        ) in ("spot", "twap60"):
+        ) in ("spot", "twap60", "books"):
+            # Book failures can arrive while discovery or order preparation awaits.
+            # Keep their generation change even if an older poll later completes.
             self.invalidate(str(record.get("code", record["kind"])))
         if record.get("kind") in (
             "stream_unavailable",

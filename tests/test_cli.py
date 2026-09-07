@@ -1095,3 +1095,70 @@ def test_cancelled_run_drains_inflight_post_before_releasing_owner(tmp_path, mon
             await cli._cancel(task)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "code", ["BOOK_STREAM_DISCONNECTED", "BOOK_SEQUENCE_MISMATCH", "TICK_SIZE_CHANGED"]
+)
+def test_book_invalidation_blocks_inflight_publication_until_new_poll(tmp_path, code):
+    from btc5m.streams import PublicStreams
+
+    ledger = Ledger(tmp_path / "observe.sqlite", cli.ANONYMOUS_WALLET)
+    now = [NOW]
+    cell = cli.LatestInput(ledger, Config(), clock=lambda: now[0] / 1000, emit=lambda row: None)
+    snapshot = confirmation_snapshot()
+    cell.publish(snapshot, 0)
+    started = cell.read().invalidation_generation
+    assert cell.read().snapshot is not None
+    streams = PublicStreams(Config(), clock=lambda: now[0] / 1000, observer=cell.observe)
+    streams.invalidate_market(code)
+    invalidated = cell.read()
+    assert invalidated.snapshot is None
+    assert invalidated.invalidation_generation == started + 1
+    # A metadata poll begun before the stream failure cannot restore the old entry.
+    cell.publish(snapshot, started)
+    assert cell.read().snapshot is None
+    now[0] += 1000
+    recovered = confirmation_snapshot(now[0])
+    cell.publish(recovered, invalidated.invalidation_generation)
+    assert cell.read().snapshot == recovered
+    assert cell.read().invalidation_generation == invalidated.invalidation_generation
+    ledger.close()
+
+
+@pytest.mark.parametrize("code", ["BOOK_STREAM_DISCONNECTED", "TICK_SIZE_CHANGED"])
+def test_book_invalidation_during_order_preparation_prevents_post(tmp_path, monkeypatch, code):
+    from btc5m.engine import Engine
+    from btc5m.streams import PublicStreams
+
+    async def run():
+        venue = Venue()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        cell = cli.LatestInput(
+            ledger, Config(), clock=lambda: venue.now / 1000, emit=lambda row: None
+        )
+        cell.publish(confirmation_snapshot(), 0)
+        engine = Engine(broker, ledger, Config(), session, read_snapshot=cell.read)
+        assert (await engine.step(None, None, venue.now)).reason == "ENTRY_CONFIRMATION_WAITING"
+        venue.now += 1000
+        snapshot = confirmation_snapshot(venue.now)
+        cell.publish(snapshot, 0)
+        streams = PublicStreams(Config(), clock=lambda: venue.now / 1000, observer=cell.observe)
+        prepare = broker.prepare
+
+        async def invalidated_prepare(*args):
+            prepared = await prepare(*args)
+            streams.invalidate_market(code)
+            cell.publish(snapshot, 0)  # Simulate completion of the earlier metadata poll.
+            return prepared
+
+        monkeypatch.setattr(broker, "prepare", invalidated_prepare)
+        result = await engine.step(None, None, venue.now)
+        assert result.reason == "INPUT_INVALIDATED_BEFORE_POST"
+        assert venue.posts == 0
+        assert cell.read().snapshot is None
+        assert not ledger.unresolved_orders()
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())

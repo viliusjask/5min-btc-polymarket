@@ -121,3 +121,72 @@ def test_label_backlog_rotates_within_adapter_limit_and_keeps_original_holdings(
             assert selected[0] == held[0]
             visited.update(m.slug for m in selected)
         assert visited == {*tape.known_markets, "baseline-held"}
+
+
+def test_capture_diagnostics_separate_unavailable_spans_from_delays_and_survive_restart(tmp_path):
+    import json
+
+    path = tmp_path / "capture.sqlite"
+    snap = make_snapshot()
+    t = snap.now_ms
+    with Tape(path) as tape:
+        legacy = tape.append(t, None)  # old causes cannot be recovered or reclassified
+        first = tape.append(
+            t + 500, replace(snap, now_ms=t + 500), diagnostic={"code": "CAPTURED"}, max_gap_ms=5000
+        )
+        tape.append(
+            t + 1000, None, diagnostic={"code": "STALE_DATA", "component": "spot"}, max_gap_ms=5000
+        )
+        tape.append(
+            t + 1500, None, diagnostic={"code": "STALE_DATA", "component": "spot"}, max_gap_ms=5000
+        )
+    with Tape(path) as tape:
+        tape.append(
+            t + 7500,
+            None,
+            diagnostic={"code": "BOOK_RESYNC_PENDING", "component": "up_book"},
+            max_gap_ms=5000,
+        )
+        tape.append(
+            t + 8000,
+            replace(snap, now_ms=t + 8000),
+            diagnostic={"code": "CAPTURED"},
+            max_gap_ms=5000,
+        )
+        quality = json.loads(
+            tape.db.execute("SELECT value FROM meta WHERE key='capture_quality'").fetchone()[0]
+        )
+        assert quality["first_frame"] == first
+        assert quality["frames"] == 5 and quality["available_frames"] == 2
+        assert quality["unavailable_spans"] == 1
+        assert quality["recorder_delays"] == 1 and quality["max_interval_ms"] == 6000
+        assert quality["causes"] == {"spot:STALE_DATA": 2, "up_book:BOOK_RESYNC_PENDING": 1}
+        assert quality["max_unavailable_span_ms"] == 7000
+        assert quality["current_unavailable_since_ms"] is None
+        frames = list(tape.read_after(legacy))
+        assert frames[1].diagnostic["code"] == "STALE_DATA"
+        assert not tape.db.execute("SELECT 1 FROM meta WHERE key='research_first_frame'").fetchone()
+
+
+def test_capture_diagnostic_counters_rollback_with_frame(tmp_path):
+    import json
+    import sqlite3
+
+    with Tape(tmp_path / "capture.sqlite") as tape:
+        tape.append(1000, None, diagnostic={"code": "NO_METADATA"}, max_gap_ms=5000)
+        tape.db.execute(
+            "CREATE TRIGGER reject_label BEFORE INSERT ON labels BEGIN SELECT RAISE(ABORT, 'fixture'); END"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            tape.append(
+                9000,
+                None,
+                diagnostic={"code": "NO_METADATA"},
+                max_gap_ms=5000,
+                labels={"fixture": {"final": "1"}},
+            )
+        assert tape.highwater() == 1
+        q = json.loads(
+            tape.db.execute("SELECT value FROM meta WHERE key='capture_quality'").fetchone()[0]
+        )
+        assert q["frames"] == 1 and q["recorder_delays"] == 0

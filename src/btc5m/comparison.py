@@ -346,12 +346,23 @@ async def run_paper(
                 research = data.streams.research_frame(capture_ms) if data.streams else None
                 if research is not None and scanner is not None:
                     research["cross_duration"] = scanner.latest
+                diagnostic = (
+                    {
+                        "code": "PAPER_CAPTURE_GAP",
+                        "component": "recorder",
+                        "received_ms": capture_ms,
+                    }
+                    if interrupted
+                    else dict(data.snapshot_status)
+                )
                 tape.append(
                     capture_ms,
                     replace(snapshot, now_ms=capture_ms) if snapshot else None,
                     labels=labels,
-                    code="CAPTURED" if snapshot else "NO_CURRENT_SNAPSHOT",
+                    code="CAPTURED" if snapshot else str(diagnostic["code"]),
                     research=research,
+                    diagnostic=diagnostic,
+                    max_gap_ms=config.data.max_price_age_ms,
                 )
                 last_capture = loop.time()
             for name, broker, engine, ledger in zip(

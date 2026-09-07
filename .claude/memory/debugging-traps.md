@@ -253,3 +253,20 @@ noncooperative code requires external termination followed by journal inspection
 - Collateral split inventory has no opening BUY intent. Resolve/claim and portfolio accounting
   must recover its originating session directly from the conversion-backed position. Keep
   conversions separate from fills and use maker sales for the split strategy's fill-rate count.
+
+## 2026-09-07: Ambiguous experiment PnL and gap flags
+
+The default experiment table hid all recorded profit behind a clean-only metric, making
+large reversal gains and missing-data exclusions impossible to reconcile. Always show
+all realized profit, completed unflagged profit, the exact excluded complement and the
+supporting/incomplete counts together. The complement can contain realized amounts on
+unfinished rounds; do not label it completed flagged profit or subtract fees twice.
+
+`LAB_CAPTURE_GAP` also represented `snapshot is None` while the recorder was running.
+Distinguish sample delays from unavailable snapshots, count consecutive spans rather
+than repeated per-frame uncertainty events, and retain the first failed input check.
+Historical frames lack some causes: nearby HTTP failures support context, not an exact
+retroactive attribution. Two audited large gains had adequate recorded endpoint depth
+and matching nearby public trade prices despite path gaps; neither dismiss them as fake
+nor promote them to validated profit. Preserve registered studies on their original code
+when deploying collector/dashboard diagnostics.

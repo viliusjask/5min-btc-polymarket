@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from btc5m.capture_quality import read_quality
 from btc5m.comparison import MASTER_WALLET
 from btc5m.config import STRATEGIES, Config
 from btc5m.dashboard_live import LiveDashboardReader
@@ -21,6 +22,23 @@ from btc5m.paper import PAPER_MATCHING_MODEL
 
 D = Decimal
 ASSETS = Path(__file__).with_name("dashboard_assets")
+
+
+def lab_profit_context(payload: dict[str, Any]) -> None:
+    """Explain existing report totals without modifying a registered study or its journal."""
+    for phase in payload.get("phases", []):
+        for row in phase.get("variants", []):
+            # The complement includes realized amounts on still-open rounds. It must
+            # not be called completed flagged PnL, or netted against unrealized basis.
+            all_pnl, clean_pnl = D(str(row["realized_pnl"])), D(str(row["clean_completed_pnl"]))
+            if not all_pnl.is_finite() or not clean_pnl.is_finite():
+                raise ValueError("INVALID_LAB_PROFIT")
+            row["excluded_realized_pnl"] = str(all_pnl - clean_pnl)
+            row["flagged_completed_rounds"] = (
+                row["completed_rounds"] - row["clean_completed_rounds"]
+            )
+
+
 DESCRIPTIONS = {
     "momentum": "Late directional entry with protected exits",
     "value": "Settlement value after execution costs",
@@ -649,8 +667,10 @@ def make_server(
                         or lab_payload.get("environment") != "paper-lab"
                     ):
                         raise ValueError("LAB_ENVIRONMENT_MISMATCH")
+                    lab_payload["capture_quality"] = read_quality(reader.path / "capture.sqlite")
+                    lab_profit_context(lab_payload)
                     payload = json.dumps(lab_payload, allow_nan=False).encode()
-                except (OSError, ValueError):
+                except (OSError, ValueError, KeyError, TypeError, ArithmeticError):
                     self.respond(503, b'{"error":"LAB_REPORT_UNAVAILABLE"}', "application/json")
                     return
                 self.respond(200, payload, "application/json")

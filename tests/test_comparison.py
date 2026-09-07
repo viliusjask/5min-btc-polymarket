@@ -13,6 +13,7 @@ from btc5m.market_data import DataUnavailable
 
 class AnonymousData:
     streams = None
+    snapshot_status = {"code": "STREAM_WARMUP", "component": "spot"}
 
     def __init__(self, config, *, enhanced, observer, capture_flow=False):
         assert enhanced

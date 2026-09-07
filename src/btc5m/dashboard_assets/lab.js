@@ -39,6 +39,8 @@ function labFormat(value, metric) {
 }
 function labChoose(ident) { labSelection = ident; renderLab(); }
 function labHeatmap(variants, metric) {
+  const unflagged = metric === "clean_completed_pnl";
+  $("lab-heatmap-note").textContent = "Click a cell to inspect the variant. The second number is " + (unflagged ? "completed unflagged rounds" : "rounds with fills") + ". A dash means no supporting observations; it is not a break-even result.";
   const grid = variants.filter(v => v.family === "momentum");
   const windowName = v => v.parameters.entry_min_seconds + "–" + v.parameters.entry_max_seconds + "s";
   const leads = [...new Set(grid.map(v => Number(v.parameters.lead_usd)))].sort((a,b) => a-b);
@@ -47,7 +49,7 @@ function labHeatmap(variants, metric) {
     const v = grid.find(x => Number(x.parameters.lead_usd) === lead && windowName(x) === window);
     if (!v) return "—";
     const value = labValue(v, metric);
-    const button = node("button", "lab-cell" + (v.ident === labSelection ? " selected" : ""), labFormat(value, metric) + " · " + v.clean_completed_rounds);
+    const button = node("button", "lab-cell" + (v.ident === labSelection ? " selected" : ""), labFormat(value, metric) + " · " + (unflagged ? v.clean_completed_rounds : v.filled_rounds));
     button.classList.toggle("positive", value !== null && value > 0 && metric !== "observed_drawdown");
     button.classList.toggle("negative", value !== null && (value < 0 || metric === "observed_drawdown" && value > 0));
     button.title = v.label + "; " + v.filled_rounds + " filled rounds; fill rate " + labPercent(v.fill_rate);
@@ -103,7 +105,9 @@ function labDetail(row, phase) {
   labMetrics("lab-wallet", [
     ["PAPER EQUITY", money(row.equity), money(row.cash) + " cash · " + money(row.open_basis) + " held cost"],
     ["REALIZED PROFIT", (row.deployed_rounds ?? row.filled_rounds) ? money(row.realized_pnl) : "—", money(row.fees) + " fees · " + row.unresolved_rounds + " unresolved rounds"],
-    ["USABLE COMPLETED PROFIT", row.clean_completed_rounds ? money(row.clean_completed_pnl) : "—", row.clean_completed_rounds + " completed · " + row.uncertain_rounds + " uncertain observed rounds"],
+    ["COMPLETED UNFLAGGED PROFIT", row.clean_completed_rounds ? money(row.clean_completed_pnl) : "—", row.clean_completed_rounds + " of " + row.completed_rounds + " completed rounds · absence of flags is not proof"],
+    ["EXCLUDED REALIZED PROFIT", money(row.excluded_realized_pnl), row.flagged_completed_rounds + " flagged completed rounds + any realized amounts on " + row.unresolved_rounds + " incomplete rounds"],
+    ["INCOMPLETE EXPOSURE", money(row.open_basis), "Held cost, not profit · " + row.unresolved_rounds + " incomplete rounds · " + row.uncertain_rounds + " flagged observed rounds, including no-fill rounds"],
     ["OBSERVED DRAWDOWN", money(row.observed_drawdown), row.missing_equity_marks + " missing marks · gaps may hide larger losses"],
   ]);
   labEquity(row);
@@ -150,6 +154,7 @@ function renderLab() {
   $("lab-momentum-panel").hidden = !variants.some(v=>v.family==="momentum");
   $("lab-momentum-panel").parentElement.style.gridTemplateColumns = $("lab-momentum-panel").hidden ? "minmax(0, 1fr)" : "";
   renderFlowResearch(data.research);
+  renderCaptureQuality(data.capture_quality);
   $("lab-phase-note").textContent = phase.kind === "exploratory" ? "Automatic selection after " + dateTime(data.explore_end_ms) + ": up to three positive variants with at least 30 usable completed rounds, plus Value control. That gate is not proof of profitability. The first partial round is excluded from trading." : "Frozen before " + dateTime(phase.start_ms) + "; entry evaluation ends " + dateTime(phase.end_ms) + ". Fresh $100 paper wallets. " + (phase.selection.reason || phase.selection.method) + ". This test's settings cannot change.";
   labMetrics("lab-metrics", [
     ["REGISTERED TRIALS", count(data.trial_count), "All variants retained, including failures"],
@@ -157,14 +162,17 @@ function renderLab() {
     ["FORECAST ROUNDS", count(phase.forecasts.models.central.n), "Central model with official outcomes"],
     ["MATCHED BENCHMARK ROUNDS", count(phase.forecasts.comparisons.central_vs_market.n), "Model and market scored on the same rounds"],
   ]);
+  const benchmark = phase.forecasts.comparisons.central_vs_market;
+  const enough = variants.filter(v => v.clean_completed_rounds >= 30 && Number(v.clean_completed_pnl) > 0);
+  $("lab-summary").textContent = (enough.length ? enough.length + " variants have positive unflagged profit across at least 30 completed rounds. They still need the later-data test." : "No variant yet has positive unflagged profit across at least 30 completed rounds. A large recorded gain alone does not qualify it.") + (benchmark.n && number(benchmark.brier_difference) !== null ? " On " + benchmark.n + " matched rounds, the central probability model has " + (Number(benchmark.brier_difference) > 0 ? "larger" : Number(benchmark.brier_difference) < 0 ? "smaller" : "equal") + " average squared forecast error than market prices. That comparison measures forecasts, not trading profit." : " There are not yet matched settled rounds for the model-versus-market comparison.");
   const metric = $("lab-metric").value, family = $("lab-family").value;
   const filtered = variants.filter(v => family === "all" || v.family === family);
   filtered.sort((a,b) => { const av=labValue(a,metric),bv=labValue(b,metric); if(av===null) return bv===null ? a.label.localeCompare(b.label) : 1; if(bv===null)return -1; return (metric==="observed_drawdown" ? av-bv : bv-av)||a.label.localeCompare(b.label); });
   if (!variants.some(v => v.ident === labSelection)) labSelection = (filtered[0] || variants[0])?.ident;
   $("lab-variant-count").textContent = filtered.length + " SHOWN · " + variants.length + " IN THIS PHASE";
-  labTable("lab-variants", ["Variant · click to inspect", "Compared metric", "Usable rounds", "Entry fill rate · buys / maker sales", "Fees", "Unresolved", "Uncertain"], filtered.map(v => {
+  labTable("lab-variants", ["Variant · click to inspect", "All realized profit", "Completed unflagged profit", "Excluded remainder", "Completed · unflagged / total", "Incomplete rounds", "Fill rate", "Fees", "Drawdown"], filtered.map(v => {
     const button = node("button", "lab-select"+(labSelection===v.ident?" selected":""), v.label); button.addEventListener("click",()=>labChoose(v.ident));
-    return [button,labFormat(labValue(v,metric),metric),count(v.clean_completed_rounds),labPercent(v.fill_rate),money(v.fees),count(v.unresolved_rounds),count(v.uncertain_rounds)];
+    return [button,labFormat(labValue(v,"realized_pnl"),"realized_pnl"),labFormat(labValue(v,"clean_completed_pnl"),"clean_completed_pnl"),money(v.excluded_realized_pnl),count(v.clean_completed_rounds)+" / "+count(v.completed_rounds),count(v.unresolved_rounds),labPercent(v.fill_rate),money(v.fees),money(v.observed_drawdown)];
   }), "No variants in this family for the selected phase");
   labHeatmap(variants,metric); labCalibration(phase.forecasts);
   const selected = variants.find(v=>v.ident===labSelection);
@@ -190,9 +198,32 @@ function renderFlowResearch(research) {
     ["30s EXECUTED IMBALANCE",valid?labPercent(window30.imbalance):"—", valid?labNumber(window30.buy_quantity,4)+" BTC bought · "+labNumber(window30.sell_quantity,4)+" BTC sold":human(window30.status||flow.status||"FLOW_INPUT_MISSING")],
     ["RESTING BOOK PRESSURE",depth.status==="VALID"?labPercent(depth.imbalance):"—", "Order sizes, not win probability · "+human(depth.status||"DEPTH_MISSING")+" · receipt clock"],
     ["PROTECTED QUOTE CANDIDATES",count(scanner.candidates), "Both prices fit the cost bound; no execution attempted"],
-    ["CROSS-DURATION CHECKS",count(scanner.checks),human(scanner.latest?.[0]?.status||"SCANNER_STARTING")],
+    ["SCANNER STATUS POLLS",count(scanner.checks),"Includes waiting and rejected inputs; not independent opportunities"],
   ]);
   labTable("lab-scanner",["UTC time","Result","Shares per side","Protected cost","Minimum payout if both fill"],(scanner.latest||[]).slice(0,6).map(r=>[dateTime(r.received_ms),human(r.status),r.shares??"—",money(r.protected_cost),money(r.minimum_payout)]));
+}
+function renderCaptureQuality(q) {
+  const ready = q?.status === "available";
+  $("lab-quality-metrics").hidden = !ready;
+  $("lab-quality-causes").hidden = !ready;
+  if (!ready) {
+    $("lab-quality-note").textContent = q?.status === "unavailable" ? "Capture diagnostics are temporarily unavailable. Saved study results remain visible." : "Earlier captures did not record the exact failed snapshot check. Their generic gap flags remain excluded; new cause counters will appear when the instrumented collector publishes them.";
+    return;
+  }
+  const missing = q.frames-q.available_frames;
+  const stale = Date.now()-q.last_ms > 30000;
+  $("lab-quality-note").textContent = (stale ? "STALE diagnostics · " : "") + "Shared collector measurements since " + dateTime(q.first_ms) + "; last sample " + dateTime(q.last_ms) + ". These cover new captures across both studies, not the selected phase's full history. Rejected snapshots and delays between samples are different problems. Counts measure samples, not missed trades. Historical unknown causes have not been guessed or removed.";
+  labMetrics("lab-quality-metrics", [
+    ["VALID SNAPSHOT SAMPLES", labPercent(q.frames ? q.available_frames/q.frames : null), count(q.available_frames)+" / "+count(q.frames)+" samples"],
+    ["REJECTED SNAPSHOT SAMPLES", count(missing), count(q.unavailable_spans)+" consecutive unavailable spans"],
+    ["RECORDER DELAYS", count(q.recorder_delays), "Intervals longer than "+labNumber(q.max_gap_ms/1000,1)+"s · longest "+labNumber(q.max_interval_ms/1000,1)+"s"],
+    ["LATEST SNAPSHOT CHECK", q.latest.code === "CAPTURED" ? "Available" : "Rejected", q.latest.code === "CAPTURED" ? "All current snapshot checks passed" : human(q.latest.component)+" · "+human(q.latest.code)],
+  ]);
+  const explanations = {STALE_DATA:"The source timestamp or local receipt is too old.",STREAM_SILENT:"No recent feed receipt.",METADATA_CACHE_EXPIRED:"Cached market settings expired before a validated refresh.",NO_METADATA:"No validated market snapshot has been established.",ROUND_CHANGED:"The cached market belongs to the previous round.",BOOK_RESYNC_PENDING:"Order-book changes await a complete synchronized book.",BOOK_TICK_MISMATCH:"Book prices do not fit the cached venue price increment.",PAPER_CAPTURE_GAP:"The collector loop resumed after its allowed pause.",OBSERVER_FAILED:"An input could not be durably recorded."};
+  labTable("lab-quality-causes", ["First failed check", "Samples", "Share of rejected samples", "Meaning"], Object.entries(q.causes).sort((a,b)=>b[1]-a[1]).map(([key,n])=>{
+    const [component,code]=key.split(":");
+    return [human(component)+" · "+human(code),count(n),labPercent(missing?n/missing:null),explanations[code]||"Validation rejected this input; the original reason is retained in the capture."];
+  }), "No rejected snapshot samples in this diagnostic period");
 }
 $("lab-suite").addEventListener("change",()=>{labSuite=$("lab-suite").value;labPhase="explore";labSelection=null;labState=null;$("lab-content").hidden=true;$("lab-status").textContent="Loading selected study…";refreshLab();});
 $("lab-phase").addEventListener("change",()=>{labPhase=$("lab-phase").value;labSelection=null;renderLab();});

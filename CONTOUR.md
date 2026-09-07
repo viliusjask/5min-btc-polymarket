@@ -1,37 +1,35 @@
-# BTC 5m Skill Contour (single source of truth)
+# Standalone execution boundary
 
-## Canonical execution path
-- Strategy runner (canonical):
-  - `scripts/test_btc_5m_session_exit_sl.py`
-- Unified control entrypoint:
-  - `scripts/btc5m_ctl.sh` (`start|status|stop|report|logs`)
-- Compatibility wrapper (deprecated path, forwards to canonical):
-  - `scripts/run_btc_5m_threshold_test.py`
-- Chat/start helper:
-  - `scripts/btc5m_hot.sh`
-- Watch helper:
-  - `scripts/watch_btc_5m_threshold_and_enter.sh`
-- PnL/report utility:
-  - `scripts/btc5m_report.py`
-- Latest-run completion reporter:
-  - `scripts/btc5m_latest_report.py`
-- Optional docker control:
-  - `scripts/btc5m_docker.sh`
+The only strategy/execution path is `btc5m.cli` → `MarketData` / `Engine` → `Broker` / `Ledger`.
+`python -m btc5m` and the installed `btc5m` command share that entry point.
+`scripts/btc5m_ctl.sh` is a quoted native CLI delegate; arguments and explicit execution consent
+are unchanged. There is no external runner, Docker mount, profile YAML, automatic watcher,
+chat delivery, or duplicate report engine in the supported workflow.
 
-## External dependency boundary
-- Order placement/close engine is delegated to:
-  - `<your-workspace>/pm-hl-conservative-plus-repo/src/live/pm_live_trade_runner.py`
-- Auth source:
-  - `<your-workspace>/pm-hl-conservative-plus-repo/.env` (or `BTC5M_ENV_FILE`)
+| Responsibility | Source |
+| --- | --- |
+| Validated configuration and immutable data | `src/btc5m/config.py`, `domain.py`, `config/btc5m.toml` |
+| Raw value/momentum screens | `src/btc5m/strategy.py` |
+| Anonymous streams, discovery, books and official references | `src/btc5m/market_data.py` |
+| Serialized confirmation, reconciliation and protected exits | `src/btc5m/engine.py` |
+| Explicit existing-account reads, signing and one POST | `src/btc5m/broker.py` |
+| Allowlisted Polygon reads and receipt/resolution verification | `src/btc5m/rpc.py` |
+| Typed evidence and durable accounting/control | `src/btc5m/execution_types.py`, `ledger.py` |
+| Native lifecycle and safe public reports | `src/btc5m/cli.py`, `__main__.py` |
 
-## Runtime artifacts
-- Primary runtime dir (skill-isolated):
-  - `skills/btc-5m-live/runtime`
-- BTC 5m run logs follow `btc5m_*` naming.
+The CLI polls complete snapshots independently of account I/O and records paired screens and
+calibration immediately. Its immutable latest input and monotonic invalidation generation preserve
+intervening gaps/rejections/identity excursions. The Engine samples after reconciliation and after
+BUY preparation. Held books are fetched for the actual reconciled token, after account I/O and
+independently of discovery, including during shutdown. Real time is refreshed after awaited reads.
 
-## Isolation guidance
-- Keep BTC 5m cron/checkers scoped to this skill naming (`btc5m-*`).
-- Avoid creating generic watchers in unrelated topics/chats.
-- Keep all new BTC 5m automation pointing to canonical runner only.
-- Active completion cron in this contour:
-  - `btc5m-completion-autoreport-topic184` (`36d3b9e6-4638-4e93-80f6-abb268ebbe57`)
+Live journal: `<common-git-root>/.runtime/<lowercase-wallet>/ledger.sqlite`, shared across source
+worktrees through the canonical path helper, with an exclusive process owner for run/reconcile.
+Readonly report/status/account doctor and the dedicated stop write can operate alongside that owner.
+Anonymous default: `<common-git-root>/.observations/<unique-id>/ledger.sqlite`; explicit observation
+paths must remain outside the live namespace. Credentials, virtual environments and journals are
+not copied between worktrees. Existing credentials are loaded only by explicit authenticated modes.
+
+[README.md](README.md) is the operator guide; [docs/design.md](docs/design.md) is the behavioral
+contract. The implementation is development-verified and funded-live-unverified. Preserve all
+branches/worktrees and upstream history; the user handles publication and merging decisions.

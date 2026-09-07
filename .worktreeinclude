@@ -1,0 +1,2 @@
+# Do not copy credentials or live state into development worktrees.
+# Each worktree owns its Python environment; live runtime resolves to the common repo.

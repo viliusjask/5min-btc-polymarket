@@ -1,0 +1,56 @@
+# Decisions made during the repair
+
+2026-09-06. This register makes the autonomous design rulings reviewable. It records the
+reason and the practical cost if a choice proves wrong. Implementation and review status
+remain in [progress](../progress.md); this is not a profitability claim.
+
+| Decision, in order | Reason | Cost or limitation |
+|---|---|---|
+| Accept the independent scientific and execution design corrections | Use the underlying observation's source time; distinguish terminal value from stopped-trade returns; budget fees and outstanding exposure; separate BUY cash from estimated shares; verify metadata, signing and finality | More restrictive decisions and more execution code; the probability model still needs prospective calibration. See [design rulings](design-rulings.md). |
+| Use the pinned official SDK and its declared HTTP/Ethereum dependencies | Replace the missing external engine and inspect the actual current order protocol | Private SDK entry points require an exact version guard and review before upgrades. |
+| Keep sequential implementation in one feature worktree; do not share wallet files or virtual environments by symlink | Preserve upstream history and isolate development state while workers use the same reviewed interfaces | Dependencies must be installed per worktree; this does not isolate processes like a container. |
+| Continue routine research and implementation autonomously; leave funded actions and external publication for a later explicit step | The user authorized the project work and requested sustained progress | No actual filled-order validation or account readiness can be claimed from this development session. |
+| Permit exact captured TWAP60 opening boundaries, then compare delayed official metadata | Two source-boundary probes agreed with adjacent official opening/final values, including a discriminating neighboring-second comparison | Missed boundaries skip; a later mismatch stops that round. A future rule/feed change requires review. The absolute USD 1e-8 tolerance addresses published numeric precision. |
+| Keep verified resolved winning residuals as claimable holdings, distinct from cash and active unresolved exposure | Two-decimal SELL rounding can leave residual shares; normal dust must not permanently prevent future rounds | Manual claiming remains necessary. Unresolved or unverifiable residuals still consume exposure; public indexing is not exhaustive. |
+| Require at least 95% volatility-grid coverage and at most 12 seconds between accepted samples, with unchanged two-second selection/span tolerances | Real feeds had isolated gaps; the complete-grid policy rejected every eligible long window in the completed comparison, while the revised policy accepted 24/24 | Sparse sampling can miss rapid intragap moves. No interpolation is used, complete-grid estimates stay identical, and consecutive missing grid points still fail. |
+| Assign current-time checks to execution and independent held-book scheduling/delayed-label polling to CLI integration | These guarantees cross module boundaries and cannot be established by adapter tests alone | A missed integration obligation could delay exits or admit stale data; both require explicit behavioral tests at their later gates. |
+| Discover positions through the public endpoint with zero size threshold and archived positions included, then verify known/discovered tokens on-chain | The pinned SDK omits the archive flag; zero-value dust remains inventory | Absence from a public index is not proof of complete on-chain absence. Use a dedicated wallet without outside trading; a historical chain index is outside this repair. |
+| Separate execution records and read-only chain verification into small named modules | The required broker/ledger work would otherwise mix signing, persistence and receipt decoding in oversized modules | More files to navigate; no generic framework or extra dependency is introduced. |
+| Remove the old Docker launch surface and document native WSL/Linux operation | Docker integration is unavailable in this WSL distro, and the original launcher broadly mounts host files | Container support is no longer advertised; a future container workflow needs its own validation. |
+| Add field-level diagnostics for rejected trading metadata without relaxing entry validation | The public run recorded a mismatch code but not the values needed to reconstruct it | Slightly larger public observation logs; the exact historical mismatch remains unknowable. |
+| Let protected SELL use a supported current tick grid even when the entry's historical grid differs | Official tick sizes can change near price extremes. Fresh matching book/SDK grids pass; disagreement permits only a finer, dividing SDK grid and valid protected prices | Current endpoints can still disagree in unsupported ways and block an exit. Minimum size, identity, fee, quantity and price protections remain. No funded acceptance is inferred. |
+| Preserve stop requests across reads/restarts; only a new explicit execution command clears a prior stop once under the owner lock before awaited setup | A concurrent stop during setup or signing must remain effective | A failed startup may leave an explicitly cleared prior stop; startup failure must be visible and must not produce a running trader. |
+| Add experimental entry confirmation using a fixed original book timestamp and a strictly newer underlying point | The sole eligible screen in a 35-minute run used older BTC information; subsequently delivered earlier price moves invalidated it | Waiting can lose real opportunities or preserve model errors. The latest book can still lead at confirmation. One event does not prove superiority over a simpler second check or improved ROI. Exits and raw comparison records remain independent. |
+| Expose a narrow Ledger accessor for recorded paired decisions | The CLI should report through the ledger interface rather than directly query its private SQLite schema | One small explicit method to maintain; it returns only existing safe decision records and adds no generic query API. |
+| Upgrade the existing test runner to pytest 9.0.3 | The advisory scan found a real temporary-directory issue in 8.4.2, and the official release verifies the fix | Test-runner behavior can change across a major version; the full 301-test suite passed after the update. Runtime versions are unchanged. |
+| Give mutating reconciliation the same journal-owner lock as execution; permit first account diagnosis without a live journal | Reconciliation writes durable order/account evidence even though its venue calls are read-only; diagnosis should not require running the bot first | Manual reconciliation must wait for an active trader to release the lock. Readonly diagnosis/reporting and the dedicated stop control remain available. |
+| Persist a triggered full-position close across partial fills and restart | A STOP or PROFIT request should not silently become a decision to hold when the quote changes | It can give up a later recovery or sell below the initial target. Each retry keeps current price protection; no ROI benefit or original fill price is guaranteed. |
+| Carry rejected-metadata diagnostics through the ledger whitelist as well as the adapter | Emitting fields alone would silently lose them before reporting | A small explicitly public record schema is added; arbitrary payload and secret exports remain excluded. |
+| Read fresh execution inputs after account reconciliation and preserve intervening invalidations | A slow account pass ages pre-fetched books; replacing a CLI cache cannot update a frozen object already passed to the engine. Overwritten gaps must not revive a candidate | Two small read-only providers are added. Entries whose current authorization changes during preparation may be skipped; no repricing loop or weaker freshness rule is introduced. |
+| Bind validated observation configuration before public discovery starts | Early calibration records otherwise lacked their configuration identifier before the first complete snapshot | Initialization must stay confined to isolated observation state; it creates no live session or cash baseline and has a dedicated regression. |
+
+The selected strategy also deliberately omits an LLM, a tiny opposite-side hedge, passive maker
+orders, a fitted drift term and an Alpha-Sentry integration. Their expected benefit has not been
+established for this first experiment. See [strategy decisions](../research/strategy-decisions.md)
+for the alternatives, scientific sources and positive as well as negative trader evidence.
+
+## Additional article and inventory ruling
+
+Adopted the existing valuation/depth/inventory principles; deferred six funded portfolios, passive pairing and automatic merge after scientific review and a bounded complementary-route quote comparison. The user delegated this choice. The hypotheses, evidence limits and opportunity cost are recorded in [inventory strategy ruling](../research/inventory-strategy-ruling.md). Task4 calibration writes now belong to actual publication in provider mode; current-time execution reevaluation cannot invent a new receipt.
+
+## Final integration corrections
+
+The broad review reproduced three defects and all are assigned to one combined fix wave: immediate
+current-round anchor/rule conflict invalidation, sticky final-reference conflict reporting, and
+bounded cooperative shutdown including cleanup. A definitive new conflict must cancel a pending
+entry before any POST even if no replacement snapshot has arrived. An explicit conflict cannot
+be healed by repeating its retained numeric value. The shutdown budget includes task drain and
+resource close, while ownership remains held until execution conclusively stops. Noncooperative
+code or a blocked event loop cannot have a promised hard bound; document termination/reconciliation
+recovery. Costs include skipped entries, fewer usable calibration labels and possibly incomplete
+resource cleanup after the safe execution drain. These are required correctness fixes, not new
+strategy or funded-operation authorization.
+
+All three final corrections were independently approved at3f49231. No source finding remains parked. The existing keep-branch/worktree choice is retained; no merge, external publication or cleanup is required for this local development handoff.
+
+Preserving the branch/worktree also preserves local review evidence and public captures. The cost is their disk usage until the user chooses a retention policy; no destructive cleanup was performed.

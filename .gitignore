@@ -2,3 +2,23 @@ __pycache__/
 *.pyc
 .env
 .env.*
+.worktrees/
+.venv/
+runtime/
+.runtime/
+.observations/
+work/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Claude Code and local tools
+.claude/settings.local.json
+.claude/worktrees/
+.serena/
+
+!.env.example
+.superpowers/
+.mypy_cache/

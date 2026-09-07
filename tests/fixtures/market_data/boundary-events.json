@@ -1,0 +1,89 @@
+[
+  {
+    "received_utc": "2026-09-06T15:40:01.343939+00:00",
+    "received_epoch_ms": 1788709201343,
+    "event": {
+      "topic": "prices.crypto.chainlink",
+      "type": "update",
+      "timestamp": "2026-09-06T15:40:00.157000Z",
+      "payload": {
+        "symbol": "btc/usd",
+        "timestamp": 1788709199000,
+        "value": "79689.61207184"
+      }
+    }
+  },
+  {
+    "received_utc": "2026-09-06T15:40:01.399786+00:00",
+    "received_epoch_ms": 1788709201399,
+    "event": {
+      "topic": "prices.crypto.chainlink.twap",
+      "type": "update",
+      "timestamp": "2026-09-06T15:40:00.229000Z",
+      "payload": {
+        "symbol": "btc/usd",
+        "timestamp": 1788709199000,
+        "value": "79697.640602597586894848",
+        "window_seconds": 60
+      }
+    }
+  },
+  {
+    "received_utc": "2026-09-06T15:40:01.794471+00:00",
+    "received_epoch_ms": 1788709201794,
+    "event": {
+      "topic": "prices.crypto.chainlink",
+      "type": "update",
+      "timestamp": "2026-09-06T15:40:00.822000Z",
+      "payload": {
+        "symbol": "btc/usd",
+        "timestamp": 1788709200000,
+        "value": "79689.625168105"
+      }
+    }
+  },
+  {
+    "received_utc": "2026-09-06T15:40:01.916501+00:00",
+    "received_epoch_ms": 1788709201916,
+    "event": {
+      "topic": "prices.crypto.chainlink.twap",
+      "type": "update",
+      "timestamp": "2026-09-06T15:40:00.928000Z",
+      "payload": {
+        "symbol": "btc/usd",
+        "timestamp": 1788709200000,
+        "value": "79697.534252279656349696",
+        "window_seconds": 60
+      }
+    }
+  },
+  {
+    "received_utc": "2026-09-06T15:40:03.923590+00:00",
+    "received_epoch_ms": 1788709203923,
+    "event": {
+      "topic": "prices.crypto.chainlink",
+      "type": "update",
+      "timestamp": "2026-09-06T15:40:02.933000Z",
+      "payload": {
+        "symbol": "btc/usd",
+        "timestamp": 1788709201000,
+        "value": "79689.934030935"
+      }
+    }
+  },
+  {
+    "received_utc": "2026-09-06T15:40:04.182179+00:00",
+    "received_epoch_ms": 1788709204182,
+    "event": {
+      "topic": "prices.crypto.chainlink.twap",
+      "type": "update",
+      "timestamp": "2026-09-06T15:40:03.060000Z",
+      "payload": {
+        "symbol": "btc/usd",
+        "timestamp": 1788709201000,
+        "value": "79697.300380131864346624",
+        "window_seconds": 60
+      }
+    }
+  }
+]

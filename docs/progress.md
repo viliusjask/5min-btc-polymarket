@@ -31,7 +31,34 @@ Browser checks passed at 1440px and 390px: actual counters render, synthetic inv
 reasons/age and denominator are correct, and no JavaScript errors or Real-account requests
 occurred. Two unit files passed verification using an isolated temporary XDG_RUNTIME_DIR.
 
-Fresh anonymous comparison and code-only deployment evidence are recorded below when complete.
+Final side-by-side anonymous check, **23:02:56–23:08:56 UTC, September 7**:
+
+| Collector | Usable samples | Usable share | Expired-metadata samples |
+|---|---:|---:|---:|
+| Old deployed code | 486 / 718 | 67.7% | 214 |
+| Complete repair | 693 / 718 | 96.5% | 0 |
+
+Both adapters ran on the same host/time period with separate public connections and no orders.
+The new adapter still rejected 25 samples for startup, real price staleness/silence, round/tick
+transitions or book synchronization. Samples are correlated and this short comparison measures
+input availability, not independent trading opportunities, fills, future uptime or returns.
+The concurrent raw probe corroborated fresh CLOB/token ticks of 0.001 while legacy flags stayed
+at 0.01; book headers caught up independently. No source timestamps or recorded prices changed.
+
+Deployed from source checkpoint `cf9f573` to the persistent paper collector/dashboard at
+**23:08:33 UTC**. The code-only service operation took 48.879 seconds; the captured interruption
+was 48.508 seconds. Seven sessions, original financial-row prefixes, both configuration hashes,
+tape prefix/checksum, both pinned study unit files/manifests and their PIDs were verified intact.
+No journal migration/reset was needed. New capture frames and compatible-refinement records
+were observed in the actual persistent runtime. A later genuine HTTP timeout correctly expired
+metadata and recovered automatically; the repair does not turn unavailable data into valid data.
+The live desktop/mobile dashboard showed both studies, original counters and specific new
+rejection details without JavaScript errors, horizontal page overflow or Real-account calls.
+
+[PR13](https://github.com/viliusjask/5min-btc-polymarket/pull/13); source CI passed on push and PR.
+Collector 52613 and dashboard 52618 use `.worktrees/metadata-refresh`; both existing lab PIDs
+3802676 and 3850281 stay on their registered code. These PIDs are cutover evidence, not controls.
+Use the service names in [the operator guide](paper-service.md).
 Local ignored artifacts: `work/live-old.json`, `work/live-new.json`, `work/full-tests.log`,
 `work/market-data-review.md`, and `work/deployment/`. No funded orders are part of these checks.
 

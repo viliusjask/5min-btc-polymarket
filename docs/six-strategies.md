@@ -41,6 +41,10 @@ The five-second order lifetime is implemented through explicit GTC cancellation.
 "good till cancelled": an abrupt process failure can leave a venue order active. A cancel
 acknowledgment does not release the journal's reservation; terminal order/fill evidence does.
 See the [venue order lifecycle](https://docs.polymarket.com/trading/place-orders).
+An existing quote is evaluated at its own price: an improved bid or a newly preferred outcome
+does not by itself cancel it and lose priority. Opening quotes must keep their required model
+surplus; hedge prices retain the approved pair-cost reservation. Data/rule changes, lost edge,
+stops and time limits still cancel. The dashboard records the specific trigger for new orders.
 The bot does not use SDK convenience methods that can automatically approve token spending.
 
 ## Probability during the final averaging minute

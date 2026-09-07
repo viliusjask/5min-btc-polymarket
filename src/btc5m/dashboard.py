@@ -294,6 +294,11 @@ class DashboardReader:
                 )
             }
             legacy_matching_orders = 0
+            cancellations = dict(
+                ledger.db.execute(
+                    "SELECT json_extract(data,'$.identity'),json_extract(data,'$.code') FROM events WHERE kind='PUBLIC_OBSERVATION' AND json_extract(data,'$.kind')='quote_cancel' ORDER BY id"
+                )
+            )
             for ident, order in orders.items():
                 paper = execution.get(ident, {})
                 if order["passive"] and paper.get("matching_model") != PAPER_MATCHING_MODEL:
@@ -312,6 +317,14 @@ class DashboardReader:
                         status = "CANCELLED_UNFILLED"
                     else:
                         status = "CLOSED_UNFILLED"
+                elif order["passive"]:
+                    if order.get("cancel_requested_ms") is not None:
+                        status = "CANCELLING"
+                    elif status == "ACK":
+                        status = "RESTING"
+                        reason = "WAITING_FOR_MATCHING_TRADES"
+                if status in ("CANCELLED_UNFILLED", "PARTIALLY_FILLED_CLOSED", "CANCELLING"):
+                    reason = cancellations.get(ident, reason)
                 order.update(execution_status=status, execution_reason=reason)
             fills = []
             stamps: dict[str, int] = {}

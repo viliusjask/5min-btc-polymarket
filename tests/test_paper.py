@@ -504,3 +504,111 @@ def test_lower_hedge_quote_waits_for_its_price_without_double_counting_better_bi
         ledger.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("name", ["passive_pairs", "inventory_pairs"])
+def test_resting_quote_keeps_priority_when_market_bid_improves_and_then_fills(tmp_path, name):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, name)
+        engine = Engine(broker, ledger, config, session, read_exit_book=broker.book)
+        order = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        created = clock[0]
+        clock[0] += 500
+        snap = publish(broker, clock, ask=D(".71"))
+        assert pair_decision(snap, config, ()).price_limit > order.price_limit
+        await engine.step(snap, None, clock[0])
+        assert ledger.order(order.intent_id).cancel_requested_ms is None
+        # Public executions later reach our original price while it is still valuable.
+        clock[0] = created + 1200
+        aggressive_sell(streams, order, clock, "after-favorable-update")
+        await engine.step(publish(broker, clock, ask=D(".71")), None, clock[0])
+        assert ledger.order(order.intent_id).confirmed_quantity == order.quantity
+        assert len(ledger.round_orders(order.market.slug)) == 2  # opening fill, then actual hedge
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("trigger", ["expiry", "edge", "missing", "stop"])
+def test_resting_quote_cancels_with_specific_durable_reason(tmp_path, trigger):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
+        engine = Engine(broker, ledger, config, session)
+        order = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        clock[0] += 5000 if trigger == "expiry" else 1000
+        snap = publish(broker, clock, move=D(-200) if trigger == "edge" else D(200))
+        if trigger == "stop":
+            ledger.request_stop()
+        await engine.step(None if trigger == "missing" else snap, None, clock[0])
+        requested = ledger.order(order.intent_id).cancel_requested_ms
+        assert requested == clock[0]
+        expected = dict(
+            expiry="QUOTE_EXPIRED",
+            edge="QUOTE_EDGE_LOST",
+            missing="NO_SNAPSHOT",
+            stop="STOP_REQUESTED",
+        )[trigger]
+        events = [r for r in ledger.observations() if r.get("kind") == "quote_cancel"]
+        assert len(events) == 1
+        assert events[0]["code"] == expected
+        assert events[0]["identity"] == order.intent_id
+        # Cancellation reconciliation is still in progress; preserve its original cause.
+        clock[0] += 300
+        await engine.step(publish(broker, clock), None, clock[0])
+        assert ledger.order(order.intent_id).cancel_requested_ms == requested
+        assert len([r for r in ledger.observations() if r.get("kind") == "quote_cancel"]) == 1
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_new_side_preference_does_not_cancel_a_still_valuable_owned_quote(tmp_path):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
+        broker.update(make_snapshot(move=D(2)))
+        order = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        engine = Engine(broker, ledger, config, session)
+        clock[0] += 500
+        snap = publish(broker, clock, move=D(3))
+        assert pair_decision(snap, config, ()).side != order.decision.side
+        await engine.step(snap, None, clock[0])
+        assert ledger.order(order.intent_id).cancel_requested_ms is None
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_partial_opening_quote_cancels_remaining_risk_when_its_edge_disappears(tmp_path):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
+        engine = Engine(broker, ledger, config, session)
+        order = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        clock[0] += 500
+        await engine.step(publish(broker, clock), None, clock[0])
+        clock[0] += 250
+        aggressive_sell(streams, order, clock, "partial", D(102))
+        await engine.step(publish(broker, clock), None, clock[0])
+        partial = ledger.order(order.intent_id)
+        assert partial.confirmed_quantity == 2 and partial.cancel_requested_ms is None
+        clock[0] += 250
+        await engine.step(publish(broker, clock, move=D(-200)), None, clock[0])
+        cancelled = ledger.order(order.intent_id)
+        assert cancelled.cancel_requested_ms == clock[0]
+        assert cancelled.confirmed_quantity == 2
+        assert cancelled.remaining_reserve == partial.remaining_reserve > 0
+        assert ledger.open_position().quantity == 2
+        assert (
+            next(r for r in ledger.observations() if r.get("kind") == "quote_cancel")["code"]
+            == "QUOTE_EDGE_LOST"
+        )
+        ledger.close()
+
+    asyncio.run(run())

@@ -25,7 +25,7 @@ from btc5m.execution_types import (
 )
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.pairing import pair_decision
-from btc5m.strategy import evaluate, fair_value, fee_for
+from btc5m.strategy import _safety_reason, evaluate, fair_value, fee_for
 
 D = Decimal
 
@@ -361,43 +361,70 @@ class Engine:
     def _mode_config(self, mode: str) -> Config:
         return replace(self.config, strategy=replace(self.config.strategy, mode=mode))
 
+    def _resting_cancel_reason(
+        self, order: Intent, snapshot: Snapshot | None, now_ms: int
+    ) -> str | None:
+        if order.state == "UNKNOWN":
+            return "ORDER_UNKNOWN"
+        if self.ledger.stop_requested() or self._shutting_down:
+            return "STOP_REQUESTED"
+        if now_ms - order.created_ms >= self.config.experiments.pair_quote_seconds * 1000:
+            return "QUOTE_EXPIRED"
+        if snapshot is None:
+            return "NO_SNAPSHOT"
+        if snapshot.market.condition_id != order.market.condition_id:
+            return "WRONG_ROUND"
+        current = replace(snapshot, now_ms=now_ms)
+        safety = _safety_reason(current, self.config)
+        if safety:
+            return safety
+        assert order.decision is not None and order.decision.side is not None
+        side = order.decision.side
+        if self.candidate_identity(current.market, side) != self.candidate_identity(
+            order.market, side
+        ) or any(
+            getattr(current.market, key) != getattr(order.market, key)
+            for key in ("tick_size", "min_order_size", "fee_rate", "fee_exponent")
+        ):
+            return "QUOTE_MARKET_CHANGED"
+        tau = (order.market.end_s * 1000 - now_ms) / 1000
+        opening = order.decision.features.get("pair_role") == "OPEN"
+        if tau <= self.config.execution.exit_seconds or (
+            opening and tau < self.config.strategy.entry_min_seconds
+        ):
+            return "PAIR_WINDOW"
+        if opening:
+            value = fair_value(current, self._mode_config(str(order.decision.features["mode"])))
+            if value.reason != "VALID":
+                return value.reason
+            if (
+                D(str(value.floors[side])) - order.price_limit
+                < self.config.experiments.pair_min_edge
+            ):
+                return "QUOTE_EDGE_LOST"
+        # A hedge's fixed price and reserved amount already satisfy the pair-cost
+        # cap. A changed best bid or preferred new side does not invalidate an
+        # owned quote. Preserve its priority until risk, data or lifetime says cancel.
+        return None
+
     async def _manage_resting(self, snapshot: Snapshot | None, now_ms: int) -> EngineResult | None:
         for order in self.ledger.unresolved_orders():
             if not order.passive:
                 continue
-            due = (
-                order.cancel_requested_ms is not None
-                or order.state == "UNKNOWN"
-                or self.ledger.stop_requested()
-                or self._shutting_down
-                or now_ms - order.created_ms >= self.config.experiments.pair_quote_seconds * 1000
-            )
-            if not due:
-                if snapshot is None or snapshot.market.condition_id != order.market.condition_id:
-                    due = True
-                else:
-                    assert order.decision is not None
-                    desired = pair_decision(
-                        replace(snapshot, now_ms=now_ms),
-                        self._mode_config(str(order.decision.features["mode"])),
-                        self.ledger.active_positions(),
+            reason = self._resting_cancel_reason(order, snapshot, now_ms)
+            if order.cancel_requested_ms is not None or reason is not None:
+                if order.cancel_requested_ms is None:
+                    self.ledger.record_observation(
+                        {
+                            "kind": "quote_cancel",
+                            "received_ms": now_ms,
+                            "identity": order.intent_id,
+                            "token_id": order.token_id,
+                            "slug": order.market.slug,
+                            "price": str(order.price_limit),
+                            "code": reason,
+                        }
                     )
-                    # A partial first fill changes the desired side; retain its short
-                    # lifetime unless the book/reference is invalid or a stop is due.
-                    if order.confirmed_quantity == 0:
-                        due = (
-                            desired.side is None
-                            or snapshot.market.token(desired.side) != order.token_id
-                            or desired.price_limit != order.price_limit
-                        )
-                    else:
-                        from btc5m.strategy import _safety_reason
-
-                        due = (
-                            _safety_reason(replace(snapshot, now_ms=now_ms), self.config)
-                            is not None
-                        )
-            if due:
                 pending = self.ledger.request_cancel(order.intent_id, now_ms)
                 acknowledged = await self.broker.cancel(pending)
                 self.ledger.record_observation(

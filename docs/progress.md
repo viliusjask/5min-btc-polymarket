@@ -1,4 +1,33 @@
-# Progress: continuous services and corrected paper matching
+# Progress: continuous services and corrected quote cancellation
+
+2026-09-07, follow-up to the 0/98 screenshot. The matching fix alone did not repair the
+quote controller. It cancelled an owned quote whenever the next preferred quote changed,
+including favorable repricing and switching the preferred outcome while the old quote was
+still within its limits.
+
+- Existing quotes now keep priority while their own constraints hold, up to the original
+  five-second lifetime. Remaining opening quantity still needs its model surplus after a
+  partial fill. Hedge reservations, risk limits, model thresholds and fill evidence are unchanged.
+- New decisions carry `KEEP_VALID_V1`, best bid/ask and distance below the bid. Cancellation
+  triggers are durable and correlated to order identity. Dashboard outcomes distinguish
+  Resting, Cancelling and Cancelled unfilled and display the trigger when it was recorded.
+- Replayed 25 original V2 orders independently with recorded public prices/books/trades and
+  original queue estimates. Seventeen stayed active longer; one filled five shares at 0.70
+  versus its original zero. The other 24 remained unfilled. This is a bounded controller
+  replay, not a portfolio backtest. Details and limitations: [diagnosis](research/paper-fill-diagnosis.md).
+- Full suite: **509 passed in 177.41 seconds**. A subsequent nine-test targeted run also passed,
+  including an added partial-fill risk regression. Ruff lint/format, mypy, locked dependency,
+  JavaScript syntax and diff checks passed. Own review; no subagents or new dependencies.
+- Services reloaded at **02:26:47–02:26:52 UTC**. All seven journals retained their sessions,
+  prior order IDs, fill counts and event history. Collector/dashboard are active with no
+  automatic restarts. New public decisions report `KEEP_VALID_V1`.
+- Live state after reload: USD100 each, 116 historical order attempts, zero fills. New entries
+  are currently paused by a 15-second sampled history gap; raw spot records contain separate
+  nine- and ten-second gaps around 02:16 and 02:22 UTC, accompanied by stream timeouts. This
+  reload does not repair missing observations or certify the six-strategy experiment healthy.
+  No retrospective fills were credited and no real orders were sent.
+
+## Earlier service and matching checkpoint
 
 2026-09-07. Branch `feat/paper-service`, worktree `.worktrees/paper-service`, based on fork main
 `ab54847` after PR #3. Single-agent implementation, own review, no new runtime dependencies.

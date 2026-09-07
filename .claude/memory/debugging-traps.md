@@ -165,3 +165,12 @@ noncooperative code requires external termination followed by journal inspection
   Recovery used a temporary session-bus socket/service and daemon reexecution without stopping
   other user work; temporary recovery units were removed. The installer regression protects the
   existing runtime. Do not test service recovery by killing the user's whole WSL instance.
+
+- 2026-09-07: After fixing the missing complementary flow, new orders still all cancelled.
+  The controller compared an owned quote with the next preferred entry and cancelled on every
+  price/side change, including favorable changes. The original synthetic fill tests bypassed
+  intervening Engine.step calls, so they missed the cancellation. Exercise the complete order
+  lifetime through the controller, with moving books, before crediting a later trade. Keep an
+  owned quote while its own risk/edge constraints hold; record the actual cancellation trigger
+  by order identity. One of 25 original-order public replays then filled; the other 24 did not.
+  A passing isolated matcher regression is not evidence that strategy-plus-execution works.

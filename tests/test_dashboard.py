@@ -243,7 +243,10 @@ def test_dashboard_accounts_for_pair_fills_resolution_and_payout_without_leaking
     asyncio.run(run(runtime(tmp_path, monkeypatch)))
 
 
-def test_cancelled_order_shows_execution_outcome_and_old_model_warning(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cause", [None, "QUOTE_EXPIRED"])
+def test_cancelled_order_shows_execution_outcome_and_old_model_warning(
+    tmp_path, monkeypatch, cause
+):
     from test_paper import submit
     from test_strategy import make_snapshot
 
@@ -274,7 +277,23 @@ def test_cancelled_order_shows_execution_outcome_and_old_model_warning(tmp_path,
         clock[0] += 1000
         broker.update(make_snapshot(now_ms=clock[0]))
         await broker.reconcile(order)
+        reader = DashboardReader(root, base)
+        row = reader.snapshot(now_ms=clock[0])["portfolios"][name]["recent_orders"][0]
+        assert row["execution_status"] == "RESTING"
+        if cause:
+            ledger.record_observation(
+                {
+                    "kind": "quote_cancel",
+                    "received_ms": clock[0],
+                    "identity": order.intent_id,
+                    "code": cause,
+                }
+            )
         ledger.request_cancel(order.intent_id, clock[0])
+        row = reader.snapshot(now_ms=clock[0])["portfolios"][name]["recent_orders"][0]
+        assert row["execution_status"] == "CANCELLING"
+        if cause:
+            assert row["execution_reason"] == cause
         clock[0] += 6000
         ledger.apply_evidence(
             order.intent_id, await broker.reconcile(ledger.order(order.intent_id))
@@ -286,7 +305,7 @@ def test_cancelled_order_shows_execution_outcome_and_old_model_warning(tmp_path,
         row = data["recent_orders"][0]
         assert row["state"] == "SETTLED"  # Internal reconciliation state remains available.
         assert row["execution_status"] == "CANCELLED_UNFILLED"
-        assert row["execution_reason"] == "PAPER_CANCELLED_AFTER_TRADE_GRACE"
+        assert row["execution_reason"] == (cause or "PAPER_CANCELLED_AFTER_TRADE_GRACE")
         assert data["legacy_matching_orders"] == 1
         assert data["orders"] == 1 and data["fills"] == 0
         ledger.close()

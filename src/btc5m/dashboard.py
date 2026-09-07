@@ -17,6 +17,7 @@ from btc5m.comparison import MASTER_WALLET
 from btc5m.config import STRATEGIES, Config
 from btc5m.dashboard_live import LiveDashboardReader
 from btc5m.ledger import Ledger, LedgerError
+from btc5m.paper import PAPER_MATCHING_MODEL
 
 D = Decimal
 ASSETS = Path(__file__).with_name("dashboard_assets")
@@ -29,6 +30,7 @@ DESCRIPTIONS = {
     "inventory_pairs": "Pairing with inventory-dependent hedge prices",
 }
 EXPLANATIONS = {
+    "PAPER_TRADE_ID_MISSING": "Opposite-outcome trade volume could not be deduplicated because its transaction identifier was missing.",
     "ENTRY": "The entry screen passed. Confirmation and portfolio risk checks still apply.",
     "ENTRY_WINDOW": "Outside this strategy's scheduled entry interval.",
     "PAIR_WINDOW": "Outside the interval for opening or completing a pair.",
@@ -46,6 +48,8 @@ EXPLANATIONS = {
     "MARKET_CHANGED": "Normal book subscription change at a new five-minute round.",
     "FLAT": "The stop request finished with no remaining active exposure.",
     "ENTRY_CONFIRMATION_WAITING": "An eligible signal is waiting for newer confirming information.",
+    "PAPER_RESTART_GAP": "Collection resumed after a gap. Saved balances and fills were retained; exposed rounds are marked uncertain.",
+    "PAPER_CAPTURE_GAP": "The collector stopped advancing, for example during sleep. Missing executions are not invented on return.",
     "PAIR_COMPLETE_AWAITING_RESOLUTION": "Equal Up/Down quantities are held pending official settlement.",
 }
 
@@ -200,6 +204,8 @@ class DashboardReader:
             "metadata_rejected",
             "http_unavailable",
             "book_unavailable",
+            "paper_recovery",
+            "paper_interruption",
         ):
             code = data.get("code") or label.upper()
             key = ":".join(
@@ -281,6 +287,32 @@ class DashboardReader:
                 ident: json.loads(raw)
                 for ident, raw in ledger.db.execute("SELECT id,data FROM intents")
             }
+            execution = {
+                key.removeprefix("paper_order:"): json.loads(raw)
+                for key, raw in ledger.db.execute(
+                    "SELECT key,data FROM measurements WHERE key LIKE 'paper_order:%'"
+                )
+            }
+            legacy_matching_orders = 0
+            for ident, order in orders.items():
+                paper = execution.get(ident, {})
+                if order["passive"] and paper.get("matching_model") != PAPER_MATCHING_MODEL:
+                    legacy_matching_orders += 1
+                reason = paper.get("terminal_reason") or order["reason"]
+                status = order["state"]
+                filled = D(order["confirmed_quantity"])
+                if filled >= D(order["quantity"]):
+                    status = "FILLED"
+                elif paper.get("terminal") or status == "SETTLED":
+                    if filled:
+                        status = "PARTIALLY_FILLED_CLOSED"
+                    elif reason == "PAPER_POST_ONLY_REJECTED":
+                        status = "REJECTED_UNFILLED"
+                    elif reason.startswith("PAPER_CANCELLED"):
+                        status = "CANCELLED_UNFILLED"
+                    else:
+                        status = "CLOSED_UNFILLED"
+                order.update(execution_status=status, execution_reason=reason)
             fills = []
             stamps: dict[str, int] = {}
             for chain, tx, log, intent, raw in ledger.db.execute(
@@ -361,6 +393,7 @@ class DashboardReader:
                 "curve_truncated": len(curve) > 5000,
                 "untimed_accounting": untimed,
                 "last_execution": json.loads(observations[0]) if observations else None,
+                "legacy_matching_orders": legacy_matching_orders,
                 "recent_fills": sorted(fills, key=lambda r: r["at_ms"], reverse=True)[:100],
                 "recent_orders": [
                     {
@@ -369,6 +402,8 @@ class DashboardReader:
                         "side": r["side"],
                         "state": r["state"],
                         "reason": r["reason"],
+                        "execution_status": r["execution_status"],
+                        "execution_reason": r["execution_reason"],
                         "quantity": r["quantity"],
                         "confirmed_quantity": r["confirmed_quantity"],
                         "price_limit": r["price_limit"],

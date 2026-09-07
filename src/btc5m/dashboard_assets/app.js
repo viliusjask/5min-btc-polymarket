@@ -198,6 +198,13 @@ function topSummary() {
     $("insight-body").textContent =
       "Recorded market trades are other participants' activity. Our six bots have not executed a paper trade yet. " +
       $("insight-body").textContent;
+  const legacyOrders = sum(p, "legacy_matching_orders");
+  if (legacyOrders > 0) {
+    $("insight-title").textContent = "Earlier passive fills were undercounted";
+    $("insight-body").textContent =
+      `${count(legacyOrders)} historical orders used a simulator that omitted buying of the opposite outcome. Their original results are preserved and cannot be used to assess the corrected strategies. New orders use the corrected matching model. ` +
+      $("insight-body").textContent;
+  }
   $("runtime-label").textContent =
     `${state.runtime_name} · ${count(c.events_loaded)} journal events · ${Math.max(0, c.restart_times.length - 1)} recorder restarts`;
 }
@@ -852,7 +859,7 @@ function activity() {
           "Limit",
           "Shares",
           "Filled",
-          "State / reason",
+          "Execution outcome",
         ]
       : tab === "fills"
         ? [
@@ -895,7 +902,7 @@ function activity() {
             money(r.price_limit),
             r.quantity,
             r.confirmed_quantity,
-            human(r.state) + " / " + human(r.reason),
+            human(r.execution_status || r.state) + " / " + human(r.execution_reason || r.reason),
           ]
         : tab === "fills"
           ? [

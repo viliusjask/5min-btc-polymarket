@@ -1,5 +1,6 @@
 """Public-only CLI lifecycle using real independent ledgers and execution engines."""
 
+import asyncio
 import json
 
 import pytest
@@ -66,6 +67,28 @@ def test_paper_cli_six_ledgers_no_credentials_resume_and_safe_report(tmp_path, m
     assert cli.main(["report", "--runtime", str(tmp_path), "--records"]) == 0
     assert "observations" in json.loads(capsys.readouterr().out)
     assert cli.main(["stop", "--runtime", str(tmp_path)]) == 0
+
+
+def test_continuous_paper_has_no_duration_deadline_and_stops_explicitly(tmp_path, monkeypatch):
+    monkeypatch.setattr(comparison, "MarketData", AnonymousData)
+    monkeypatch.setattr(cli, "load_credentials", forbid_credentials)
+    args = cli.parse_args(["paper", "--continuous", "--runtime", str(tmp_path)])
+    args.duration = 0.001  # A finite default cannot terminate continuous mode.
+
+    async def run():
+        task = asyncio.create_task(
+            comparison.run_paper(args, cli.load_config(args.config), lambda r: None)
+        )
+        await asyncio.sleep(0.4)
+        assert not task.done()
+        comparison.stop_paper(tmp_path)
+        assert await asyncio.wait_for(task, 3) == 0
+
+    asyncio.run(run())
+    with pytest.raises(SystemExit):
+        cli.parse_args(["paper", "--continuous", "--duration", "10"])
+    with pytest.raises(SystemExit):
+        cli.parse_args(["run", "--continuous", "--execute"])
 
 
 def test_paper_cleanup_failure_releases_every_journal_owner(tmp_path, monkeypatch, capsys):

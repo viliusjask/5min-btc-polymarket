@@ -63,3 +63,14 @@
   ownership remains until execution stops. Cancellation suppression, event-loop blockage and final
   synchronous I/O can exceed the nominal window, so operator termination/reconciliation is explicit.
   The full35-minute public capture had noentries and cannot establish return/calibration accuracy.
+
+- 2026-09-07: User replaced the two-hour paper deadline with continuous operation and persistent
+  recovery. Six USD100 portfolios were migrated byte-identically to
+  ~/.local/share/btc5m/paper-six-100-each; ~/.config/btc5m/paper.toml preserves their configuration.
+  Systemd user services own collector/dashboard; Windows task BTC5m-WSL keeps Ubuntu available
+  while logged in and restarts its WSL client after termination. No sleep-policy changes or
+  funded operations. Sleep/offline periods cannot be observed and are recorded as gaps.
+- 2026-09-07: Complementary-flow execution correction applies prospectively. Preserve and label
+  the 66 earlier passive orders, without injecting counterfactual fills or resetting cash/risk
+  limits. A single captured order proves the omission; replayed five shares are not live-run
+  results or a full strategy backtest. Rapid quote cancellation remains an unoptimized policy.

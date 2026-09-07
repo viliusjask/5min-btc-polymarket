@@ -33,6 +33,8 @@ uv run --locked btc5m report --runtime work/observe-35m/ledger.sqlite
 uv run --locked btc5m paper --strategies all --duration 3600 --runtime work/paper-six
 uv run --locked btc5m report --runtime work/paper-six
 uv run --locked btc5m dashboard --runtime work/paper-six --port 8765
+uv run --locked btc5m paper --strategies all --continuous --runtime work/paper-six
+systemctl --user status btc5m-paper.service btc5m-dashboard.service
 ```
 
 The 35-minute anonymous observe/report path completed on ac32575; final-source 3f49231 doctor/help
@@ -42,6 +44,12 @@ unverified. The six-strategy extension's current checks are in docs/progress.md.
 before explicit account/run/reconcile commands; no account setup occurs automatically.
 Dashboard `--account --env-file ...` enables lazy, read-only Real account monitoring; switching
 Paper/Real never authorizes trading. Paper collection runs independently from the dashboard.
+Continuous service controls and persistent runtime locations are in docs/paper-service.md.
+Do not interrupt the ongoing collector for dashboard-only changes. Never run systemd user-unit
+verification against the active XDG_RUNTIME_DIR; the installer isolates the verifier's sockets.
+The passive simulator's complementary-flow correction and preserved historical limitations are
+documented in docs/research/paper-fill-diagnosis.md. Public trade transaction hashes are necessary
+to distinguish mirrored outcome reports; price touches alone remain insufficient fill evidence.
 `run --execute --duration ...` is the only trading mode. `scripts/btc5m_ctl.sh` forwards exact CLI
 arguments, never execution consent. Status/report/stop use an explicit runtime path without secrets.
 Live data is common-root `.runtime/<wallet>/ledger.sqlite`; anonymous data is separate. Run and

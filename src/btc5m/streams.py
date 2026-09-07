@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 import uuid
 from collections import deque
@@ -34,6 +35,7 @@ class PublicTrade:
     timestamp_ms: int
     received_ms: int
     generation: int
+    transaction_hash: str | None = None
 
 
 def _decimal(value: Any, *, zero: bool = False) -> Decimal:
@@ -161,6 +163,13 @@ class PublicStreams:
             price, quantity = _decimal(event.get("price")), _decimal(event["size"])
             if price >= 1:
                 raise StreamError("INVALID_TRADE_PRICE")
+            transaction_hash = event.get("transaction_hash")
+            if transaction_hash is not None:
+                if not isinstance(transaction_hash, str) or not re.fullmatch(
+                    r"0x[0-9a-fA-F]{64}", transaction_hash
+                ):
+                    raise StreamError("TRADE_TRANSACTION_IDENTITY")
+                transaction_hash = transaction_hash.lower()
             identity = hashlib.sha256(
                 json.dumps(
                     [
@@ -170,7 +179,7 @@ class PublicStreams:
                         side,
                         str(price),
                         str(quantity),
-                        event.get("transaction_hash"),
+                        transaction_hash,
                     ],
                     separators=(",", ":"),
                 ).encode()
@@ -187,6 +196,7 @@ class PublicStreams:
                 stamp,
                 now,
                 self.generation,
+                transaction_hash,
             )
             self.trades.append(trade)
             self._trade_keys.add(identity)

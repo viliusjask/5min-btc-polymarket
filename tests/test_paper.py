@@ -64,6 +64,39 @@ def test_immediate_paper_order_waits_for_latency_and_later_book(tmp_path):
     asyncio.run(run())
 
 
+def test_immediate_order_cannot_fill_from_a_fresh_book_after_a_long_outage(tmp_path):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path)
+        intent = await submit(ledger, broker, evaluate(broker.snapshot, config), session, clock[0])
+        clock[0] += 60000
+        broker.update(make_snapshot(now_ms=clock[0]))
+        evidence = await broker.reconcile(intent)
+        assert evidence.terminal and not evidence.fills
+        assert broker._load(intent.intent_id)["terminal_reason"] == "PAPER_EXECUTION_GAP"
+        assert ledger.observations()[-1]["kind"] == "paper_uncertainty"
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_restart_before_passive_activation_does_not_start_a_new_queue(tmp_path):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
+        intent = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        clock[0] += 1000
+        new_streams = PublicStreams(config, clock=lambda: clock[0] / 1000)
+        restarted = PaperBroker(ledger, config, streams=new_streams, clock=lambda: clock[0] / 1000)
+        restarted.update(make_snapshot(now_ms=clock[0]))
+        evidence = await restarted.reconcile(intent)
+        assert evidence.terminal and not evidence.fills
+        assert restarted._load(intent.intent_id)["terminal_reason"] == "PAPER_QUEUE_GAP"
+        ledger.close()
+
+    asyncio.run(run())
+
+
 def test_resting_quote_needs_trade_volume_after_queue_and_survives_restart(tmp_path):
     async def run():
         clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
@@ -117,7 +150,8 @@ def test_resting_quote_needs_trade_volume_after_queue_and_survives_restart(tmp_p
     asyncio.run(run())
 
 
-def test_cancel_race_can_fill_before_effective_cancellation(tmp_path):
+@pytest.mark.parametrize("complement", [False, True])
+def test_cancel_race_can_fill_before_effective_cancellation(tmp_path, complement):
     async def run():
         clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
         decision = pair_decision(broker.snapshot, config, ())
@@ -128,17 +162,27 @@ def test_cancel_race_can_fill_before_effective_cancellation(tmp_path):
         pending = ledger.request_cancel(intent.intent_id, clock[0])
         await broker.cancel(pending)
         clock[0] += 100
+        token = (
+            next(
+                t
+                for t in (intent.market.up_token, intent.market.down_token)
+                if t != intent.token_id
+            )
+            if complement
+            else intent.token_id
+        )
         streams.trades.append(
             PublicTrade(
                 "race",
-                intent.token_id,
+                token,
                 intent.market.condition_id,
-                "SELL",
-                intent.price_limit,
+                "BUY" if complement else "SELL",
+                1 - intent.price_limit if complement else intent.price_limit,
                 D(102),
                 clock[0],
                 clock[0],
                 streams.generation,
+                "0x" + "1" * 64,
             )
         )
         evidence = await broker.reconcile(ledger.order(intent.intent_id))
@@ -147,6 +191,57 @@ def test_cancel_race_can_fill_before_effective_cancellation(tmp_path):
         clock[0] += 6000
         evidence = await broker.reconcile(ledger.order(intent.intent_id))
         assert evidence.terminal
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("strategy", ["passive_pairs", "inventory_pairs"])
+def test_complementary_buy_matches_bid_without_double_counting_mirrored_volume(tmp_path, strategy):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, strategy)
+        order = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        market = order.market
+        streams.tokens = (market.up_token, market.down_token)
+        streams.condition_id = market.condition_id
+        opposite = next(token for token in streams.tokens if token != order.token_id)
+        clock[0] += 1000
+        broker.update(make_snapshot(now_ms=clock[0]))
+        await broker.reconcile(order)  # 100 shares ahead at our bid.
+
+        async def trade(token, side, price, quantity, tx):
+            clock[0] += 1
+            streams.ingest_market(
+                {
+                    "event_type": "last_trade_price",
+                    "market": market.condition_id,
+                    "asset_id": token,
+                    "side": side,
+                    "price": str(price),
+                    "size": str(quantity),
+                    "timestamp": str(clock[0]),
+                    "transaction_hash": "0x" + str(tx) * 64 if tx is not None else None,
+                }
+            )
+            return await broker.reconcile(order)
+
+        # A purchase of the opposite outcome below the complementary price cannot match.
+        assert not (await trade(opposite, "BUY", 1 - order.price_limit - D(".01"), 1000, 1)).fills
+        assert not (await trade(opposite, "BUY", 1 - order.price_limit, 102, None)).fills
+        assert any(row.get("code") == "PAPER_TRADE_ID_MISSING" for row in ledger.observations())
+        first = await trade(opposite, "BUY", 1 - order.price_limit, 102, 2)
+        assert sum(f.quantity for f in first.fills) == 2
+        ledger.apply_evidence(order.intent_id, first)
+        # The two outcome feeds may describe the same economic volume. A later mirror
+        # of the same transaction must not consume the queue/fill the order twice.
+        mirrored = await trade(order.token_id, "SELL", order.price_limit, 102, 2)
+        assert sum(f.quantity for f in mirrored.fills) == 2
+        later = await trade(opposite, "BUY", 1 - order.price_limit, 3, 3)
+        assert later.terminal and sum(f.quantity for f in later.fills) == 5
+        ledger.apply_evidence(order.intent_id, later)
+        assert ledger.open_position().quantity == 5
         ledger.close()
 
     asyncio.run(run())

@@ -153,3 +153,15 @@ noncooperative code requires external termination followed by journal inspection
 - Simulated maker volume must be strictly later than the activation book timestamp. A trade
   sharing that timestamp may already be removed from the displayed queue; consuming it again
   invents a fill. Equal-timestamp ordering is unknown, so exclude it conservatively.
+
+- 2026-09-07: Zero passive fills despite many orders was not explained by checking same-token
+  SELL flow alone. Polymarket also matches BUY Up with BUY Down at complementary prices. A real
+  0.48 bid replay changed from zero to five shares after adding that path. Retain transaction
+  hashes, avoid double-counting mirrored outcome messages, and distinguish internal SETTLED
+  reconciliation from actual filled/cancelled execution. Investigate the venue's full matching
+  model before calling zero fills expected; synthetic tests had omitted the same real pathway.
+- 2026-09-07: systemd 249 `systemd-analyze --user verify` against the active XDG_RUNTIME_DIR
+  replaced the user's private control socket. Verify in a temporary isolated runtime instead.
+  Recovery used a temporary session-bus socket/service and daemon reexecution without stopping
+  other user work; temporary recovery units were removed. The installer regression protects the
+  existing runtime. Do not test service recovery by killing the user's whole WSL instance.

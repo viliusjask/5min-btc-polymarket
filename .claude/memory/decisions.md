@@ -82,3 +82,9 @@
   timeout is separate from current-price freshness. Research/verification is in
   docs/research/volatility-sampling.md. The services run from .worktrees/history-resilience;
   runtime/config/account-file locations and all six balances are retained.
+- 2026-09-07: Five-priority experiment lab runs 84 registered directional variants on one exact
+  public tape, separate from the existing six USD100 portfolios. Fixed forecast scoring is
+  independent of entries; future-only frozen tests prevent retroactive selection. The model
+  floor remains a sensitivity scenario. Existing USD5 entry and USD10 loss guards are retained.
+  Raw results and uncertain exclusions remain visible; variant profits cannot be added together.
+  Collector/dashboard/lab now use `.worktrees/experiment-lab`; PR8 is for the user to merge.

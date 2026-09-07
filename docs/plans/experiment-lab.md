@@ -32,9 +32,12 @@ instead of inventing historical inputs or fills. No new runtime dependency is pl
 - [x] Implement chronological selection/freeze and later-data evaluation, including
       coverage, sample sizes, costs and all attempted variants.
 - [x] Add the dashboard views and operator commands, test integration and restart behavior.
-- [ ] Verify against recorded public data, deploy alongside preserved portfolios, and
+- [x] Verify against recorded public data, deploy alongside preserved portfolios, and
       publish a feature PR with honest evidence and remaining limitations.
 
 Success means the five capabilities work end to end, remain paper-only, persist across
 restart, and distinguish observed results from unsupported claims. A profitable strategy
 is an empirical outcome of future evidence, not an acceptance criterion code can guarantee.
+
+Completed implementation and verification: [dated evidence](../progress.md),
+[operator guide](../experiment-lab.md), [PR8](https://github.com/viliusjask/5min-btc-polymarket/pull/8).

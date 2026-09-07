@@ -333,6 +333,39 @@ Live GTC orders can survive process failure, and live redemption remains manual.
 
 ---
 
+# Current checkpoint: strategy experiment lab
+
+September 7, 2026. `feat/experiment-lab`, source `bbf9e2e`. [PR8](https://github.com/viliusjask/5min-btc-polymarket/pull/8)
+implements the five priorities in [the plan](plans/experiment-lab.md). Development followed the
+user's single-agent instruction: research, implementation and own review; no cross-model gate.
+The [operator guide](experiment-lab.md) describes all 84 trials and their limitations.
+
+- Full suite: **592 passed in 136.58s**, plus Ruff lint/format, mypy (26 modules), locked
+  dependencies, both JS syntax checks and whitespace checks. Tests include a real SIGKILL
+  mid-replay-frame, loss of a derived cache suffix while other cursors are ahead, exactly-once
+  cash/fills, preserved confirmation, future-only freeze and recovery of a partly saved freeze.
+- Browser checks: 84 variant rows, 30 Momentum grid cells, 14 exit variants, calibration bins,
+  filters and phase selection, exports, empty/error states, 390px layout, and all original six
+  portfolio cards. A separate browser pass used the actual deployed API, with no JS errors.
+- The input recorder first went live at `5760d5e`; final integration at `bbf9e2e` retained all
+  seven original journals, sessions and historical cash/fill rows, plus all **2,375** prior tape
+  frames. The prepared collector/dashboard restart took **14.688 seconds**. Funded operation
+  stayed off and no credential file was read.
+- All three user services run from `.worktrees/experiment-lab`: `btc5m-paper`, `btc5m-dashboard`
+  and `btc5m-lab`. The lab is independent of the original six portfolios and retains their
+  public input tape under the existing persistent runtime. A real lab service restart retained
+  all **84** variant journals, **162** fill rows and the unchanged registration at cursor1520,
+  without changing the original collector process. The worker then continued catching up.
+- At cursor1648, the actual public-input replay had **98 simulated opening fills across67
+  variants** and **three scoreable forecast rounds**. Fills across correlated variants are not
+  independent observations or a profitability estimate. Some earlier capture gaps mark affected
+  results uncertain; both raw and usable completed profit remain visible.
+
+Evidence is saved locally in the ignored `work/` directory: `final-tests.log`,
+`browser-check.log`, `live-browser-check.log`, `final-cutover.json` and `lab-restart.json`.
+No additional runtime dependency was installed. Future profitability and the untouched test's
+results are still empirical questions; the first automatic selection is after288 full rounds.
+
 # Historical record: standalone BTC five-minute repair
 
 2026-09-06. Branch `feat/standalone-btc5m`, worktree `.worktrees/standalone`.

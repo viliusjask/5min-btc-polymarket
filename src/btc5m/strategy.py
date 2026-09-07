@@ -579,7 +579,7 @@ def fair_value(snapshot: Snapshot, config: Config) -> FairValue:
         )
 
 
-def evaluate(snapshot: Snapshot, config: Config) -> Decision:
+def evaluate(snapshot: Snapshot, config: Config, *, valuation: FairValue | None = None) -> Decision:
     """Return a real executable policy candidate or a visible rejection."""
     selected = strategy_for_round(config, snapshot.market.start_s)
     if selected != config.strategy.mode:
@@ -612,7 +612,7 @@ def evaluate(snapshot: Snapshot, config: Config) -> Decision:
         return _skip(snapshot, "ENTRY_WINDOW", features)
     if float(features["model_tau_seconds"]) < 60:
         return _skip(snapshot, "MODEL_HORIZON", features)
-    value = fair_value(snapshot, config)
+    value = valuation if valuation is not None else fair_value(snapshot, config)
     if value.reason != "VALID":
         return _skip(snapshot, value.reason, value.features)
     assert value.probability_up is not None and market.reference_price is not None

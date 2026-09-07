@@ -57,6 +57,15 @@ class Engine:
     def _now(self, now_ms: int) -> int:
         return max(now_ms, int(self.broker.clock() * 1000))
 
+    def _evaluate(self, snapshot: Snapshot, config: Config) -> Decision:
+        return evaluate(snapshot, config)
+
+    def _exit_enabled(self, trigger: str) -> bool:
+        return True
+
+    def _model_exit_enabled(self, position: Position) -> bool:
+        return position.decision.features.get("mode") == "model_exit"
+
     async def reconcile(self) -> PreflightEvidence:
         for order in self.ledger.unresolved_orders():
             if order.state in ("RESERVED", "PREPARED"):
@@ -146,11 +155,11 @@ class Engine:
                 # Direct callers use step as their observation boundary.
                 if self._record_screens:
                     self.ledger.record_snapshot(current, self.config)
-                decision = evaluate(current, self.config)
+                decision = self._evaluate(current, self.config)
             else:
                 # Providers publish raw observations separately. Reusing their latest
                 # receipt at a later execution time must not create a new sample.
-                decision = evaluate(current, self.config)
+                decision = self._evaluate(current, self.config)
             if decision.reason != "ENTRY":
                 self._cancel_pending(decision.reason, current, current.now_ms)
                 return EngineResult("SKIP", decision.reason)
@@ -319,7 +328,7 @@ class Engine:
                             live_snapshot, selected_config, self.ledger.active_positions()
                         )
                         if intent.passive
-                        else evaluate(live_snapshot, selected_config)
+                        else self._evaluate(live_snapshot, selected_config)
                     )
                     if current.reason != "ENTRY":
                         reason = current.reason
@@ -528,7 +537,8 @@ class Engine:
             else "SHUTDOWN"
             if self._shutting_down or self.ledger.stop_requested()
             else "TIME"
-            if position.market.end_s * 1000 - now_ms <= self.config.execution.exit_seconds * 1000
+            if self._exit_enabled("TIME")
+            and position.market.end_s * 1000 - now_ms <= self.config.execution.exit_seconds * 1000
             else forced_reason
         )
 
@@ -603,12 +613,15 @@ class Engine:
             if remaining > 0:
                 return hold("INSUFFICIENT_FULL_EXIT_DEPTH")
             price = gross / held_quantity
-            if price <= position.gross_entry_price - self.config.execution.stop_loss_per_share:
+            if (
+                self._exit_enabled("STOP")
+                and price <= position.gross_entry_price - self.config.execution.stop_loss_per_share
+            ):
                 reason = "STOP"
-            elif price >= self.config.execution.take_profit_bid:
+            elif self._exit_enabled("PROFIT") and price >= self.config.execution.take_profit_bid:
                 reason = "PROFIT"
             elif (
-                position.decision.features.get("mode") == "model_exit"
+                self._model_exit_enabled(position)
                 and snapshot is not None
                 and snapshot.market.condition_id == position.market.condition_id
             ):

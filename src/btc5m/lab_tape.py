@@ -19,6 +19,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from btc5m.capture_quality import advance_quality
 from btc5m.domain import Book, Level, Market, PricePoint, Snapshot
 from btc5m.ledger import _market
 
@@ -51,6 +52,7 @@ class Frame:
     labels: dict[str, Any]
     code: str
     research: dict[str, Any] | None = None
+    diagnostic: dict[str, Any] | None = None
 
 
 class Tape:
@@ -191,6 +193,8 @@ class Tape:
         labels: dict[str, Any] | None = None,
         code: str = "CAPTURED",
         research: dict[str, Any] | None = None,
+        diagnostic: dict[str, Any] | None = None,
+        max_gap_ms: int | None = None,
     ) -> int:
         if self.readonly:
             raise TapeError("READ_ONLY")
@@ -212,6 +216,11 @@ class Tape:
                     receipts(child)
 
         receipts(research)
+        receipts(diagnostic)
+        if diagnostic is not None and (
+            max_gap_ms is None or not isinstance(diagnostic.get("code"), str)
+        ):
+            raise TapeError("INVALID_CAPTURE_DIAGNOSTIC")
         try:
             with self.db:
                 raw: dict[str, Any] | None = None
@@ -244,7 +253,15 @@ class Tape:
                         (snapshot.market.slug, encode(raw["market"])),
                     )
                 payload = zlib.compress(
-                    encode({"snapshot": raw, "code": code, "research": research}).encode(), 1
+                    encode(
+                        {
+                            "snapshot": raw,
+                            "code": code,
+                            "research": research,
+                            "diagnostic": diagnostic,
+                        }
+                    ).encode(),
+                    1,
                 )
                 cursor = self.db.execute(
                     "INSERT INTO frames(now_ms,slug,payload,checksum) VALUES (?,?,?,?)",
@@ -257,6 +274,23 @@ class Tape:
                 )
                 ident = cursor.lastrowid
                 assert ident is not None
+                if diagnostic is not None:
+                    prior = self.db.execute(
+                        "SELECT value FROM meta WHERE key='capture_quality'"
+                    ).fetchone()
+                    assert max_gap_ms is not None
+                    quality = advance_quality(
+                        json.loads(prior[0]) if prior else None,
+                        frame_id=ident,
+                        now_ms=now_ms,
+                        available=snapshot is not None,
+                        diagnostic=diagnostic,
+                        max_gap_ms=max_gap_ms,
+                    )
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO meta VALUES ('capture_quality',?)",
+                        (encode(quality),),
+                    )
                 if research is not None:
                     self.db.execute(
                         "INSERT OR IGNORE INTO meta VALUES ('research_first_frame',?)",
@@ -330,7 +364,15 @@ class Tape:
                         "SELECT slug,data FROM labels WHERE frame_id=?", (ident,)
                     )
                 }
-                yield Frame(ident, now_ms, snap, labels, item["code"], item.get("research"))
+                yield Frame(
+                    ident,
+                    now_ms,
+                    snap,
+                    labels,
+                    item["code"],
+                    item.get("research"),
+                    item.get("diagnostic"),
+                )
             except (ValueError, KeyError, TypeError, zlib.error) as exc:
                 raise TapeError("TAPE_CORRUPT_FRAME") from exc
             if len(self.points) > 20000:

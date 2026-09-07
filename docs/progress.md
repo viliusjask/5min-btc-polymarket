@@ -1,4 +1,33 @@
-# Progress: order-flow and pair experiments
+# Progress: explain experiment evidence and capture failures
+
+2026-09-07. `fix/research-evidence`, isolated `.worktrees/evidence-audit`, based on
+PR9's `de70bf6`. Single-agent implementation and own review. No new dependency, strategy,
+parameter change, credential inspection or funded operation.
+
+- Independently audited the two reversal gains totaling **USD195.147396** against original
+  frame checksums, timestamps, token identities, depth, protected order amounts, fees and
+  nearby public trade reports. Endpoint checks pass; both existing path-uncertainty flags
+  remain. [Audit and exact limitations](research/reversal-evidence-audit.md).
+- Every variant now shows all realized profit, completed unflagged profit, their exact
+  excluded remainder, completion counts and incomplete exposure together. The heatmap's
+  denominator follows its selected metric. Forecast comparisons use plain language;
+  scanner status polls are distinct from protected price candidates.
+- The collector records the first failed snapshot check, separately from recorder delays.
+  Sample availability, consecutive unavailable spans and cause counts commit atomically
+  with new frames and survive restart. Historical unknown causes are not backfilled.
+  The dashboard reads one bounded aggregate without scanning the growing capture.
+- **631 tests passed in164.83seconds**. Ruff lint/format, mypy32sources, dependency lock
+  and whitespace checks passed. Regression tests cover failed snapshot checks/recovery,
+  transactional counter rollback, restart continuity and exact profit decomposition.
+- A180-second public probe distinguished stale spot, silent spot, metadata expiry and
+  round rollover. Desktop/390px browser checks passed:84+17variants, six original wallets,
+  visible profit partitions, metric denominators, conversions and diagnostic failure states.
+  No JavaScript errors, mobile page overflow or real-account requests occurred.
+
+Local ignored verification: `work/reversal-audit.json`, `work/probe-quality.json`,
+`work/full-tests.log`, `work/browser-check.log` and `work/cutover/`.
+
+# Previous checkpoint: order-flow and pair experiments
 
 2026-09-07. `feat/order-flow-experiments`, `.worktrees/order-flow`, from merged PR8
 (`687ba4a`). Single-agent implementation and own review; [PR9](https://github.com/viliusjask/5min-btc-polymarket/pull/9).

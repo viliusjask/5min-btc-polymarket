@@ -211,6 +211,8 @@ class MarketData:
         self._cached_snapshot: Snapshot | None = None
         self._cached_at = float("-inf")
         self._logged_stream_books: dict[str, Book] = {}
+        self.snapshot_status: dict[str, Any] = {"code": "NOT_CHECKED"}
+        self._discovery_failure: dict[str, Any] | None = None
 
     def _stream_observation(self, record: dict[str, object]) -> None:
         if record.get("kind") == "stream_unavailable" and record.get("stream") == "books":
@@ -220,20 +222,54 @@ class MarketData:
     def current_snapshot(self) -> Snapshot | None:
         """Fresh model input independent of whether a new entry is currently eligible."""
         cached, now = self._cached_snapshot, self._now()
-        if cached is None or self._mono() - self._cached_at > HTTP_TIMEOUT or self._observer_failed:
-            return None
-        if now // 300000 != cached.market.start_s // 300:
-            return None
-        state = self._rounds.get(cached.market.slug)
-        if state is None or state.conflict:
-            return None
+        # Diagnose the first failed check; never change the snapshot's admission rules.
+        status: dict[str, Any] = {"received_ms": now, "component": "metadata"}
+        if self._discovery_failure:
+            status["last_discovery_failure"] = self._discovery_failure
+        if cached:
+            status["slug"] = cached.market.slug
+        self.snapshot_status = status
         try:
-            spot, twap = self._latest("spot", now), self._latest("twap60", now)
+            if cached is None:
+                raise DataUnavailable("NO_METADATA")
+            if self._mono() - self._cached_at > HTTP_TIMEOUT:
+                raise DataUnavailable("METADATA_CACHE_EXPIRED")
+            if self._observer_failed:
+                status["component"] = "observer"
+                raise DataUnavailable("OBSERVER_FAILED")
+            if now // 300000 != cached.market.start_s // 300:
+                raise DataUnavailable("ROUND_CHANGED")
+            state = self._rounds.get(cached.market.slug)
+            if state is None or state.conflict:
+                raise DataUnavailable(
+                    "ROUND_REFERENCE_CONFLICT" if state else "ROUND_STATE_MISSING"
+                )
+
+            def latest(kind: str) -> PricePoint:
+                status["component"] = kind
+                status.pop("source_age_ms", None)
+                status.pop("receipt_age_ms", None)
+                points = self._points[kind]
+                if points:
+                    point = points[max(points)]
+                    status["source_age_ms"] = now - point.timestamp_ms
+                    status["receipt_age_ms"] = now - point.received_ms
+                return self._latest(kind, now)
+
+            spot, twap = latest("spot"), latest("twap60")
             books = []
             for prior in (cached.up_book, cached.down_book):
+                status["component"] = (
+                    "up_book" if prior.token_id == cached.market.up_token else "down_book"
+                )
+                status["token_id"] = prior.token_id
+                status.pop("source_age_ms", None)
+                status.pop("receipt_age_ms", None)
                 if self.streams and prior.token_id in self.streams.pending_books:
-                    return None
+                    raise DataUnavailable("BOOK_RESYNC_PENDING")
                 current = self.streams.books.get(prior.token_id, prior) if self.streams else prior
+                status["source_age_ms"] = now - current.timestamp_ms
+                status["receipt_age_ms"] = now - current.received_ms
                 self._fresh(
                     current.timestamp_ms, current.received_ms, now, self.config.data.max_book_age_ms
                 )
@@ -241,7 +277,8 @@ class MarketData:
                     level.price % cached.market.tick_size
                     for level in (*current.bids, *current.asks)
                 ):
-                    return None
+                    status["tick_size"] = str(cached.market.tick_size)
+                    raise DataUnavailable("BOOK_TICK_MISMATCH")
                 books.append(current)
                 if self.streams and self._logged_stream_books.get(current.token_id) != current:
                     self._emit(
@@ -259,7 +296,7 @@ class MarketData:
                         asks=[{"price": str(x.price), "size": str(x.size)} for x in current.asks],
                     )
                     self._logged_stream_books[current.token_id] = current
-            return replace(
+            result = replace(
                 cached,
                 now_ms=now,
                 spot=spot,
@@ -269,7 +306,14 @@ class MarketData:
                 history=tuple(self._points["spot"][k] for k in sorted(self._points["spot"])),
                 exchange_history=self.streams.exchange_history if self.streams else (),
             )
-        except DataUnavailable:
+            self.snapshot_status = {
+                "received_ms": now,
+                "code": "CAPTURED",
+                "slug": cached.market.slug,
+            }
+            return result
+        except DataUnavailable as exc:
+            status["code"] = exc.code
             return None
 
     def final_reference(self, market: Market) -> tuple[Decimal, Decimal] | None:
@@ -871,11 +915,14 @@ class MarketData:
                     self.streams.exchange_history if self.streams else (),
                 )
                 self._cached_snapshot, self._cached_at = result, self._mono()
+                self._discovery_failure = None
                 return result
             except DataUnavailable as exc:
+                self._discovery_failure = {"code": exc.code, "received_ms": self._now()}
                 self._emit("snapshot_unavailable", code=exc.code)
                 raise
             except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                self._discovery_failure = {"code": "INVALID_METADATA", "received_ms": self._now()}
                 self._emit(
                     "snapshot_unavailable", code="INVALID_METADATA", error_type=type(exc).__name__
                 )

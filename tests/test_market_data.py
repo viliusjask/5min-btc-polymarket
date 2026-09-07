@@ -208,6 +208,72 @@ def test_published_stream_book_keeps_original_receipt_and_outcome_identity():
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    "failure,component,code",
+    [
+        ("cache", "metadata", "METADATA_CACHE_EXPIRED"),
+        ("pending", "up_book", "BOOK_RESYNC_PENDING"),
+        ("tick", "up_book", "BOOK_TICK_MISMATCH"),
+        ("book", "up_book", "STALE_DATA"),
+        ("spot", "spot", "STALE_DATA"),
+        ("observer", "observer", "OBSERVER_FAILED"),
+        ("round", "metadata", "ROUND_CHANGED"),
+    ],
+)
+def test_current_snapshot_reports_first_failed_check_and_recovers(failure, component, code):
+    from btc5m.domain import Level
+    from btc5m.streams import PublicStreams
+
+    async def run():
+        venue = Venue()
+        async with venue.adapter() as data:
+            await venue.emit()
+            snap = await data.snapshot()
+            assert data.current_snapshot() is not None
+            assert data.snapshot_status["code"] == "CAPTURED"
+            data.streams = PublicStreams(Config(), clock=venue.clock.wall)
+            original_cache_time = data._cached_at
+            original_spot = dict(data._points["spot"])
+            if failure == "cache":
+                data._cached_at -= 6
+            elif failure == "pending":
+                data.streams.pending_books[snap.market.up_token] = venue.clock.ms
+            elif failure == "tick":
+                data.streams.books[snap.market.up_token] = replace(
+                    snap.up_book, bids=(Level(Decimal(".1234567"), Decimal("100")),)
+                )
+            elif failure == "book":
+                data.streams.books[snap.market.up_token] = replace(
+                    snap.up_book, timestamp_ms=venue.clock.ms - 6000
+                )
+            elif failure == "spot":
+                data._points["spot"] = {
+                    venue.clock.ms - 6000: replace(snap.spot, timestamp_ms=venue.clock.ms - 6000)
+                }
+            elif failure == "observer":
+                data._observer_failed = True
+            elif failure == "round":
+                data._cached_snapshot = replace(
+                    snap, market=replace(snap.market, start_s=START - 300)
+                )
+            assert data.current_snapshot() is None
+            status = data.snapshot_status
+            assert (status["component"], status["code"]) == (component, code)
+            assert status["received_ms"] == venue.clock.ms
+            if failure in ("spot", "book"):
+                assert status["source_age_ms"] == 6000
+            data._cached_at = original_cache_time
+            data._cached_snapshot = snap
+            data._points["spot"] = original_spot
+            data._observer_failed = False
+            data.streams.pending_books.clear()
+            data.streams.books.clear()
+            assert data.current_snapshot() is not None
+            assert data.snapshot_status["code"] == "CAPTURED"
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("captured_allowed", [True, False])
 def test_missing_boundary_and_official_only_policy_never_use_neighbor(
     captured_allowed: bool,

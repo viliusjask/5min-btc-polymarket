@@ -35,7 +35,7 @@ from btc5m.streams import PublicStreams
 
 D = Decimal
 PAPER_DOMAIN = SigningDomain("BTC5m PAPER", "1", 0, "0x" + "00" * 20)
-PAPER_MATCHING_MODEL = "COMPLEMENTARY_FLOW_V2"
+PAPER_MATCHING_MODEL = "SOURCE_ORDERED_FLOW_V3"
 
 
 class PaperBroker:
@@ -174,7 +174,10 @@ class PaperBroker:
                 "submission_session": self.submission_session,
                 "matching_model": PAPER_MATCHING_MODEL,
                 "queue_ahead": None,
+                "queue_initial_ahead": None,
                 "queue_start_ms": None,
+                "queue_source_ms": None,
+                "queue_received_ms": None,
                 "generation": None,
                 "seen": [],
                 "fills": [],
@@ -331,14 +334,15 @@ class PaperBroker:
                 if book.asks and order.price_limit >= book.asks[0].price:
                     state.update(terminal=True, terminal_reason="PAPER_POST_ONLY_REJECTED")
                     return
+                ahead = sum((x.size for x in book.bids if x.price == order.price_limit), D(0))
                 state.update(
-                    queue_ahead=str(
-                        # Trades at/below our limit already imply price priority
-                        # reached this level. Only same-price size is queue ahead;
-                        # counting better bids here would charge that priority twice.
-                        sum((x.size for x in book.bids if x.price == order.price_limit), D(0))
-                    ),
+                    # Trade prices already determine whether better bid levels
+                    # were reached; track only same-price priority here.
+                    queue_ahead=str(ahead),
+                    queue_initial_ahead=str(ahead),
                     queue_start_ms=max(book.timestamp_ms, book.received_ms),
+                    queue_source_ms=book.timestamp_ms,
+                    queue_received_ms=book.received_ms,
                     generation=streams.generation,
                     stream_session=streams.session_id,
                 )
@@ -367,7 +371,10 @@ class PaperBroker:
                     or price > order.price_limit
                     # Same-timestamp trades may already be reflected in the
                     # activation book. Require demonstrably subsequent volume.
-                    or min(trade.timestamp_ms, trade.received_ms) <= state["queue_start_ms"]
+                    or trade.timestamp_ms
+                    <= (state.get("queue_source_ms") or state["queue_start_ms"])
+                    or trade.received_ms
+                    <= (state.get("queue_received_ms") or state["queue_start_ms"])
                     or max(trade.timestamp_ms, trade.received_ms) > now
                     or (cancel_at is not None and trade.timestamp_ms >= cancel_at)
                 ):
@@ -390,6 +397,12 @@ class PaperBroker:
                 prior = max(D(value) for value in flow.values())
                 flow[route] = str(D(flow[route]) + trade.quantity)
                 volume = max(D(value) for value in flow.values()) - prior
+                if volume > 0 and price < order.price_limit:
+                    # A trade through our bid demonstrates that price priority
+                    # passed this level. Its old displayed queue is no longer
+                    # ahead. Intercept only the observed volume, at our bid;
+                    # an unchanged-price touch or book cancellation is not a fill.
+                    ahead = D(0)
                 consumed = min(ahead, volume)
                 ahead -= consumed
                 quantity = min(order.quantity - filled, volume - consumed)

@@ -18,6 +18,187 @@ from btc5m.streams import PublicStreams, PublicTrade
 D = Decimal
 
 
+@pytest.mark.parametrize("complement", [False, True])
+def test_queue_compares_source_and_receipt_clocks_separately(tmp_path, complement):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
+        intent = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        start = clock[0]
+        clock[0] = start + 1000
+        snap = make_snapshot(now_ms=clock[0])
+        # The venue book was produced at +300ms and reached us at +1000ms.
+        broker.update(replace(snap, up_book=replace(snap.up_book, timestamp_ms=start + 300)))
+        assert not (await broker.reconcile(intent)).fills
+        clock[0] += 100
+        streams.trades.append(
+            PublicTrade(
+                "after-source-before-receipt",
+                intent.market.down_token if complement else intent.token_id,
+                intent.market.condition_id,
+                "BUY" if complement else "SELL",
+                1 - intent.price_limit if complement else intent.price_limit,
+                D(105),
+                start + 500,
+                clock[0],
+                streams.generation,
+                "0x" + "a" * 64,
+            )
+        )
+        evidence = await broker.reconcile(intent)
+        assert sum(f.quantity for f in evidence.fills) == 5
+        ledger.apply_evidence(intent.intent_id, evidence)
+        cash = ledger.summary(clock[0]).cash
+        ledger.apply_evidence(intent.intent_id, await broker.reconcile(intent))
+        assert ledger.summary(clock[0]).cash == cash
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("complement", [False, True])
+def test_trade_through_price_clears_same_price_queue_but_only_fills_observed_volume(
+    tmp_path, complement
+):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
+        intent = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        clock[0] += 1000
+        broker.update(make_snapshot(now_ms=clock[0]))
+        assert not (await broker.reconcile(intent)).fills  # 100 shares ahead
+        clock[0] += 1
+        price = intent.price_limit - intent.market.tick_size
+        streams.trades.append(
+            PublicTrade(
+                "through-our-bid",
+                intent.market.down_token if complement else intent.token_id,
+                intent.market.condition_id,
+                "BUY" if complement else "SELL",
+                1 - price if complement else price,
+                D(2),
+                clock[0],
+                clock[0],
+                streams.generation,
+                "0x" + "b" * 64,
+            )
+        )
+        evidence = await broker.reconcile(intent)
+        assert sum(f.quantity for f in evidence.fills) == 2
+        assert sum(f.principal for f in evidence.fills) == 2 * intent.price_limit
+        assert not evidence.terminal
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("case", ["same_source", "old_receipt", "legacy_state"])
+def test_queue_clock_fix_does_not_admit_ambiguous_or_earlier_trades(tmp_path, case):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, "passive_pairs")
+        intent = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        start = clock[0]
+        clock[0] += 1000
+        snap = make_snapshot(now_ms=clock[0])
+        broker.update(replace(snap, up_book=replace(snap.up_book, timestamp_ms=start + 300)))
+        await broker.reconcile(intent)
+        if case == "legacy_state":
+            state = broker._load(intent.intent_id)
+            state.pop("queue_source_ms")
+            state.pop("queue_received_ms")
+            broker._save(intent.intent_id, state)
+        clock[0] += 100
+        streams.trades.append(
+            PublicTrade(
+                "ambiguous",
+                intent.token_id,
+                intent.market.condition_id,
+                "SELL",
+                intent.price_limit,
+                D(105),
+                start + (300 if case == "same_source" else 500),
+                start + (999 if case == "old_receipt" else 1100),
+                streams.generation,
+            )
+        )
+        assert not (await broker.reconcile(intent)).fills
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("name", ["passive_pairs", "inventory_pairs"])
+def test_trade_through_hedge_completes_pair_before_controller_can_stop_it_out(tmp_path, name):
+    from btc5m.domain import Level
+
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, name)
+        engine = Engine(broker, ledger, config, session, read_exit_book=broker.book)
+
+        def market_input():
+            snap = publish(broker, clock, move=D(-200))
+            snap = replace(
+                snap,
+                down_book=replace(
+                    snap.down_book, bids=(Level(D(".25"), D(100)),), asks=(Level(D(".27"), D(100)),)
+                ),
+            )
+            broker.update(snap)
+            return snap
+
+        snap = market_input()
+        assert (await engine.step(snap, None, clock[0])).action == "WAIT"
+        clock[0] += 1000
+        assert (await engine.step(market_input(), None, clock[0])).action == "SUBMITTED"
+        first = ledger.unresolved_orders()[0]
+        clock[0] += 1000
+        await engine.step(market_input(), None, clock[0])
+        clock[0] += 1
+        aggressive_sell(streams, first, clock, "opening")
+        assert (await engine.step(market_input(), None, clock[0])).action == "SUBMITTED"
+        hedge = ledger.unresolved_orders()[0]
+        assert hedge.price_limit == D(".67") and hedge.token_id != first.token_id
+        clock[0] += 1000
+        snap = market_input()
+        # Keep a substantial displayed queue at the hedge's actual limit.
+        snap = replace(snap, up_book=replace(snap.up_book, bids=(Level(D(".67"), D("522.87")),)))
+        broker.update(snap)
+        await engine.step(snap, None, clock[0])
+        clock[0] += 1
+        streams.trades.append(
+            PublicTrade(
+                "through-hedge",
+                hedge.token_id,
+                hedge.market.condition_id,
+                "SELL",
+                D(".66"),
+                D(6),
+                clock[0],
+                clock[0],
+                streams.generation,
+            )
+        )
+        result = await engine.step(market_input(), None, clock[0])
+        assert result.reason == "PAIR_COMPLETE_AWAITING_RESOLUTION"
+        assert sum(p.cost_basis for p in ledger.active_positions()) == D("4.60")
+        # The first leg can then drop well past its stop: the equal hedge protects the pair.
+        clock[0] += 1000
+        snap = market_input()
+        snap = replace(snap, down_book=replace(snap.down_book, bids=(Level(D(".11"), D(100)),)))
+        broker.update(snap)
+        assert (
+            await engine.step(snap, None, clock[0])
+        ).reason == "PAIR_COMPLETE_AWAITING_RESOLUTION"
+        assert not ledger.unresolved_orders()
+        ledger.close()
+
+    asyncio.run(run())
+
+
 def setup(tmp_path, strategy="value"):
     clock = [make_snapshot().now_ms]
     config = mode(strategy)
@@ -59,6 +240,33 @@ def test_immediate_paper_order_waits_for_latency_and_later_book(tmp_path):
         before = ledger.summary(clock[0]).cash
         ledger.apply_evidence(intent.intent_id, await broker.reconcile(intent))
         assert ledger.summary(clock[0]).cash == before
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("name", ["momentum", "value", "fast_value", "model_exit"])
+def test_affordable_capped_entry_confirms_submits_and_fills_through_engine(tmp_path, name):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, name)
+        ask = D(".93") if name == "momentum" else D(".92")
+        engine = Engine(broker, ledger, config, session, read_exit_book=broker.book)
+        assert (
+            await engine.step(publish(broker, clock, ask=ask), None, clock[0])
+        ).reason == "ENTRY_CONFIRMATION_WAITING"
+        clock[0] += 1000
+        assert (
+            await engine.step(publish(broker, clock, ask=ask), None, clock[0])
+        ).action == "SUBMITTED"
+        clock[0] += 1000
+        await engine.step(publish(broker, clock, ask=ask), None, clock[0])
+        position = ledger.open_position()
+        assert position.quantity == 5
+        assert position.cost_basis == 5 * ask + (5 * ask * D(".07") * (1 - ask)).quantize(
+            D(".000001")
+        )
+        assert ledger.summary(clock[0]).cash == 100 - position.cost_basis
+        assert not ledger.unresolved_orders()
         ledger.close()
 
     asyncio.run(run())

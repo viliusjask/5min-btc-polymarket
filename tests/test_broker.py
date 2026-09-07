@@ -284,6 +284,37 @@ async def broker_fixture(tmp_path, monkeypatch, venue, *, config=None):
     return broker, ledger, session
 
 
+@pytest.mark.parametrize("mode,ask", [("value", D(".92")), ("momentum", D(".93"))])
+def test_capped_cash_entry_signs_exact_affordable_shares_with_actual_sdk(
+    tmp_path, monkeypatch, mode, ask
+):
+    from btc5m.strategy import evaluate
+
+    async def run():
+        venue = Venue()
+        config = replace(Config(), strategy=replace(Config().strategy, mode=mode))
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue, config=config)
+        snap = make_snapshot(ask=ask)
+        snap = replace(
+            snap,
+            market=market(),
+            up_book=replace(snap.up_book, token_id=TOKEN),
+            down_book=replace(snap.down_book, token_id=TOKEN2),
+        )
+        decision = evaluate(snap, config)
+        intent = ledger.reserve_entry(decision, snap.market, session, NOW)
+        prepared = await broker.prepare(intent, snap.market)
+        signed = json.loads(prepared.signed_payload)
+        assert D(signed["maker_amount"]) / 1000000 == 5 * ask
+        assert D(signed["taker_amount"]) / 1000000 == 5
+        assert prepared.reserved_cash <= 5
+        assert venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
 def test_no_network_actual_synthetic_eoa_constructor(monkeypatch):
     async def run():
         async def forbidden(*args, **kwargs):

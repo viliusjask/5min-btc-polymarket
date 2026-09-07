@@ -113,6 +113,22 @@ def test_value_candidate_reserves_fixed_cash_and_records_cost_components():
     assert decision.features["long_sample_count"] == 361
 
 
+@pytest.mark.parametrize("mode,ask", [("value", D(".92")), ("momentum", D(".93"))])
+def test_optional_slippage_cannot_disqualify_an_affordable_current_ask(mode, ask):
+    config = replace(Config(), strategy=replace(Config().strategy, mode=mode))
+    decision = evaluate(make_snapshot(ask=ask), config)
+    assert decision.reason == "ENTRY"
+    assert decision.price_limit == ask
+    assert decision.minimum_receive_shares >= 5
+    assert decision.buy_principal == 5 * ask
+    assert decision.max_total_reserved == 5 * ask * D("1.07")
+
+
+def test_slippage_cap_does_not_authorize_an_unaffordable_current_ask():
+    config = replace(Config(), strategy=replace(Config().strategy, mode="momentum"))
+    assert evaluate(make_snapshot(ask=D(".94")), config).reason == "BELOW_MINIMUM_SIZE"
+
+
 def test_improved_asks_increase_estimate_without_increasing_spending():
     before = evaluate(make_snapshot(ask=D(".70")), Config())
     after = evaluate(make_snapshot(ask=D(".65")), Config())
@@ -149,7 +165,7 @@ def test_small_trade_cannot_round_up_to_exchange_minimum():
 
 def test_minimum_shares_checked_after_protected_integer_rounding():
     snap = make_snapshot()
-    snap = replace(snap, market=replace(snap.market, min_order_size=D("6.578")))
+    snap = replace(snap, market=replace(snap.market, min_order_size=D("6.672")))
     assert evaluate(snap, Config()).reason == "BELOW_MINIMUM_SIZE"
 
 
@@ -300,7 +316,8 @@ def test_insufficient_full_cash_depth_rejects_entry():
 
 def test_rounded_limit_must_stay_in_value_ask_band():
     snap = make_snapshot(ask=D(".92"))
-    assert evaluate(snap, Config()).reason == "PRICE_BAND"
+    assert evaluate(snap, Config()).price_limit == D(".92")
+    assert evaluate(make_snapshot(ask=D(".93")), Config()).reason == "PRICE_BAND"
 
 
 def test_value_scenario_floor_can_reject_central_probability_candidate():

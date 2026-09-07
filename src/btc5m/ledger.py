@@ -341,6 +341,18 @@ class Ledger:
         pnl = sum((D(r[3]) for r in rows), D(0))
         base = self._meta("initial_cash")
         inventory, orders = self.positions(), self.unresolved_orders()
+        day_start = now_ms // 86400000 * 86400000
+        # An entry slot represents a filled round or still-possible opening,
+        # not a quote that is definitively closed without a fill. Include all
+        # BUY intents: a pair's later successful quote has no opening_round key.
+        daily_rounds = {
+            slug
+            for slug, state, quantity in self.db.execute(
+                "SELECT json_extract(data,'$.market.slug'),state,json_extract(data,'$.confirmed_quantity') FROM intents WHERE json_extract(data,'$.side')='BUY' AND json_extract(data,'$.created_ms')>=? AND json_extract(data,'$.created_ms')<?",
+                (day_start, day_start + 86400000),
+            )
+            if state not in TERMINAL or D(quantity) > 0
+        }
         return LedgerSummary(
             self.wallet,
             current,
@@ -362,13 +374,7 @@ class Ledger:
                     )
                 )
             ),
-            sum(
-                1
-                for row in self.db.execute(
-                    "SELECT data FROM intents WHERE opening_round IS NOT NULL"
-                )
-                if _day(_intent(row[0]).created_ms) == _day(now_ms)
-            ),
+            len(daily_rounds),
             sum((D(r[3]) for r in rows if r[1] == _day(now_ms)), D(0)),
             sum((D(r[3]) for r in rows if r[0] == current), D(0)),
             self.stop_requested(),
@@ -453,7 +459,11 @@ class Ledger:
         ):
             raise LedgerError("LOSS_LIMIT")
         prior = self.round_orders(market.slug)
-        if summary.daily_entries >= risk.max_entries_per_day and not (pair and prior):
+        if (
+            risk.max_entries_per_day > 0
+            and summary.daily_entries >= risk.max_entries_per_day
+            and not (pair and prior)
+        ):
             raise LedgerError("DAILY_ENTRY_LIMIT")
         if prior and not pair:
             raise LedgerError("ROUND_ALREADY_ATTEMPTED")

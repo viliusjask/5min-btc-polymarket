@@ -247,6 +247,9 @@ class MarketData:
                         token_id=current.token_id,
                         condition_id=cached.market.condition_id,
                         source_ms=current.timestamp_ms,
+                        received_ms=current.received_ms,
+                        slug=cached.market.slug,
+                        side="UP" if current.token_id == cached.market.up_token else "DOWN",
                         tick_size=str(cached.market.tick_size),
                         min_order_size=str(cached.market.min_order_size),
                         bids=[{"price": str(x.price), "size": str(x.size)} for x in current.bids],
@@ -347,7 +350,7 @@ class MarketData:
     def _emit(self, kind: str, **fields: object) -> None:
         if self._observer is None or self._observer_failed:
             return
-        now = self._now()
+        now = int(str(fields.get("received_ms", self._now())))
         record: dict[str, object] = {
             "kind": kind,
             "received_ms": now,
@@ -548,6 +551,7 @@ class MarketData:
                 "book",
                 token_id=token_id,
                 source_ms=stamp,
+                received_ms=now,
                 condition_id=str(raw.condition_id),
                 tick_size=str(tick),
                 min_order_size=str(minimum),

@@ -94,7 +94,7 @@ def paper_report(path: Path, *, records: bool = False) -> dict[str, Any]:
         "limitations": [
             "Simulated fills and PnL, not venue execution or evidence of profitable live trading.",
             "Each portfolio is an independent counterfactual; simultaneous simulated orders do not compete with each other for public depth.",
-            "Resting orders require subsequent aggressive SELL volume at/below the quote after observed same-price queue depth; cancellations ahead are not credited.",
+            "Resting orders require subsequent direct SELL or complementary BUY volume. Same-price volume depletes the queue; trades strictly through the bid clear its obsolete queue. Book cancellations alone never create fills.",
             "Uncertain rounds with stream gaps must be excluded from performance conclusions.",
             "Simulated settlement assumes automatic zero-cost redemption after official labels; live redemption remains manual.",
         ],

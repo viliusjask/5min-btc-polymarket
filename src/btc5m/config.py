@@ -75,13 +75,13 @@ class RiskConfig:
     trade_budget_usd: Decimal = Decimal("5")
     daily_loss_usd: Decimal = Decimal("10")
     session_loss_usd: Decimal = Decimal("10")
-    max_entries_per_day: int = 20
+    max_entries_per_day: int = 0  # Zero disables the optional entry-count cap.
 
     def __post_init__(self) -> None:
         _validate_types(self)
         for name in ("allocation_usd", "trade_budget_usd", "daily_loss_usd", "session_loss_usd"):
             require_decimal(getattr(self, name), name, positive=True)
-        require_integer(self.max_entries_per_day, "max_entries_per_day", positive=True)
+        require_integer(self.max_entries_per_day, "max_entries_per_day")
         if not self.trade_budget_usd <= min(
             self.allocation_usd, self.daily_loss_usd, self.session_loss_usd
         ):

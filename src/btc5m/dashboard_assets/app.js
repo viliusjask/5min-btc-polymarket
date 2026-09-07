@@ -49,6 +49,10 @@ const money = (value) =>
       }).format(Number(value));
 const count = (value) =>
   new Intl.NumberFormat("en-US").format(Number(value) || 0);
+const quotePrice = (value) =>
+  number(value) === null ? "—" : new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4,
+  }).format(Number(value));
 const human = (value) =>
   String(value || "Waiting for a decision")
     .replaceAll("_", " ")
@@ -158,9 +162,9 @@ function topSummary() {
     ],
     ["OPEN COST BASIS", money(held), "Cost of inventory still held"],
     [
-      "FILLS / ORDERS",
-      count(fills) + " / " + count(orders),
-      "Executed fill records / order attempts",
+      "TRADED ROUNDS",
+      count(sum(p, "filled_rounds")),
+      `${count(fills)} buy/sell fill records · ${count(orders)} order attempts across portfolios`,
     ],
     ["RECORDED FEES", money(sum(p, "fees")), "Maker rebates are omitted"],
     [
@@ -207,7 +211,7 @@ function topSummary() {
       ? gap
         ? "The latest history checks exceed the allowed gap budget. Brief interruptions are allowed when enough samples and regular intervals remain. Inspect the timestamped history details below."
         : "The policies have not recorded a fill. Scheduled waits, incomplete data and strategy filters are shown separately below. A quiet recorder does not establish whether a strategy is profitable."
-      : "These results use actual paper-journal accounting. Inspect open holdings, unconfirmed orders and uncertain rounds alongside realized profit. Simulated queue position and fills still need comparison with venue execution.";
+      : "Each portfolio is simulated independently. Buying and selling one position creates two fill records. Passive pairs and Inventory pairs share their opening rule; their hedge prices can differ. Inspect holdings and uncertain rounds alongside realized profit.";
   if (c.caught_up && fills === 0)
     $("insight-body").textContent =
       "Recorded market trades are other participants' activity. Our six bots have not executed a paper trade yet. " +
@@ -216,7 +220,7 @@ function topSummary() {
   if (legacyOrders > 0) {
     $("insight-body").textContent =
       $("insight-body").textContent +
-      ` Earlier passive fills were undercounted: ${count(legacyOrders)} historical orders used a simulator that omitted buying of the opposite outcome. Their original results are preserved and cannot assess the corrected strategies.`;
+      ` ${count(legacyOrders)} historical passive orders used older matching rules with known fill undercounts. Their original results are preserved; resulting losses and missed hedges cannot assess the corrected strategies.`;
   }
   $("runtime-label").textContent =
     `${state.runtime_name} · ${count(c.events_loaded)} journal events · ${Math.max(0, c.restart_times.length - 1)} recorder restarts`;
@@ -254,8 +258,8 @@ function portfolioCards() {
     const mini = node("div", "mini-stats");
     for (const [v, label] of [
       [p.orders, "orders"],
-      [p.fills, "fills"],
-      [money(p.open_cost_basis), "open cost"],
+      [p.filled_rounds, "traded rounds"],
+      [p.fills, "buy/sell fills"],
     ]) {
       const s = node("span");
       s.append(node("strong", "", v), node("span", "", label));
@@ -634,14 +638,16 @@ function feedHealth() {
   for (const [i, book] of state.books.entries()) {
     const row = node("div", "feed-row"),
       emptyBook = !book.bid_count || !book.ask_count;
-    row.append(
-      node("div", "feed-name", `Outcome book ${i + 1}`),
-      node(
-        "div",
-        emptyBook ? "warning" : "muted",
-        `${book.bid_count || 0} bids / ${book.ask_count || 0} asks · ${((end - book.source_ms) / 1000).toFixed(1)}s old`,
-      ),
+    const left = node("div"), right = node("div", "feed-value");
+    left.append(node("div", "feed-name", book.side ? `${human(book.side)} order book` : `Outcome book ${i + 1}`));
+    const start = Number(book.slug?.split("-").at(-1)) * 1000;
+    left.append(node("div", "feed-detail", `${start ? `Round ${clock(start)} UTC · ` : ""}Source ${clock(book.source_ms)} UTC`));
+    right.append(
+      node("div", emptyBook ? "warning" : "muted", `Best bid ${quotePrice(book.best_bid)} · Best ask ${quotePrice(book.best_ask)}`),
+      node("div", "feed-detail", `${book.bid_count || 0} buy-price levels · ${book.ask_count || 0} sell-price levels · ${((end - book.source_ms) / 1000).toFixed(1)}s old`),
     );
+    if (emptyBook) right.append(node("div", "feed-detail warning", "One side is empty; entries need both sides."));
+    row.append(left, right);
     root.append(row);
   }
   const h = clear("history"),

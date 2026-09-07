@@ -226,6 +226,23 @@ def _sample_window(
     return replace(result, sigma=math.sqrt(variance_rate))
 
 
+def _cash_depth(
+    book: Book, principal: Decimal, rate: Decimal, exponent: int
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    remaining = principal
+    shares, buy_fee, last_price = _ZERO, _ZERO, _ZERO
+    for level in book.asks:
+        cash = min(remaining, level.price * level.size)
+        quantity = cash / level.price
+        shares += quantity
+        buy_fee += fee_for(quantity, level.price, rate, exponent)
+        remaining -= cash
+        last_price = level.price
+        if remaining == 0:
+            break
+    return remaining, shares, buy_fee, last_price
+
+
 def _quote(
     snapshot: Snapshot,
     config: Config,
@@ -246,6 +263,13 @@ def _quote(
         if strategy.mode != "momentum"
         else (strategy.momentum_min_ask, strategy.momentum_max_ask)
     )
+    features.update(
+        best_bid=str(book.bids[0].price),
+        best_ask=str(book.asks[0].price),
+        minimum_ask=str(minimum_ask),
+        maximum_ask=str(maximum_ask),
+        required_terminal_surplus=str(strategy.min_terminal_surplus),
+    )
     if not minimum_ask <= book.asks[0].price <= maximum_ask:
         return _skip(snapshot, "PRICE_BAND", features, probability_up, floor)
 
@@ -258,27 +282,44 @@ def _quote(
     reserved = principal + reserved_fee
     if principal <= 0:
         return _skip(snapshot, "BELOW_MINIMUM_SIZE", features, probability_up, floor)
-    remaining = principal
-    shares, buy_fee, last_price = _ZERO, _ZERO, _ZERO
-    for level in book.asks:
-        cash = min(remaining, level.price * level.size)
-        quantity = cash / level.price
-        shares += quantity
-        buy_fee += fee_for(quantity, level.price, market.fee_rate, market.fee_exponent)
-        remaining -= cash
-        last_price = level.price
-        if remaining == 0:
-            break
+    remaining, shares, buy_fee, last_price = _cash_depth(
+        book, principal, market.fee_rate, market.fee_exponent
+    )
     if remaining > 0:
         return _skip(snapshot, "INSUFFICIENT_DEPTH", features, probability_up, floor)
     limit = ((last_price + config.execution.buy_slippage) / market.tick_size).to_integral_value(
         rounding=ROUND_CEILING
     ) * market.tick_size
-    if limit > maximum_ask or limit > 1 - market.tick_size:
+    if last_price > maximum_ask or last_price > 1 - market.tick_size:
         return _skip(snapshot, "PRICE_BAND", features, probability_up, floor)
+    # Slippage is permission to pay more, not a requirement to reserve a
+    # price that violates the share minimum or the configured price band.
+    ceiling = min(maximum_ask, 1 - market.tick_size, principal / market.min_order_size)
+    ceiling = (ceiling / market.tick_size).to_integral_value(rounding=ROUND_DOWN) * market.tick_size
+    limit = min(limit, ceiling)
+    if limit < last_price:
+        return _skip(snapshot, "BELOW_MINIMUM_SIZE", features, probability_up, floor)
     # Protected SDK BUY ceilings the requested shares, never worsening the signed cash/share cap.
     quantum = Decimal(10) ** -_AMOUNT_DECIMALS[market.tick_size]
     minimum_receive = (principal / limit).quantize(quantum, rounding=ROUND_CEILING)
+    if shares < minimum_receive:
+        # A protected SDK BUY rounds shares UP. At an exact-price ceiling that
+        # can demand a fraction more than the cash can buy. Reduce cents to the
+        # nearest amount whose shares are exact on the SDK grid, then reprice
+        # the smaller cash order. Never round required shares down or spend more.
+        numerator, denominator = limit.as_integer_ratio()
+        cash_step = (
+            100
+            * numerator
+            // math.gcd(100 * numerator, denominator * 10 ** _AMOUNT_DECIMALS[market.tick_size])
+        )
+        principal = Decimal(int(principal * 100) // cash_step * cash_step) / 100
+        remaining, shares, buy_fee, _ = _cash_depth(
+            book, principal, market.fee_rate, market.fee_exponent
+        )
+        reserved_fee = principal * market.fee_rate
+        reserved = principal + reserved_fee
+        minimum_receive = (principal / limit).quantize(quantum, rounding=ROUND_CEILING)
     if minimum_receive < market.min_order_size or shares < minimum_receive:
         return _skip(snapshot, "BELOW_MINIMUM_SIZE", features, probability_up, floor)
     average_ask = principal / shares
@@ -300,6 +341,7 @@ def _quote(
             "reserved_buy_fee": str(reserved_fee),
             "selected_spread": str(book.asks[0].price - book.bids[0].price),
             "terminal_surplus_proxy_units": "USD/share; uncalibrated terminal screen, not stopped-policy return",
+            "terminal_surplus_proxy": str(surplus),
         }
     )
     if strategy.mode != "momentum" and surplus <= strategy.min_terminal_surplus:
@@ -605,7 +647,18 @@ def evaluate(snapshot: Snapshot, config: Config) -> Decision:
         )
     first = decisions[0]
     return (
-        replace(first, features={**first.features, "other_side_reason": decisions[1].reason})
+        replace(
+            first,
+            features={
+                **first.features,
+                "other_side_reason": decisions[1].reason,
+                **{
+                    "other_side_" + key: value
+                    for key, value in decisions[1].features.items()
+                    if key in ("best_bid", "best_ask", "scenario_floor", "terminal_surplus_proxy")
+                },
+            },
+        )
         if len(decisions) > 1
         else first
     )

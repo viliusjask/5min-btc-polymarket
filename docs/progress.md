@@ -1,3 +1,37 @@
+# Progress: repair missing fills, entry sizing and misleading counters
+
+2026-09-07. Work verified on `fix/strategy-execution`, based on `fix/history-resilience`.
+The user requested diagnosis of near-zero fills and inactive strategies, then explicitly
+removed our arbitrary20-entry daily cap. Single-agent implementation and own review;
+no new dependencies or funded operations.
+
+- Corrected passive simulation to compare source and receipt clocks independently and to
+  clear obsolete same-price queue depth when qualifying public trades execute through a bid.
+  Fills remain limited to observed, deduplicated volume. New records use SOURCE_ORDERED_FLOW_V3;
+  prior missing timestamps are not fabricated. Initial queue depth is now retained.
+- Replayed55 originally unfilled orders: the baseline reproduced zero fills; the correction
+  recovered three, including the0.67 hedge whose omission caused a later simulated stop loss.
+  This does not rewrite original cash or establish whole-portfolio returns.
+- Optional slippage and SDK share rounding no longer reject affordable0.92/0.93 entries.
+  Reduced cash amounts preserve theUSD5 budget and fee reserve. Actual pinned SDK signing
+  and controller-to-paper-fill tests cover the corrected boundary for all four directional modes.
+- The default daily entry-count cap is disabled (`max_entries_per_day = 0`). Explicit positive
+  caps remain supported; zero-fill closures do not consume their slots. Tests cover25 completed
+  rounds in one day, restart preservation, partial/unknown orders and a deliberately enabled cap.
+- Dashboard distinguishes traded rounds, buy/sell fill records and order attempts. Book rows
+  show Up/Down prices, round and source time;99/0 is explicitly a count of price levels.
+  Numeric entry-filter reasons and older-simulator warnings explain inactive or historical data.
+- Pair variants intentionally share opening logic; value/model_exit intentionally share entries.
+  Recorded price-band sensitivity found additional candidates below0.60, but that separate
+  strategy change has not been enabled. See [execution and entry audit](research/execution-and-entry-audit.md).
+- **541 tests passed in138.15seconds**. Ruff lint/format, mypy (20 sources), locked dependencies,
+  JavaScript syntax and whitespace checks passed. Headless Edge verified six cards, explicit
+  quote-vs-depth labels (including0.999 precision), separate trade/fill counters, no JavaScript
+  errors and no overflow at390px. Paper-cap migration rehearsed against all seven journal
+  copies, preserving every session ID and all cash/position/fill/accounting rows.
+
+## Previous history checkpoint
+
 # Progress: recover from brief history gaps
 
 2026-09-07. Branch `fix/history-resilience`, isolated worktree `.worktrees/history-resilience`,

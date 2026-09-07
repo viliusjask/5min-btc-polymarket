@@ -27,7 +27,7 @@ DESCRIPTIONS = {
     "fast_value": "Value with aligned Binance information",
     "model_exit": "Value entry with a sale-versus-hold exit",
     "passive_pairs": "Sequential Up/Down limit orders",
-    "inventory_pairs": "Pairing with inventory-dependent hedge prices",
+    "inventory_pairs": "Same opening as Passive pairs; more urgent hedge pricing within the pair-cost cap",
 }
 EXPLANATIONS = {
     "PAPER_TRADE_ID_MISSING": "Opposite-outcome trade volume could not be deduplicated because its transaction identifier was missing.",
@@ -56,6 +56,20 @@ EXPLANATIONS = {
 
 def explain(reason: str, features: dict[str, Any] | None = None) -> tuple[str, str]:
     features = features or {}
+    if reason == "PRICE_BAND" and all(
+        k in features for k in ("best_ask", "minimum_ask", "maximum_ask")
+    ):
+        return "strategy", (
+            f"Ask ${D(str(features['best_ask'])):.2f}; configured purchase range "
+            f"${D(str(features['minimum_ask'])):.2f}–${D(str(features['maximum_ask'])):.2f}."
+        )
+    if reason == "INSUFFICIENT_TERMINAL_SURPLUS" and all(
+        k in features for k in ("terminal_surplus_proxy", "required_terminal_surplus")
+    ):
+        return "strategy", (
+            f"Model surplus after costs is {D(str(features['terminal_surplus_proxy'])) * 100:.2f}¢/share; "
+            f"more than {D(str(features['required_terminal_surplus'])) * 100:.2f}¢ is required."
+        )
     if reason == "INSUFFICIENT_HISTORY":
         statuses = [features.get(f"{label}_sampling_status") for label in ("short", "long")]
         if "INSUFFICIENT_INTERVAL_COVERAGE" in statuses:
@@ -200,6 +214,10 @@ class DashboardReader:
                 bucket[label] = data.get("price")
                 bucket[label + "_source_ms"] = data.get("source_ms", 0)
         elif label == "book":
+            previous = self.books.get(data["token_id"], {})
+            for key in ("side", "slug"):
+                if not data.get(key) and previous.get(key):
+                    data[key] = previous[key]
             self.books[data["token_id"]] = data
             self.books = dict(
                 sorted(self.books.items(), key=lambda pair: pair[1]["received_ms"])[-12:]
@@ -274,6 +292,7 @@ class DashboardReader:
                 WHEN kind='PUBLIC_OBSERVATION' AND json_extract(data,'$.kind')='book'
                 THEN json_object('kind','book','token_id',json_extract(data,'$.token_id'),
                     'condition_id',json_extract(data,'$.condition_id'),
+                    'side',json_extract(data,'$.side'),'slug',json_extract(data,'$.slug'),
                     'received_ms',at_ms,'source_ms',json_extract(data,'$.source_ms'),
                     'bid_count',json_array_length(data,'$.bids'),'ask_count',json_array_length(data,'$.asks'),
                     'best_bid',json_extract(data,'$.bids[0].price'),'best_ask',json_extract(data,'$.asks[0].price'))
@@ -484,6 +503,12 @@ class DashboardReader:
             else:
                 status = "historical"
             matches = manifest.get("config_fingerprint") == self.config.fingerprint
+            latest_books = sorted(
+                self.books.values(), key=lambda row: row["received_ms"], reverse=True
+            )
+            if latest_books:
+                condition = latest_books[0].get("condition_id")
+                latest_books = [b for b in latest_books if b.get("condition_id") == condition][:2]
             payload = {
                 "environment": "paper",
                 "generated_ms": now,
@@ -503,9 +528,7 @@ class DashboardReader:
                 "descriptions": DESCRIPTIONS,
                 "decisions": {name: self.decisions[name] for name in selected},
                 "feeds": self.feeds,
-                "books": sorted(
-                    self.books.values(), key=lambda row: row["received_ms"], reverse=True
-                )[:2],
+                "books": latest_books,
                 "prices": [self.prices[k] for k in sorted(self.prices)],
                 "timeline": [self.timeline[k] for k in sorted(self.timeline)],
                 "observation_counts": self.observations,

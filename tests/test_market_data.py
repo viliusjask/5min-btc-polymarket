@@ -179,6 +179,35 @@ def test_exact_source_boundary_and_full_precision_with_out_of_order_duplicates()
     asyncio.run(scenario())
 
 
+def test_published_stream_book_keeps_original_receipt_and_outcome_identity():
+    from dataclasses import replace
+
+    from btc5m.streams import PublicStreams
+
+    async def run():
+        venue = Venue()
+        async with venue.adapter() as data:
+            await venue.emit()
+            snapshot = await data.snapshot()
+            streams = PublicStreams(Config(), clock=venue.clock.wall)
+            book = replace(snapshot.up_book, received_ms=venue.clock.ms - 100)
+            streams.books[book.token_id] = book
+            data.streams = streams
+            current = data.current_snapshot()
+            assert current is not None and current.up_book.received_ms == book.received_ms
+            record = next(
+                r
+                for r in reversed(venue.records)
+                if r["kind"] == "book" and r["token_id"] == book.token_id
+            )
+            assert record["received_ms"] == book.received_ms
+            assert record["source_ms"] == book.timestamp_ms
+            assert record["side"] == "UP"
+            assert record["slug"] == snapshot.market.slug
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("captured_allowed", [True, False])
 def test_missing_boundary_and_official_only_policy_never_use_neighbor(
     captured_allowed: bool,

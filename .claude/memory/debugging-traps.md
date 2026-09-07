@@ -1,5 +1,30 @@
 # Debugging traps (this project)
 
+## 2026-09-07: A falsely unfilled hedge caused a simulated stop loss
+
+The UI showed two identical pair portfolios losing USD0.734265, each with two fills amid
+hundreds of attempts. The simulator (1) compared trade source time to book local receipt time,
+discarding demonstrably subsequent flow; (2) depleted an old same-price queue even when
+trades executed strictly through the bid. Replay the actual hedge before explaining a losing
+round as strategy performance. Three of55 originally unfilled orders replayed with fills;
+one was the0.67 hedge completing a0.25 opening. Preserve original losses, label old matcher
+versions, retain initial queue depth and both timestamps, and test through Engine.step that
+the completed pair no longer stops out its former directional leg. "99 bids /0 asks" is
+price-level counts, not model probability; show actual prices/outcome/round in the dashboard.
+
+Optional slippage also rejected affordable top-of-band entries. Cap permitted slippage, then
+respect the pinned SDK's upward share rounding by reducing principal to an exactly representable
+cash/share pair. Verify actual signed integers and subsequent paper fills, not only ENTRY.
+
+The same capture reached19 of20 daily "entries" with mostly zero-fill cancellations. Count
+filled rounds and unresolved opening risk, not definitive failed attempts. Count every BUY
+intent's round, because the successful second quote can lack the first opening_round key.
+Keep partial/unknown orders counted and preserve attempt history; test after restart and
+profitable closure. A continuously running collector can otherwise conceal exhausted entry slots.
+The user then rejected the arbitrary20-entry cap itself: it was our added policy, not one of
+the six strategies. Default and continuous paper config now use0 (disabled). Do not invent a
+daily trade quota for a24/7 strategy comparison or confuse a self-imposed guard with venue rules.
+
 ## 2026-09-07: A completed capture concealed an unready experiment
 
 Zero orders were summarized without a causal breakdown of the rejection counts. The 38-minute

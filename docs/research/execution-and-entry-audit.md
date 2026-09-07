@@ -130,4 +130,6 @@ The scratch `work/analyze_screens.py` and `work/screen-diagnosis.json` retain th
 All these counts are repeated, overlapping screens or original-order replays. None is an
 independent-trade sample or evidence of profitable live operation. Historical undercounted
 orders are labeled as using older matching rules. Ongoing records use the corrected matcher;
-cash, history, exposure limits and the continuous service remain persistent.
+cash, history and the continuous service remain persistent. The explicitly requested entry-cap
+removal was recorded as a configuration change in the existing seven sessions, retaining both
+fingerprints without resetting their cash, realized losses or prior execution records.

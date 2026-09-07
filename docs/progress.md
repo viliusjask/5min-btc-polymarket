@@ -30,6 +30,19 @@ no new dependencies or funded operations.
   errors and no overflow at390px. Paper-cap migration rehearsed against all seven journal
   copies, preserving every session ID and all cash/position/fill/accounting rows.
 
+- Applied the explicit20→0 cap migration and reloaded both existing systemd services at
+  04:10:19–04:10:54UTC, retaining all seven session IDs and all original orders, fills and
+  accounting rows. Only the current session's configuration fingerprint was advanced, with
+  a dated CONFIGURATION_CHANGED event preserving both fingerprints and the exact policy change.
+  No loss-session reset or retrospective fill repair occurred. SQLite backup rehearsals,
+  applied migration and before/after evidence live under the ignored strategy-execution
+  `work/entry-cap-migration` and `work/execution-reload-result.json`.
+- Active services confirmed SOURCE_ORDERED_FLOW_V3 and BOUNDED_INTERVALS_V1, zero entry cap,
+  matching config/manifest and no supervisor restarts. Live Edge verified six cards and the
+  corrected counters without JavaScript errors. Public books now show labeled outcomes and
+  actual quotes (at the check, Up0.34/0.35 and Down0.65/0.66). The original four directional
+  portfolios still have no recorded fills; passing mechanical tests is not evidence of an edge.
+
 ## Previous history checkpoint
 
 # Progress: recover from brief history gaps

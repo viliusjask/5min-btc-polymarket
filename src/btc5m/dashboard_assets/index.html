@@ -7,6 +7,7 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
+    <script src="/lab.js" defer></script>
   </head>
   <body>
     <header class="masthead">
@@ -23,12 +24,36 @@
             Paper
           </button>
           <button data-view="live" aria-pressed="false">Real</button>
+          <button data-view="lab" aria-pressed="false">Experiments</button>
         </div>
         <span id="view-badge" class="badge">SIMULATED · READ ONLY</span
         ><button id="export" class="quiet">Export snapshot ↓</button>
       </div>
     </header>
     <main>
+      <div id="lab-view" hidden>
+        <div class="statusbar"><strong id="lab-status">Loading experiments…</strong><span id="lab-updated"></span></div>
+        <div id="lab-error" class="error" role="alert" hidden></div>
+        <section class="insight"><span class="insight-mark">i</span><div><h2>Find evidence, then test it on later rounds.</h2><p id="lab-intro">Each variant has its own paper wallet, using the same recorded inputs and execution rules. These balances are separate from the six original portfolios.</p></div></section>
+        <div id="lab-content" hidden>
+          <div class="section-heading lab-filters">
+            <label class="select-label">Study phase<select id="lab-phase"></select></label>
+            <label class="select-label">Strategy family<select id="lab-family"><option value="all">All families</option><option value="control">Controls</option><option value="momentum">Momentum thresholds</option><option value="value">Value thresholds</option><option value="buffer">Model buffers</option><option value="exit">Exit rules</option><option value="feed">Feed / latency</option><option value="normalized">Normalized opening lead</option><option value="recent">Recent continuation / reversal</option></select></label>
+            <label class="select-label">Compare<select id="lab-metric"><option value="clean_completed_pnl">Profit · completed, usable rounds</option><option value="realized_pnl">All recorded realized profit</option><option value="filled_rounds">Filled rounds</option><option value="observed_drawdown">Observed equity drawdown</option></select></label>
+          </div>
+          <p id="lab-phase-note" class="caption"></p>
+          <section id="lab-metrics" class="metrics" aria-label="Experiment study metrics"></section>
+          <div class="chart-grid">
+            <section class="panel"><div class="panel-heading"><h3>Momentum parameter map</h3><span class="unit">LEAD × ENTRY WINDOW</span></div><div id="lab-heatmap" class="table-wrap"></div><p class="caption">Click a cell to inspect the variant. The second number is usable completed rounds. Zero with no completed rounds is not evidence of break-even trading.</p></section>
+            <section class="panel"><div class="panel-heading"><h3>Does the probability model beat the market?</h3><span class="unit">ONE FORECAST PER ROUND</span></div><div id="lab-forecast-metrics"></div><div id="lab-calibration" class="chart"></div><p id="lab-forecast-note" class="caption"></p></section>
+          </div>
+          <section class="panel activity"><div class="panel-heading"><h3>Every registered variant</h3><span id="lab-variant-count" class="unit"></span></div><div id="lab-variants" class="table-wrap lab-variant-table"></div></section>
+          <section class="workspace"><div class="section-heading"><div><span class="eyebrow">INSPECT THE MECHANISM</span><h2 id="lab-detail-title">Select a variant</h2></div><span id="lab-evidence" class="badge"></span></div><p id="lab-parameters" class="caption"></p><section id="lab-wallet" class="metrics"></section><div class="chart-grid"><section class="panel"><h3>Paper equity</h3><div id="lab-equity" class="chart"></div><p id="lab-equity-note" class="caption"></p></section><section class="panel"><h3>From a signal to a completed trade</h3><div id="lab-funnel" class="lab-funnel"></div><p class="caption">A qualifying screen must survive confirmation and then find protected depth. An order can be accepted without filling.</p></section></div></section>
+          <div class="chart-grid"><section class="panel"><h3>Entry checks</h3><div id="lab-reasons" class="table-wrap"></div></section><section class="panel"><h3>Order outcomes</h3><div id="lab-outcomes" class="table-wrap"></div></section></div>
+          <section class="panel activity"><div class="panel-heading"><h3>Selected variant's order journal</h3><span class="unit">LATEST 50 · SIMULATED</span></div><div id="lab-orders" class="table-wrap"></div></section>
+          <footer><p id="lab-limits"></p></footer>
+        </div>
+      </div>
       <div id="paper-view">
         <div class="statusbar">
           <div>

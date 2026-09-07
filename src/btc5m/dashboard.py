@@ -605,6 +605,7 @@ def make_server(
             assets = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                "/lab.js": ("lab.js", "text/javascript; charset=utf-8"),
                 "/style.css": ("style.css", "text/css; charset=utf-8"),
                 "/icon.svg": ("icon.svg", "image/svg+xml"),
             }
@@ -616,6 +617,31 @@ def make_server(
                     payload = json.dumps(reader.snapshot(), allow_nan=False).encode()
                 except Exception:
                     self.respond(503, b'{"error":"PAPER_DATA_UNAVAILABLE"}', "application/json")
+                    return
+                self.respond(200, payload, "application/json")
+            elif path == "/api/lab":
+                report = reader.path / "lab" / "report.json"
+                if not report.exists():
+                    self.respond(
+                        200,
+                        b'{"environment":"paper-lab","status":"not_started"}',
+                        "application/json",
+                    )
+                    return
+                try:
+                    with report.open("rb") as handle:
+                        raw = handle.read(16 * 1024 * 1024 + 1)
+                    if len(raw) > 16 * 1024 * 1024:
+                        raise ValueError("LAB_REPORT_TOO_LARGE")
+                    lab_payload = json.loads(raw)
+                    if (
+                        not isinstance(lab_payload, dict)
+                        or lab_payload.get("environment") != "paper-lab"
+                    ):
+                        raise ValueError("LAB_ENVIRONMENT_MISMATCH")
+                    payload = json.dumps(lab_payload, allow_nan=False).encode()
+                except (OSError, ValueError):
+                    self.respond(503, b'{"error":"LAB_REPORT_UNAVAILABLE"}', "application/json")
                     return
                 self.respond(200, payload, "application/json")
             elif path == "/api/live":

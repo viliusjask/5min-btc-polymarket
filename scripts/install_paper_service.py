@@ -19,7 +19,9 @@ def quote(value, *, command=False):
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "$$") + '"'
 
 
-def unit(checkout, runtime, config, *, dashboard=False, port=8765, env_file=None):
+def unit(checkout, runtime, config, *, dashboard=False, lab=False, port=8765, env_file=None):
+    if dashboard and lab:
+        raise ValueError("select one service role")
     command = [
         checkout / ".venv/bin/btc5m",
         "dashboard" if dashboard else "paper",
@@ -33,13 +35,32 @@ def unit(checkout, runtime, config, *, dashboard=False, port=8765, env_file=None
         if dashboard
         else ["--strategies", "all", "--continuous", "--shutdown-seconds", "60"]
     )
+    if lab:
+        command = [
+            checkout / ".venv/bin/btc5m",
+            "lab",
+            "run",
+            "--runtime",
+            runtime / "lab",
+            "--config",
+            config,
+            "--source",
+            runtime / "capture.sqlite",
+            "--continuous",
+        ]
     if dashboard and env_file:
         command += ["--account", "--env-file", env_file]
     return "\n".join(
         [
             "[Unit]",
             "Description=BTC5m "
-            + ("read-only dashboard" if dashboard else "continuous paper portfolios"),
+            + (
+                "read-only dashboard"
+                if dashboard
+                else "paper experiment lab"
+                if lab
+                else "continuous paper portfolios"
+            ),
             "StartLimitIntervalSec=0",
             "",
             "[Service]",
@@ -48,7 +69,7 @@ def unit(checkout, runtime, config, *, dashboard=False, port=8765, env_file=None
             "ExecStart=" + " ".join(quote(value, command=True) for value in command),
             "Restart=on-failure",
             "RestartSec=10",
-            "TimeoutStartSec=120",
+            "TimeoutStartSec=" + ("300" if lab else "120"),
             "TimeoutStopSec=90",
             "KillSignal=SIGTERM",
             "KillMode=control-group",
@@ -58,7 +79,7 @@ def unit(checkout, runtime, config, *, dashboard=False, port=8765, env_file=None
             "Environment=PYTHONDONTWRITEBYTECODE=1",
             "StandardOutput=journal",
             "StandardError=journal",
-            "SyslogIdentifier=btc5m-" + ("dashboard" if dashboard else "paper"),
+            "SyslogIdentifier=btc5m-" + ("dashboard" if dashboard else "lab" if lab else "paper"),
             *(
                 []
                 if dashboard
@@ -87,6 +108,9 @@ def main():
         help="existing file for optional read-only Real dashboard; never read by installer",
     )
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--lab", action="store_true", help="also enable the public-data experiment worker"
+    )
     args = parser.parse_args()
     checkout = Path(__file__).resolve().parents[1]
     runtime, config = args.runtime.resolve(), args.config.resolve()
@@ -97,10 +121,15 @@ def main():
         parser.error("paper runtime required")
     if not 1 <= args.port <= 65535:
         parser.error("invalid port")
+    if args.lab and not (runtime / "capture.sqlite").is_file():
+        parser.error("the paper collector must create capture.sqlite before enabling the lab")
     directory = Path.home() / ".config/systemd/user"
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
-    for name, dashboard in (("btc5m-paper", False), ("btc5m-dashboard", True)):
+    services = [("btc5m-paper", False, False), ("btc5m-dashboard", True, False)]
+    if args.lab:
+        services.append(("btc5m-lab", False, True))
+    for name, dashboard, lab in services:
         target = directory / (name + ".service")
         temporary = target.with_suffix(".tmp")
         temporary.write_text(
@@ -109,6 +138,7 @@ def main():
                 runtime,
                 config,
                 dashboard=dashboard,
+                lab=lab,
                 port=args.port,
                 env_file=args.env_file.resolve() if args.env_file else None,
             )
@@ -123,19 +153,18 @@ def main():
                 "systemd-analyze",
                 "--user",
                 "verify",
-                str(directory / "btc5m-paper.service"),
-                str(directory / "btc5m-dashboard.service"),
+                *(str(directory / (name + ".service")) for name, _, _ in services),
             ],
             env={**os.environ, "XDG_RUNTIME_DIR": verify_runtime},
             check=True,
         )
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
     subprocess.run(
-        ["systemctl", "--user", "enable", "btc5m-paper.service", "btc5m-dashboard.service"],
+        ["systemctl", "--user", "enable", *(name + ".service" for name, _, _ in services)],
         check=True,
     )
     print("Installed and enabled. Start after the previous owners release these journals/port:")
-    print("systemctl --user start btc5m-paper.service btc5m-dashboard.service")
+    print("systemctl --user start " + " ".join(name + ".service" for name, _, _ in services))
 
 
 if __name__ == "__main__":

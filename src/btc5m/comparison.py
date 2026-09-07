@@ -17,6 +17,7 @@ from typing import Any
 
 from btc5m.config import STRATEGIES, Config
 from btc5m.engine import Engine
+from btc5m.lab_tape import Tape
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.market_data import DataUnavailable, MarketData
 from btc5m.paper import PAPER_MATCHING_MODEL, PaperBroker
@@ -143,7 +144,9 @@ async def run_paper(
     code = 0
     lifecycle_started = False
     lifecycle_status = "failed"
+    tape: Tape | None = None
     try:
+        tape = Tape(path / "capture.sqlite")
         manifest = {
             "version": 1,
             "environment": "paper",
@@ -254,6 +257,7 @@ async def run_paper(
         shutdown_deadline = None
         last_results: dict[str, tuple[str, str]] = {}
         last_heartbeat = 0.0
+        last_capture = 0.0
         last_disk_check = loop.time()
         last_loop_ms = int(time.time() * 1000)
         while True:
@@ -276,7 +280,10 @@ async def run_paper(
                 if shutil.disk_usage(path).free < 256 * 1024 * 1024:
                     raise LedgerError("PAPER_DISK_RESERVE_REQUIRED")
             data.retain_markets(
-                tuple(p.market for ledger in ledgers for p in ledger.active_positions())
+                tape.retained_markets(
+                    tuple(p.market for ledger in ledgers for p in ledger.active_positions()),
+                    now,
+                )
             )
             if producer.done():
                 await producer
@@ -307,6 +314,32 @@ async def run_paper(
                     )
                 )
             snapshot = None if interrupted else data.current_snapshot()
+            if loop.time() - last_capture >= 0.5:
+                # Capture the same current stream inputs used by the engines. Slow HTTP
+                # discovery/label polling in produce() must not stall this recorder.
+                assert tape is not None
+                markets = dict(tape.known_markets)
+                if snapshot:
+                    markets[snapshot.market.slug] = snapshot.market
+                labels: dict[str, Any] = {}
+                for slug, market in markets.items():
+                    final = data.final_reference(market)
+                    if final is not None:
+                        labels[slug] = {
+                            "condition_id": market.condition_id,
+                            "opening": str(final[0]),
+                            "final": str(final[1]),
+                        }
+                    elif slug in tape.label_cache and data.final_reference_conflicted(market):
+                        labels[slug] = None
+                capture_ms = int(time.time() * 1000)
+                tape.append(
+                    capture_ms,
+                    replace(snapshot, now_ms=capture_ms) if snapshot else None,
+                    labels=labels,
+                    code="CAPTURED" if snapshot else "NO_CURRENT_SNAPSHOT",
+                )
+                last_capture = loop.time()
             for name, broker, engine, ledger in zip(
                 selected, brokers, engines, ledgers, strict=True
             ):
@@ -359,6 +392,8 @@ async def run_paper(
             finally:
                 for ledger in ledgers:
                     ledger.close()
+                if tape is not None:
+                    tape.close()
                 master.close()
                 for sig in (signal.SIGINT, signal.SIGTERM):
                     loop.remove_signal_handler(sig)

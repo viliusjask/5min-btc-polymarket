@@ -234,3 +234,15 @@ noncooperative code requires external termination followed by journal inspection
   separate the stale-price deadline from connection recycling, so a brief delay does not itself
   create a resubscription gap. Current dashboard readiness must use the newest sampling check,
   not lifetime rejection counts or an older strategy's last valid sample.
+# Experiment replay and recovery (September 7, 2026)
+
+- Symptom: an 84-variant replay takes 2.53 seconds per frame and cannot keep up. Cause:
+  one FULL disk synchronization per derived variant journal. Keep the shared input tape
+  FULL; only reproducible paper caches use NORMAL with one atomic accounting/cursor frame.
+  An active synthetic replay then took 0.085 seconds/frame. Verify lost cache suffix recovery
+  while the study/other variants are farther ahead. Never apply this shortcut to live journals.
+- Exact recording must run with current stream snapshots, separately from awaited HTTP
+  metadata discovery; otherwise a metadata timeout silently determines replay cadence.
+- A restarted adapter's missing official label is not a contradiction. Preserve the recorded
+  label until explicit conflicting evidence arrives. Rotate tape market recovery within the
+  existing six-market adapter bound; retaining every captured round would eventually fail.

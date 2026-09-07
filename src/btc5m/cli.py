@@ -184,6 +184,36 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Development-verified BTC5m experiment; funded execution remains unverified.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    lab = commands.add_parser(
+        "lab", allow_abbrev=False, help="paper-only parameter studies on a common recorded tape"
+    )
+    lab.add_argument("lab_action", choices=("run", "freeze", "report"))
+    lab.add_argument(
+        "--runtime",
+        type=Path,
+        required=True,
+        help="separate experiment directory, usually PAPER_RUNTIME/lab",
+    )
+    lab.add_argument(
+        "--source", type=Path, help="existing paper runtime's capture.sqlite; required for run"
+    )
+    lab.add_argument("--config", type=Path, default=default_config())
+    lab.add_argument("--continuous", action="store_true", help="keep consuming new recorded frames")
+    lab.add_argument(
+        "--dense",
+        action="store_true",
+        default=None,
+        help="new study only: all integer Momentum leads 1–100",
+    )
+    lab.add_argument(
+        "--explore-rounds",
+        type=int,
+        help="full rounds before automatic shortlist selection (new study default: 288)",
+    )
+    lab.add_argument(
+        "--variants", help="comma-separated registered IDs to freeze for a future test"
+    )
+    lab.add_argument("--test-rounds", type=int, default=288)
     credentials = commands.add_parser(
         "credentials",
         allow_abbrev=False,
@@ -297,6 +327,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 help="include all safe public observations and raw paired decisions",
             )
     args = parser.parse_args(argv)
+    if args.command == "lab":
+        if args.lab_action == "run" and args.source is None:
+            parser.error("lab run requires --source capture.sqlite")
+        if args.lab_action == "freeze" and not args.variants:
+            parser.error("lab freeze requires --variants")
     if (
         args.command == "doctor"
         and not args.account
@@ -866,6 +901,13 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
 
 
 async def async_main(args: argparse.Namespace) -> int:
+    if args.command == "lab":
+        if args.lab_action == "report":
+            emit(json.loads((args.runtime / "report.json").read_text()))
+            return 0
+        from btc5m.lab import run_lab
+
+        return await run_lab(args)
     if args.command == "credentials":
         return await configure_credentials(args)
     if args.command == "dashboard":

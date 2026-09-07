@@ -552,11 +552,17 @@ def test_restarted_paper_holding_reloads_official_final_even_after_normal_retire
         async with resumed.adapter() as data:
             data.retain_markets((market,))
             assert data.final_reference(market) is None
+            assert not data.final_reference_conflicted(market)
             await data._poll_due()
             assert data.final_reference(market) == (
                 market.reference_price,
                 Decimal("79700.12345678"),
             )
+            resumed.events[market.slug]["eventMetadata"]["finalPrice"] = "79800"
+            resumed.clock.elapsed += 31
+            await data._poll_due()
+            assert data.final_reference_conflicted(market)
+            assert data.final_reference(market) is None
             data.retain_markets(())
             data._retire_rounds()
             assert market.slug not in data._rounds

@@ -1007,6 +1007,7 @@ function render() {
   activity();
 }
 async function refresh() {
+  if (view === "lab") return refreshLab();
   if (view === "live") return refreshLive();
   if (fetching) return;
   fetching = true;
@@ -1060,7 +1061,7 @@ for (const button of document.querySelectorAll("[data-tab]"))
     if (state) activity();
   });
 $("export").addEventListener("click", () => {
-  const snapshot = view === "live" ? liveState : state;
+  const snapshot = view === "live" ? liveState : view === "lab" ? labState : state;
   if (!snapshot) return;
   const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
       type: "application/json",
@@ -1082,17 +1083,19 @@ for (const button of document.querySelectorAll("[data-view]"))
     view = button.dataset.view;
     $("paper-view").hidden = view !== "paper";
     $("live-view").hidden = view !== "live";
+    $("lab-view").hidden = view !== "lab";
     $("view-title").textContent =
-      view === "paper" ? "Paper observatory" : "Real account";
+      view === "paper" ? "Paper observatory" : view === "lab" ? "Strategy experiments" : "Real account";
     $("view-badge").textContent =
-      view === "paper" ? "SIMULATED · READ ONLY" : "REAL FUNDS · READ ONLY";
+      view === "live" ? "REAL FUNDS · READ ONLY" : "SIMULATED · READ ONLY";
     $("tooltip").hidden = true;
     for (const b of document.querySelectorAll("[data-view]")) {
       b.classList.toggle("selected", b === button);
       b.setAttribute("aria-pressed", String(b === button));
     }
     if (view === "paper") render();
-    else renderLive();
+    else if (view === "live") renderLive();
+    else renderLab();
     refresh();
   });
 

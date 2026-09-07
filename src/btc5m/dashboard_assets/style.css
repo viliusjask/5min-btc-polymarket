@@ -27,6 +27,17 @@
 * {
   box-sizing: border-box;
 }
+.lab-filters { flex-wrap: wrap; gap: 14px; }
+.lab-cell { width: 100%; min-width: 94px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lab-select { text-align: left; border-color: transparent; background: transparent; }
+.lab-select.selected, .lab-cell.selected { border-color: var(--teal); background: #173a37; }
+.lab-variant-table { max-height: 430px; overflow: auto; }
+.lab-funnel { display: grid; gap: 9px; padding-top: 12px; }
+.lab-funnel-row { display: flex; justify-content: space-between; gap: 14px; padding: 8px 12px; border-radius: 5px; background: #1b293b; }
+.lab-diagonal { stroke: #8798af; stroke-dasharray: 5 5; fill: none; }
+.lab-interval { stroke: #4cdbb4; opacity: .5; stroke-width: 2; }
+#lab-forecast-metrics table { font-size: 12px; }
+#lab-parameters, #lab-phase-note, #lab-limits { overflow-wrap: anywhere; }
 body {
   margin: 0;
   background: var(--bg);
@@ -718,7 +729,13 @@ footer p:first-child {
 }
 @media (max-width: 600px) {
   .masthead {
-    height: 86px;
+    height: auto;
+    min-height: 112px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
   }
   .brand-mark {
     display: none;
@@ -731,6 +748,8 @@ footer p:first-child {
   }
   .header-actions {
     gap: 0;
+    width: 100%;
+    justify-content: space-between;
   }
   .metrics {
     grid-template-columns: repeat(2, 1fr);

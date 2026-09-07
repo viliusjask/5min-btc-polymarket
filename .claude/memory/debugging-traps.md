@@ -246,3 +246,10 @@ noncooperative code requires external termination followed by journal inspection
 - A restarted adapter's missing official label is not a contradiction. Preserve the recorded
   label until explicit conflicting evidence arrives. Rotate tape market recovery within the
   existing six-market adapter bound; retaining every captured round would eventually fail.
+- New passive replay could mark a round clean despite a transport-generation change between
+  timely capture frames. Capture continuity and execution continuity are separate evidence.
+  Propagate every broker `paper_uncertainty` event to round quality, not only capture-gap flags.
+  The regression changes the stream generation while frame cadence remains healthy.
+- Collateral split inventory has no opening BUY intent. Resolve/claim and portfolio accounting
+  must recover its originating session directly from the conversion-backed position. Keep
+  conversions separate from fills and use maker sales for the split strategy's fill-rate count.

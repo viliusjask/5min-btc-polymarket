@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from btc5m.config import STRATEGIES, Config
+from btc5m.cross_duration import CrossDuration
 from btc5m.engine import Engine
 from btc5m.lab_tape import Tape
 from btc5m.ledger import Ledger, LedgerError
@@ -140,11 +141,17 @@ async def run_paper(
     tasks: list[asyncio.Task[Any]] = []
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    data = MarketData(config, enhanced=True, observer=master.record_observation)
+    data = MarketData(
+        config,
+        enhanced=True,
+        observer=master.record_observation,
+        capture_flow=getattr(args, "capture_flow", False),
+    )
     code = 0
     lifecycle_started = False
     lifecycle_status = "failed"
     tape: Tape | None = None
+    scanner: CrossDuration | None = None
     try:
         tape = Tape(path / "capture.sqlite")
         manifest = {
@@ -212,6 +219,9 @@ async def run_paper(
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
         await data.__aenter__()
+        if getattr(args, "capture_flow", False):
+            scanner = CrossDuration(data, config)
+            tasks.append(asyncio.create_task(scanner.run()))
         now = int(time.time() * 1000)
         if previous_ms is not None and now - previous_ms[0] > config.data.max_price_age_ms:
             for broker in brokers:
@@ -333,11 +343,15 @@ async def run_paper(
                     elif slug in tape.label_cache and data.final_reference_conflicted(market):
                         labels[slug] = None
                 capture_ms = int(time.time() * 1000)
+                research = data.streams.research_frame(capture_ms) if data.streams else None
+                if research is not None and scanner is not None:
+                    research["cross_duration"] = scanner.latest
                 tape.append(
                     capture_ms,
                     replace(snapshot, now_ms=capture_ms) if snapshot else None,
                     labels=labels,
                     code="CAPTURED" if snapshot else "NO_CURRENT_SNAPSHOT",
+                    research=research,
                 )
                 last_capture = loop.time()
             for name, broker, engine, ledger in zip(

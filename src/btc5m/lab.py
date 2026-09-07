@@ -19,6 +19,7 @@ from typing import Any
 
 from btc5m.config import Config, load_config
 from btc5m.domain import Side
+from btc5m.flow_signals import order_flow_variants
 from btc5m.lab_replay import Replay
 from btc5m.lab_report import replay_report
 from btc5m.lab_scoring import score_forecasts
@@ -42,6 +43,12 @@ SEMANTIC_FILES = (
     "lab_replay.py",
     "lab_report.py",
     "lab_scoring.py",
+    "order_flow.py",
+    "flow_signals.py",
+    "cross_duration.py",
+    "pairing.py",
+    "paper_conversions.py",
+    "split_engine.py",
 )
 
 
@@ -61,6 +68,8 @@ def _database(path: Path) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS forecasts(slug TEXT PRIMARY KEY, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS phases(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS research(frame_id INTEGER PRIMARY KEY, at_ms INTEGER NOT NULL, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS scans(at_ms INTEGER PRIMARY KEY, data TEXT NOT NULL);
     """)
     return db
 
@@ -122,6 +131,7 @@ class Study:
         dense: bool | None = None,
         variants: tuple[Variant, ...] | None = None,
         explore_rounds: int | None = None,
+        suite: str | None = None,
     ) -> None:
         self.path = runtime.resolve()
         self.path.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -146,20 +156,37 @@ class Study:
                     or variants is not None
                     and json.loads(encode([v.record() for v in variants]))
                     != self.manifest["variants"]
+                    or suite is not None
+                    and suite != self.manifest.get("suite", "directional")
                 ):
                     raise ValueError("LAB_TRIALS_CHANGED_USE_NEW_STUDY")
             else:
                 explore_rounds = 288 if explore_rounds is None else explore_rounds
                 dense = bool(dense)
+                suite = suite or "directional"
+                if suite not in ("directional", "order-flow") or suite == "order-flow" and dense:
+                    raise ValueError("INVALID_LAB_SUITE")
                 if type(explore_rounds) is not int or not 12 <= explore_rounds <= 2016:
                     raise ValueError("EXPLORE_ROUNDS_MUST_BE_12_TO_2016")
+                source_start = 0
+                if suite == "order-flow":
+                    first_id = self.tape.db.execute(
+                        "SELECT value FROM meta WHERE key='research_first_frame'"
+                    ).fetchone()
+                    if first_id is None:
+                        raise ValueError("FLOW_RECORDING_REQUIRED_START_PAPER_WITH_CAPTURE_FLOW")
+                    source_start = int(first_id[0]) - 1
                 first = self.tape.db.execute(
-                    "SELECT now_ms FROM frames ORDER BY id LIMIT 1"
+                    "SELECT now_ms FROM frames WHERE id>? ORDER BY id LIMIT 1", (source_start,)
                 ).fetchone()
                 stamp = first[0] if first else int(time.time() * 1000)
                 start = (stamp // 300000 + 1) * 300000
                 selected = (
-                    variants if variants is not None else default_variants(config, dense=dense)
+                    variants
+                    if variants is not None
+                    else order_flow_variants(config)
+                    if suite == "order-flow"
+                    else default_variants(config, dense=dense)
                 )
                 if not selected or len({v.ident for v in selected}) != len(selected):
                     raise ValueError("LAB_REQUIRES_UNIQUE_REGISTERED_VARIANTS")
@@ -167,6 +194,8 @@ class Study:
                     encode(
                         {
                             "version": 1,
+                            "suite": suite,
+                            "source_start": source_start,
                             "environment": "paper-lab",
                             "source": str(source.resolve()),
                             "tape_identity": self.tape.identity,
@@ -211,7 +240,7 @@ class Study:
                 self.db.execute(
                     "INSERT OR IGNORE INTO phases VALUES (?,?)", ("explore", encode(exploration))
                 )
-            self.cursor = int(self._meta("cursor") or 0)
+            self.cursor = int(self._meta("cursor") or self.manifest.get("source_start", 0))
             self.now_ms = int(self._meta("now_ms") or 0)
             self.labels = self.tape.labels_at(self.cursor)
             self.phases: list[dict[str, Any]] = []
@@ -255,6 +284,12 @@ class Study:
                             )
                         runner.cursor = phase["source_highwater"]
                         runner.labels = self.tape.labels_at(runner.cursor)
+                    elif runner.cursor == 0 and self.manifest.get("source_start", 0):
+                        runner.cursor = self.manifest["source_start"]
+                        runner.labels = self.tape.labels_at(runner.cursor)
+                        with runner.ledger.db:
+                            runner.ledger._set("lab_cursor", str(runner.cursor))
+                            runner.ledger._set("lab_labels", encode(runner.labels))
                     self.runners[key] = runner
 
     def _forecast(self, frame: Frame, cache: Valuations | None) -> None:
@@ -338,6 +373,17 @@ class Study:
             if frame.ident > self.cursor:
                 with self.db:
                     self._forecast(frame, cache)
+                    if frame.research is not None and self.manifest.get("suite") == "order-flow":
+                        self.db.execute(
+                            "INSERT INTO research VALUES (?,?,?)",
+                            (frame.ident, frame.now_ms, encode(frame.research.get("flow", {}))),
+                        )
+                        scan = frame.research.get("cross_duration")
+                        if scan is not None:
+                            self.db.execute(
+                                "INSERT OR IGNORE INTO scans VALUES (?,?)",
+                                (scan["received_ms"], encode(scan)),
+                            )
                     self.db.execute(
                         "INSERT OR REPLACE INTO meta VALUES ('cursor',?)", (str(frame.ident),)
                     )
@@ -392,6 +438,7 @@ class Study:
             encode(
                 {
                     "environment": "paper-lab",
+                    "suite": self.manifest.get("suite", "directional"),
                     "status": "running",
                     "generated_ms": int(time.time() * 1000),
                     "as_of_ms": self.now_ms,
@@ -402,6 +449,7 @@ class Study:
                     "explore_end_ms": self.manifest["explore_end_ms"],
                     "phases": phases,
                     "forecasts": score_forecasts(forecasts),
+                    "research": self.research_report(),
                     "limitations": [
                         "Paper execution on recorded public inputs; no venue orders. Independent variants cannot have their PnL added together.",
                         "Same $100 starting capital and fixed trade budget, with existing daily/session loss guards; cash is not replenished.",
@@ -413,6 +461,32 @@ class Study:
                 }
             )
         )
+
+    def research_report(self) -> dict[str, Any] | None:
+        if self.manifest.get("suite") != "order-flow":
+            return None
+        flow = self.db.execute(
+            "SELECT data FROM research ORDER BY frame_id DESC LIMIT 1"
+        ).fetchone()
+        scans = self.db.execute("SELECT data FROM scans ORDER BY at_ms DESC LIMIT 50").fetchall()
+        reasons = {
+            code: count
+            for code, count in self.db.execute(
+                "SELECT json_extract(data,'$.status'),COUNT(*) FROM scans GROUP BY json_extract(data,'$.status')"
+            )
+        }
+        return {
+            "flow": json.loads(flow[0]) if flow else None,
+            "scanner": {
+                "checks": sum(reasons.values()),
+                "reasons": reasons,
+                "latest": [
+                    {k: v for k, v in json.loads(r[0]).items() if k != "inputs"} for r in scans
+                ],
+                "candidates": reasons.get("QUOTE_CANDIDATE", 0),
+                "execution": "not_attempted",
+            },
+        }
 
     def auto_freeze(self) -> dict[str, Any] | None:
         if self._meta("auto_frozen") or self.now_ms < self.manifest["explore_end_ms"]:
@@ -484,7 +558,12 @@ async def run_lab(args: argparse.Namespace) -> int:
         loop.add_signal_handler(sig, stop.set)
     try:
         with Study(
-            args.source, args.runtime, config, dense=args.dense, explore_rounds=args.explore_rounds
+            args.source,
+            args.runtime,
+            config,
+            dense=args.dense,
+            explore_rounds=args.explore_rounds,
+            suite=args.suite,
         ) as study:
             notify("READY=1\nSTATUS=Paper experiment worker running")
             last_report = 0.0

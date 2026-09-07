@@ -135,7 +135,11 @@ class PaperBroker:
             raise BrokerError("STALE_BOOK")
         if intent.quantity < market.min_order_size:
             raise BrokerError("BELOW_VENUE_MINIMUM")
-        if intent.passive and (not book.asks or intent.price_limit >= book.asks[0].price):
+        if intent.passive and (
+            (not book.asks or intent.price_limit >= book.asks[0].price)
+            if intent.side == "BUY"
+            else (not book.bids or intent.price_limit <= book.bids[0].price)
+        ):
             raise BrokerError("PASSIVE_QUOTE_WOULD_CROSS")
         payload = json.dumps(
             {
@@ -343,10 +347,16 @@ class PaperBroker:
                 book is not None
                 and min(book.timestamp_ms, book.received_ms) >= state["activation_ms"]
             ):
-                if book.asks and order.price_limit >= book.asks[0].price:
+                crossing = (
+                    (book.asks and order.price_limit >= book.asks[0].price)
+                    if order.side == "BUY"
+                    else (book.bids and order.price_limit <= book.bids[0].price)
+                )
+                if crossing:
                     state.update(terminal=True, terminal_reason="PAPER_POST_ONLY_REJECTED")
                     return
-                ahead = sum((x.size for x in book.bids if x.price == order.price_limit), D(0))
+                levels = book.bids if order.side == "BUY" else book.asks
+                ahead = sum((x.size for x in levels if x.price == order.price_limit), D(0))
                 state.update(
                     # Trade prices already determine whether better bid levels
                     # were reached; track only same-price priority here.
@@ -368,9 +378,11 @@ class PaperBroker:
                 else order.market.up_token
             )
             for trade in streams.trades:
-                if trade.token_id == order.token_id and trade.side == "SELL":
+                direct_side = "SELL" if order.side == "BUY" else "BUY"
+                complement_side = "BUY" if order.side == "BUY" else "SELL"
+                if trade.token_id == order.token_id and trade.side == direct_side:
                     route, price = "direct", trade.price
-                elif trade.token_id == opposite and trade.side == "BUY":
+                elif trade.token_id == opposite and trade.side == complement_side:
                     # A BUY Up bid also matches BUY Down when their prices sum
                     # to at least $1 (the exchange mints a complete binary pair).
                     route, price = "complement", 1 - trade.price
@@ -380,7 +392,11 @@ class PaperBroker:
                     trade.identity in seen
                     or trade.generation != state["generation"]
                     or trade.condition_id != order.market.condition_id
-                    or price > order.price_limit
+                    or (
+                        price > order.price_limit
+                        if order.side == "BUY"
+                        else price < order.price_limit
+                    )
                     # Same-timestamp trades may already be reflected in the
                     # activation book. Require demonstrably subsequent volume.
                     or trade.timestamp_ms
@@ -409,7 +425,10 @@ class PaperBroker:
                 prior = max(D(value) for value in flow.values())
                 flow[route] = str(D(flow[route]) + trade.quantity)
                 volume = max(D(value) for value in flow.values()) - prior
-                if volume > 0 and price < order.price_limit:
+                through = (
+                    price < order.price_limit if order.side == "BUY" else price > order.price_limit
+                )
+                if volume > 0 and through:
                     # A trade through our bid demonstrates that price priority
                     # passed this level. Its old displayed queue is no longer
                     # ahead. Intercept only the observed volume, at our bid;

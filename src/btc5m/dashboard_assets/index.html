@@ -32,6 +32,7 @@
     </header>
     <main>
       <div id="lab-view" hidden>
+        <label class="select-label">Experiment study<select id="lab-suite"><option value="directional">Original parameter study</option><option value="order-flow">Order flow and pair construction</option></select></label>
         <div class="statusbar"><strong id="lab-status">Loading experiments…</strong><span id="lab-updated"></span></div>
         <div id="lab-error" class="error" role="alert" hidden></div>
         <section class="insight"><span class="insight-mark">i</span><div><h2>Find evidence, then test it on later rounds.</h2><p id="lab-intro">Each variant has its own paper wallet, using the same recorded inputs and execution rules. These balances are separate from the six original portfolios.</p></div></section>
@@ -43,14 +44,16 @@
           </div>
           <p id="lab-phase-note" class="caption"></p>
           <section id="lab-metrics" class="metrics" aria-label="Experiment study metrics"></section>
+          <section id="lab-research" hidden><section id="lab-flow-metrics" class="metrics" aria-label="Recorded exchange flow and cross-duration scanner"></section><section class="panel"><h3>Five-minute / fifteen-minute quote scanner</h3><p class="caption">These are price checks, not trades or earned profit. A candidate needs both protected orders to fill. Compatible expiry windows occur during the final five minutes of each fifteen-minute market.</p><div id="lab-scanner" class="table-wrap"></div></section></section>
           <div class="chart-grid">
-            <section class="panel"><div class="panel-heading"><h3>Momentum parameter map</h3><span class="unit">LEAD × ENTRY WINDOW</span></div><div id="lab-heatmap" class="table-wrap"></div><p class="caption">Click a cell to inspect the variant. The second number is usable completed rounds. Zero with no completed rounds is not evidence of break-even trading.</p></section>
+            <section id="lab-momentum-panel" class="panel"><div class="panel-heading"><h3>Momentum parameter map</h3><span class="unit">LEAD × ENTRY WINDOW</span></div><div id="lab-heatmap" class="table-wrap"></div><p class="caption">Click a cell to inspect the variant. The second number is usable completed rounds. Zero with no completed rounds is not evidence of break-even trading.</p></section>
             <section class="panel"><div class="panel-heading"><h3>Does the probability model beat the market?</h3><span class="unit">ONE FORECAST PER ROUND</span></div><div id="lab-forecast-metrics"></div><div id="lab-calibration" class="chart"></div><p id="lab-forecast-note" class="caption"></p></section>
           </div>
           <section class="panel activity"><div class="panel-heading"><h3>Every registered variant</h3><span id="lab-variant-count" class="unit"></span></div><div id="lab-variants" class="table-wrap lab-variant-table"></div></section>
           <section class="workspace"><div class="section-heading"><div><span class="eyebrow">INSPECT THE MECHANISM</span><h2 id="lab-detail-title">Select a variant</h2></div><span id="lab-evidence" class="badge"></span></div><p id="lab-parameters" class="caption"></p><section id="lab-wallet" class="metrics"></section><div class="chart-grid"><section class="panel"><h3>Paper equity</h3><div id="lab-equity" class="chart"></div><p id="lab-equity-note" class="caption"></p></section><section class="panel"><h3>From a signal to a completed trade</h3><div id="lab-funnel" class="lab-funnel"></div><p class="caption">A qualifying screen must survive confirmation and then find protected depth. An order can be accepted without filling.</p></section></div></section>
           <div class="chart-grid"><section class="panel"><h3>Entry checks</h3><div id="lab-reasons" class="table-wrap"></div></section><section class="panel"><h3>Order outcomes</h3><div id="lab-outcomes" class="table-wrap"></div></section></div>
           <section class="panel activity"><div class="panel-heading"><h3>Selected variant's order journal</h3><span class="unit">LATEST 50 · SIMULATED</span></div><div id="lab-orders" class="table-wrap"></div></section>
+          <section id="lab-conversion-panel" class="panel" hidden><h3>Collateral conversions</h3><p id="lab-conversion-note" class="caption"></p><div id="lab-conversions" class="table-wrap"></div></section>
           <footer><p id="lab-limits"></p></footer>
         </div>
       </div>

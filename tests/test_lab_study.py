@@ -10,6 +10,35 @@ from btc5m.lab_tape import Tape
 from btc5m.lab_variants import Variant
 
 
+def test_flow_study_starts_at_research_capture_and_resumes_all_seventeen_wallets(tmp_path):
+    async def run():
+        source, runtime = tmp_path / "capture.sqlite", tmp_path / "flow-lab"
+        snap = make_snapshot()
+        with Tape(source) as tape:
+            tape.append(snap.now_ms - 1000, None)
+            tape.append(snap.now_ms, snap, research={"flow": {"status": "FLOW_WARMUP"}})
+        with Study(source, runtime, Config(), suite="order-flow") as study:
+            assert len(study.runners) == 17
+            assert study.cursor == 1
+            await study.advance()
+            assert study.cursor == 2
+            for runner in study.runners.values():
+                assert runner.ledger.summary().cash == 100
+                assert runner.ledger.db.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
+            report = study.report()
+            assert report["suite"] == "order-flow"
+            assert report["research"]["flow"]["status"] == "FLOW_WARMUP"
+        with Study(source, runtime, Config(), suite="order-flow") as study:
+            assert study.cursor == 2
+            assert len(study.runners) == 17
+            await study.advance()
+            assert study.cursor == 2
+        with pytest.raises(ValueError, match="LAB_TRIALS_CHANGED"):
+            Study(source, runtime, Config(), suite="directional")
+
+    asyncio.run(run())
+
+
 def test_study_records_fixed_forecasts_resumes_and_freezes_only_future_rounds(tmp_path):
     async def run():
         snap = make_snapshot()

@@ -200,6 +200,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     lab.add_argument("--config", type=Path, default=default_config())
     lab.add_argument("--continuous", action="store_true", help="keep consuming new recorded frames")
     lab.add_argument(
+        "--suite",
+        choices=("directional", "order-flow"),
+        help="registered experiment suite; order-flow requires --capture-flow on the paper collector",
+    )
+    lab.add_argument(
         "--dense",
         action="store_true",
         default=None,
@@ -248,6 +253,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         if name in ("observe", "doctor", "run", "paper"):
             timing = command.add_mutually_exclusive_group() if name == "paper" else command
             if name == "paper":
+                command.add_argument(
+                    "--capture-flow",
+                    action="store_true",
+                    help="record public executed volume, exchange depth and trades for new research studies",
+                )
                 timing.add_argument(
                     "--continuous",
                     action="store_true",

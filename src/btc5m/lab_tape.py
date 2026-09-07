@@ -50,6 +50,7 @@ class Frame:
     snapshot: Snapshot | None
     labels: dict[str, Any]
     code: str
+    research: dict[str, Any] | None = None
 
 
 class Tape:
@@ -189,6 +190,7 @@ class Tape:
         *,
         labels: dict[str, Any] | None = None,
         code: str = "CAPTURED",
+        research: dict[str, Any] | None = None,
     ) -> int:
         if self.readonly:
             raise TapeError("READ_ONLY")
@@ -196,6 +198,20 @@ class Tape:
             raise TapeError("TAPE_CLOCK_REVERSED")
         if snapshot and snapshot.now_ms != now_ms:
             raise TapeError("TAPE_CLOCK_MISMATCH")
+
+        def receipts(value: Any) -> None:
+            if isinstance(value, dict):
+                if "received_ms" in value and (
+                    type(value["received_ms"]) is not int or value["received_ms"] > now_ms
+                ):
+                    raise TapeError("TAPE_FUTURE_RECEIPT")
+                for child in value.values():
+                    receipts(child)
+            elif isinstance(value, list | tuple):
+                for child in value:
+                    receipts(child)
+
+        receipts(research)
         try:
             with self.db:
                 raw: dict[str, Any] | None = None
@@ -227,7 +243,9 @@ class Tape:
                         "INSERT OR REPLACE INTO markets VALUES (?,?)",
                         (snapshot.market.slug, encode(raw["market"])),
                     )
-                payload = zlib.compress(encode({"snapshot": raw, "code": code}).encode(), 1)
+                payload = zlib.compress(
+                    encode({"snapshot": raw, "code": code, "research": research}).encode(), 1
+                )
                 cursor = self.db.execute(
                     "INSERT INTO frames(now_ms,slug,payload,checksum) VALUES (?,?,?,?)",
                     (
@@ -239,6 +257,11 @@ class Tape:
                 )
                 ident = cursor.lastrowid
                 assert ident is not None
+                if research is not None:
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO meta VALUES ('research_first_frame',?)",
+                        (str(ident),),
+                    )
                 updates = {
                     k: v
                     for k, v in (labels or {}).items()
@@ -307,7 +330,7 @@ class Tape:
                         "SELECT slug,data FROM labels WHERE frame_id=?", (ident,)
                     )
                 }
-                yield Frame(ident, now_ms, snap, labels, item["code"])
+                yield Frame(ident, now_ms, snap, labels, item["code"], item.get("research"))
             except (ValueError, KeyError, TypeError, zlib.error) as exc:
                 raise TapeError("TAPE_CORRUPT_FRAME") from exc
             if len(self.points) > 20000:

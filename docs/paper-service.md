@@ -7,7 +7,8 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/limit-sizing` (`fix/limit-sizing`).
+- Collector/dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/order-flow`
+  (`feat/order-flow-experiments`). The original registered lab remains on `.worktrees/experiment-lab`.
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
 - Configuration: `/home/vilius/.config/btc5m/paper.toml` — USD600 allocation, USD5 entry budget,
   USD10 day/session loss allowance per portfolio. The Value-family price floor is disabled and
@@ -72,7 +73,9 @@ grow by several GB/day, so check disk usage and keep independent backups for lon
 ## Reinstall after a checkout change
 
 When the [experiment lab](experiment-lab.md) is enabled, also manage `btc5m-lab.service`.
-Pass `--lab` to the installer below and include that service in the restart command. Its input
+Pass `--lab` only when its registered implementation matches the target checkout.
+For the separate [order-flow study](order-flow.md), use `--order-flow` and manage
+`btc5m-flow-lab.service`; preserve the original lab unit on its registered checkout. Its input
 tape and study registry retain FULL durability; its derived replay journals use recoverable
 WAL/NORMAL caches. The original portfolio journals retain the durability described above.
 An unchanged semantic code identity can resume a registered study after a merge. A code change

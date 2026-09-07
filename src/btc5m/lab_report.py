@@ -25,7 +25,9 @@ def replay_report(replay: Replay, *, before_ms: int | None = None) -> dict[str, 
     rounds = {slug: row for slug, row in result["rounds"].items() if in_window(slug)}
     screens = [row for slug, row in rows.items() if in_window(slug)]
     completed = {
-        slug: row for slug, row in rounds.items() if row["filled"] and not row["unresolved"]
+        slug: row
+        for slug, row in rounds.items()
+        if (row["filled"] or row.get("converted")) and not row["unresolved"]
     }
     clean = {
         slug: row
@@ -55,6 +57,7 @@ def replay_report(replay: Replay, *, before_ms: int | None = None) -> dict[str, 
                 "at_ms": order["created_ms"],
                 "slug": order["market"]["slug"],
                 "side": order["side"],
+                "passive": order["passive"],
                 "outcome_side": order["decision"]["side"] if order["decision"] else None,
                 "limit": order["price_limit"],
                 "principal": order["principal"],
@@ -93,8 +96,19 @@ def replay_report(replay: Replay, *, before_ms: int | None = None) -> dict[str, 
         day = datetime.fromtimestamp(int(slug.rsplit("-", 1)[1]), UTC).date().isoformat()
         days[day] = days.get(day, D(0)) + row["realized_net_pnl"]
     summary = ledger.summary(replay.now_ms)
+    conversions = [
+        json.loads(r[0])
+        for r in ledger.db.execute(
+            "SELECT data FROM measurements WHERE key LIKE 'paper_conversion:%'"
+        )
+    ]
+    conversions = [r for r in conversions if in_window(r["slug"])]
     opening = [o for o in orders if o["side"] == "BUY"]
     filled_opening = [o for o in opening if D(o["filled_shares"]) > 0]
+    maker_sales = [o for o in orders if o["side"] == "SELL" and o["passive"]]
+    filled_sales = [o for o in maker_sales if D(o["filled_shares"]) > 0]
+    entry_orders = maker_sales if variant.signal == "split_sell" else opening
+    filled_entries = filled_sales if variant.signal == "split_sell" else filled_opening
     clean_pnl = sum((r["realized_net_pnl"] for r in clean.values()), D(0))
     realized = sum((r["realized_net_pnl"] for r in rounds.values()), D(0))
     stride = max(1, len(marks) // 240)
@@ -124,6 +138,7 @@ def replay_report(replay: Replay, *, before_ms: int | None = None) -> dict[str, 
             "scenario": variant.scenario,
             "adverse_reference_usd": variant.config.strategy.adverse_reference_usd,
             "latency_ms": variant.config.experiments.paper_latency_ms,
+            "conversion_delay_ms": variant.conversion_delay_ms,
         },
         "cursor": replay.cursor,
         "as_of_ms": replay.now_ms,
@@ -140,6 +155,12 @@ def replay_report(replay: Replay, *, before_ms: int | None = None) -> dict[str, 
         "completed_rounds": len(completed),
         "clean_completed_rounds": len(clean),
         "filled_rounds": sum(r["filled"] for r in rounds.values()),
+        "deployed_rounds": sum(bool(r["filled"] or r.get("converted")) for r in rounds.values()),
+        "conversions": {
+            "splits": sum(r["kind"] == "PAPER_SPLIT" for r in conversions),
+            "merges": sum(r["kind"] == "PAPER_MERGE" for r in conversions),
+            "records": conversions[-50:],
+        },
         "unresolved_rounds": sum(r["unresolved"] for r in rounds.values()),
         "uncertain_rounds": sum(r.get("uncertain", False) for r in screens),
         "observed_rounds": sum(r["screens"] > 0 for r in screens),
@@ -151,9 +172,12 @@ def replay_report(replay: Replay, *, before_ms: int | None = None) -> dict[str, 
             "opening_orders": len(opening),
             "filled_opening_orders": len(filled_opening),
             "sell_orders": len(orders) - len(opening),
+            "maker_sale_orders": len(maker_sales),
+            "filled_maker_sales": len(filled_sales),
             "completed_rounds": len(completed),
         },
-        "fill_rate": len(filled_opening) / len(opening) if opening else None,
+        "fill_rate": len(filled_entries) / len(entry_orders) if entry_orders else None,
+        "fill_rate_basis": "maker_sales" if variant.signal == "split_sell" else "opening_buys",
         "equity": marks[-1][1] if marks else None,
         "observed_drawdown": drawdown if marks else None,
         "missing_equity_marks": missing,

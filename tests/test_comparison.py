@@ -14,7 +14,7 @@ from btc5m.market_data import DataUnavailable
 class AnonymousData:
     streams = None
 
-    def __init__(self, config, *, enhanced, observer):
+    def __init__(self, config, *, enhanced, observer, capture_flow=False):
         assert enhanced
 
     async def __aenter__(self):

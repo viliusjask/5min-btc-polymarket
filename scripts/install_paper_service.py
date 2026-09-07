@@ -19,7 +19,17 @@ def quote(value, *, command=False):
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "$$") + '"'
 
 
-def unit(checkout, runtime, config, *, dashboard=False, lab=False, port=8765, env_file=None):
+def unit(
+    checkout,
+    runtime,
+    config,
+    *,
+    dashboard=False,
+    lab=False,
+    port=8765,
+    env_file=None,
+    order_flow=False,
+):
     if dashboard and lab:
         raise ValueError("select one service role")
     command = [
@@ -41,13 +51,17 @@ def unit(checkout, runtime, config, *, dashboard=False, lab=False, port=8765, en
             "lab",
             "run",
             "--runtime",
-            runtime / "lab",
+            runtime / ("order-flow-lab" if order_flow else "lab"),
             "--config",
             config,
             "--source",
             runtime / "capture.sqlite",
             "--continuous",
         ]
+        if order_flow:
+            command += ["--suite", "order-flow"]
+    elif order_flow and not dashboard:
+        command += ["--capture-flow"]
     if dashboard and env_file:
         command += ["--account", "--env-file", env_file]
     return "\n".join(
@@ -111,6 +125,11 @@ def main():
     parser.add_argument(
         "--lab", action="store_true", help="also enable the public-data experiment worker"
     )
+    parser.add_argument(
+        "--order-flow",
+        action="store_true",
+        help="enable flow capture and a separate btc5m-flow-lab worker; preserve the original lab service",
+    )
     args = parser.parse_args()
     checkout = Path(__file__).resolve().parents[1]
     runtime, config = args.runtime.resolve(), args.config.resolve()
@@ -121,7 +140,7 @@ def main():
         parser.error("paper runtime required")
     if not 1 <= args.port <= 65535:
         parser.error("invalid port")
-    if args.lab and not (runtime / "capture.sqlite").is_file():
+    if (args.lab or args.order_flow) and not (runtime / "capture.sqlite").is_file():
         parser.error("the paper collector must create capture.sqlite before enabling the lab")
     directory = Path.home() / ".config/systemd/user"
     directory.mkdir(parents=True, exist_ok=True)
@@ -129,6 +148,8 @@ def main():
     services = [("btc5m-paper", False, False), ("btc5m-dashboard", True, False)]
     if args.lab:
         services.append(("btc5m-lab", False, True))
+    if args.order_flow:
+        services.append(("btc5m-flow-lab", False, True))
     for name, dashboard, lab in services:
         target = directory / (name + ".service")
         temporary = target.with_suffix(".tmp")
@@ -141,6 +162,7 @@ def main():
                 lab=lab,
                 port=args.port,
                 env_file=args.env_file.resolve() if args.env_file else None,
+                order_flow=args.order_flow and (not lab or name == "btc5m-flow-lab"),
             )
         )
         os.chmod(temporary, 0o600)

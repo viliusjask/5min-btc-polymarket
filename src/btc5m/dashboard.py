@@ -620,7 +620,17 @@ def make_server(
                     return
                 self.respond(200, payload, "application/json")
             elif path == "/api/lab":
-                report = reader.path / "lab" / "report.json"
+                from urllib.parse import parse_qs
+
+                suite = parse_qs(urlsplit(self.path).query).get("suite", ["directional"])
+                if len(suite) != 1 or suite[0] not in ("directional", "order-flow"):
+                    self.respond(400, b'{"error":"UNKNOWN_LAB_SUITE"}', "application/json")
+                    return
+                report = (
+                    reader.path
+                    / ("order-flow-lab" if suite[0] == "order-flow" else "lab")
+                    / "report.json"
+                )
                 if not report.exists():
                     self.respond(
                         200,

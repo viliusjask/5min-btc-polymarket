@@ -60,6 +60,11 @@ class Engine:
     def _evaluate(self, snapshot: Snapshot, config: Config) -> Decision:
         return evaluate(snapshot, config)
 
+    def _pair_decision(
+        self, snapshot: Snapshot, config: Config, positions: tuple[Position, ...]
+    ) -> Decision:
+        return pair_decision(snapshot, config, positions)
+
     def _exit_enabled(self, trigger: str) -> bool:
         return True
 
@@ -324,7 +329,7 @@ class Engine:
                     )
                     live_snapshot = replace(snapshot, now_ms=self._now(intent.created_ms))
                     current = (
-                        pair_decision(
+                        self._pair_decision(
                             live_snapshot, selected_config, self.ledger.active_positions()
                         )
                         if intent.passive
@@ -499,7 +504,7 @@ class Engine:
         if self.preflight is None or not self.preflight.entry_ready:
             return EngineResult("HOLD", "ACCOUNT_NOT_READY")
         current = replace(snapshot, now_ms=self._now(now_ms))
-        decision = pair_decision(current, self._mode_config(mode), positions)
+        decision = self._pair_decision(current, self._mode_config(mode), positions)
         if decision.side is None:
             return EngineResult("HOLD", decision.reason)
         try:

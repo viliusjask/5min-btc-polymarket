@@ -70,6 +70,22 @@ def test_future_receipt_is_not_replayed_as_already_known(tmp_path):
             tape.append(snap.now_ms, snap)
 
 
+def test_optional_research_inputs_round_trip_and_reject_future_receipts(tmp_path):
+    snap = make_snapshot()
+    data = {
+        "version": 1,
+        "exchange": {"trades": [{"received_ms": snap.now_ms, "quantity": "2", "sell": True}]},
+    }
+    with Tape(tmp_path / "capture.sqlite") as tape:
+        tape.append(snap.now_ms, snap, research=data)
+        tape.append(snap.now_ms + 1, None)
+        frames = list(tape.read_after(0))
+        assert frames[0].research == data
+        assert frames[1].research is None
+        with pytest.raises(TapeError, match="FUTURE_RECEIPT"):
+            tape.append(snap.now_ms + 1, None, research={"received_ms": snap.now_ms + 2})
+
+
 def test_unresolved_market_is_retained_across_long_outage_until_official_label(tmp_path):
     path = tmp_path / "capture.sqlite"
     snap = make_snapshot()

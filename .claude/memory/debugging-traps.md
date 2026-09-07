@@ -253,7 +253,8 @@ noncooperative code requires external termination followed by journal inspection
 - Collateral split inventory has no opening BUY intent. Resolve/claim and portfolio accounting
   must recover its originating session directly from the conversion-backed position. Keep
   conversions separate from fills and use maker sales for the split strategy's fill-rate count.
-# 2026-09-07: Ambiguous experiment PnL and gap flags
+
+## 2026-09-07: Ambiguous experiment PnL and gap flags
 
 The default experiment table hid all recorded profit behind a clean-only metric, making
 large reversal gains and missing-data exclusions impossible to reconcile. Always show

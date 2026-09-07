@@ -1,5 +1,14 @@
 # Debugging traps (this project)
 
+## 2026-09-07: A completed capture concealed an unready experiment
+
+Zero orders were summarized without a causal breakdown of the rejection counts. The 38-minute
+capture included development restarts: the 23:29 restart left a 23-second source gap, exceeding
+the 12-second limit inside the 30-minute history window. Later valid short windows still failed
+the long-window gate. Inspect `short_sampling_status`, `long_sampling_status`, actual gaps and
+restart times before presenting zero-trade captures as useful strategy experiments. Show these
+causes in operator-facing monitoring; JSON totals alone do not explain whether the bot is ready.
+
 Format per entry: **Symptom → root cause → how to spot it faster next time → fix.**
 Cross-project traps belong in ~/.claude/memory/debugging-traps.md instead.
 
@@ -120,6 +129,11 @@ order becomes UNKNOWN before cancellation propagates. Do not release ownership w
 can survive. Prompt cancellation acknowledgement and local scheduling/I/O remain explicit limits;
 noncooperative code requires external termination followed by journal inspection/reconciliation.
 # 2026-09-07 extension findings
+
+- A public capture with zero bot orders is observation evidence, not paper performance.
+  The operator read flat zero PnL cards as a broken dashboard. Use "Awaiting first trade",
+  keep the performance curve empty, and explicitly distinguish public market trades from
+  the bot's own simulated fills. Show data gaps separately from elapsed warm-up time.
 
 - Repeated WS book reconnects: an empty ask is reported with best_ask=1, and a single match can
   send a new crossed level before the zero-removal message at the same source timestamp. Keep

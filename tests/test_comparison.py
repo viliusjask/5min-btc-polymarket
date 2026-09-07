@@ -54,7 +54,9 @@ def test_paper_cli_six_ledgers_no_credentials_resume_and_safe_report(tmp_path, m
     assert report["environment"] == "paper"
     assert report["manifest"]["allocation_per_portfolio"] == "16.66"
     assert report["manifest"]["unused_allocation"] == "0.04"
-    assert report["observations"] == report["raw_decisions"] == ()
+    assert report["raw_decisions"] == ()
+    assert all(row["kind"] in ("paper_run", "paper_heartbeat") for row in report["observations"])
+    assert report["observations"][-1]["status"] == "stopped"
     assert all(
         row["simulated_cash"] == 16.66 or str(row["simulated_cash"]) == "16.66"
         for row in report["portfolios"].values()

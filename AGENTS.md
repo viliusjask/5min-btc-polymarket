@@ -32,6 +32,7 @@ uv run --locked btc5m observe --duration 2100 --runtime work/observe-35m/ledger.
 uv run --locked btc5m report --runtime work/observe-35m/ledger.sqlite
 uv run --locked btc5m paper --strategies all --duration 3600 --runtime work/paper-six
 uv run --locked btc5m report --runtime work/paper-six
+uv run --locked btc5m dashboard --runtime work/paper-six --port 8765
 ```
 
 The 35-minute anonymous observe/report path completed on ac32575; final-source 3f49231 doctor/help
@@ -39,6 +40,8 @@ and retrospective report checks also passed. Full final suite 412 passed; indepe
 These are dated evidence, not a substitute for checks after changes. Funded operation remains
 unverified. The six-strategy extension's current checks are in docs/progress.md. Read README.md
 before explicit account/run/reconcile commands; no account setup occurs automatically.
+Dashboard `--account --env-file ...` enables lazy, read-only Real account monitoring; switching
+Paper/Real never authorizes trading. Paper collection runs independently from the dashboard.
 `run --execute --duration ...` is the only trading mode. `scripts/btc5m_ctl.sh` forwards exact CLI
 arguments, never execution consent. Status/report/stop use an explicit runtime path without secrets.
 Live data is common-root `.runtime/<wallet>/ledger.sqlite`; anonymous data is separate. Run and

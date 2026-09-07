@@ -1,4 +1,48 @@
-# Progress: six-strategy extension
+# Progress: paper and real account monitoring
+
+2026-09-07. Branch `feat/paper-dashboard`, worktree `.worktrees/dashboard`, based on the user's
+fork main `c4d4b9b` after the operator merged PRs #2 then #1. Original upstream and feature
+branches remain preserved. This change used the requested single-agent implementation and review.
+
+- Diagnosed the original zero-order capture: the long history had a 25-second sampled gap
+  from a development restart, above the 12-second guard. Separated warm-up, schedule, empty-book,
+  reference and metadata rejections. [Exact counts](research/paper-capture-diagnosis.md).
+- Added local read-only dashboard, six portfolio cards, accounting curves, feed/decision charts,
+  sampling details, order/fill/holding tables, filters and selected-view JSON export. No fills
+  means "Awaiting first trade" and an empty performance curve, not flat-return evidence.
+- Added recorder heartbeat and final lifecycle status. The dashboard and collector run
+  independently, so dashboard work does not repeatedly break the source-history window.
+- Added Paper/Real view switch. Explicit account mode reuses existing no-deploy authentication,
+  Polygon balance reads, public indexed positions, and authenticated order/recent-trade reads.
+  It labels outside-bot activity, unavailable sections, old account snapshots and truncated trade
+  history. Maker records use our wallet's leg. API-key owner fields and signed payloads are omitted.
+  Monitoring cannot start trading, submit/cancel orders, approve, transfer or redeem funds.
+- Started a separate two-hour anonymous run with **USD100 per strategy, USD600 total** under
+  `work/paper-six-100-each-20260907`, using local `work/paper-100-each.toml`. Per-entry budget stays
+  USD5; per-portfolio day/session loss limits stay USD10. Earlier captures are preserved. At
+  the integration check all six had USD100 cash and zero fills while accumulating initial history.
+
+Verification: **489 tests passed in 102.76 seconds**. Ruff lint/format (37 files), mypy (19 source
+files), locked dependency consistency, JavaScript syntax and diff checks passed. New tests cover
+accounting timing, real delayed paper fills, readonly journal access, incremental aggregation,
+heartbeat aging, HTTP isolation, account identity, maker attribution, missing sections and
+credential redaction. After a final dashboard signal-handling correction, all 15 dashboard tests
+passed again in 16.90 seconds, including stopping on the first signal and restoring the handler.
+No runtime dependency was added.
+
+The 45-second anonymous recorder smoke completed with 1,452 journal events, explicit stopped
+status and empty stderr. Browser checks exercised both views, six USD100 cards, mobile width,
+filters, tabs and export without JavaScript errors. Authorized real-account monitoring returned
+all four account sections successfully; no funded bot journal existed. This validates reads and
+display behaviour, not funded execution, profitability or a completed two-hour experiment.
+
+Account projection follows the pinned SDK0.9.0 models and the official
+[trade response contract](https://docs.polymarket.com/trading/clients/l2).
+The `owner` field is an API-key identifier, so it is deliberately absent from dashboard JSON.
+
+---
+
+# Historical record: six-strategy extension
 
 2026-09-07. Branch `feat/six-strategies`, worktree `.worktrees/six-strategies`, based on
 `60615024f1b7fb4a3cc8afe6d606967b00f51a03`. All six policies are implemented and connected to

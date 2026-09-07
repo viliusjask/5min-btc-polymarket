@@ -1,6 +1,7 @@
 "use strict";
 let labState, labFetching = false, labPhase = "explore", labSelection = null;
 let labSuite = "directional";
+let labSection = "overview";
 const labNumber = (v, digits = 3) => number(v) === null ? "—" : Number(v).toFixed(digits);
 const labPercent = (v) => number(v) === null ? "—" : (Number(v) * 100).toFixed(1) + "%";
 
@@ -137,7 +138,8 @@ function labDetail(row, phase) {
 function renderLab() {
   if (view !== "lab" || !labState) return;
   const data = labState, ready = Array.isArray(data.phases);
-  $("lab-content").hidden = !ready;
+  $("lab-content").hidden = !ready || labSection !== "overview";
+  $("strategy-research").hidden = !ready || labSection !== "research";
   if (!ready) { $("lab-status").textContent = "Experiment worker has not published results yet"; return; }
   const stale = Date.now()-data.generated_ms > 30000;
   $("lab-status").textContent = stale ? "Experiment report is stale · saved results retained" : data.status === "stopped" ? "Experiment worker stopped · saved results retained" : "Evaluating shared recorded inputs";
@@ -147,6 +149,7 @@ function renderLab() {
   if (!data.phases.some(p => p.id === labPhase)) labPhase = data.phases[0].id;
   phaseSelect.value = labPhase;
   const phase = data.phases.find(p => p.id === labPhase), variants = phase.variants;
+  if (labSection === "research") { renderResearchControls(data,phase); return; }
   const familyNames = {control:"Controls",momentum:"Momentum thresholds",value:"Value thresholds",buffer:"Model buffers",exit:"Exit rules",feed:"Feed / latency",normalized:"Normalized opening lead",recent:"Recent continuation / reversal",flow:"Executed buying / selling pressure",pairs:"Pair construction",confirmation:"Early signal / later confirmation",split:"Split / sell / merge"};
   const familySelect=$("lab-family"), previousFamily=familySelect.value;
   familySelect.replaceChildren(...["all",...new Set(variants.map(v=>v.family))].map(k=>{const option=node("option","",k==="all"?"All families":familyNames[k]||human(k));option.value=k;return option;}));
@@ -225,7 +228,7 @@ function renderCaptureQuality(q) {
     return [human(component)+" · "+human(code),count(n),labPercent(missing?n/missing:null),explanations[code]||"Validation rejected this input; the original reason is retained in the capture."];
   }), "No rejected snapshot samples in this diagnostic period");
 }
-$("lab-suite").addEventListener("change",()=>{labSuite=$("lab-suite").value;labPhase="explore";labSelection=null;labState=null;$("lab-content").hidden=true;$("lab-status").textContent="Loading selected study…";refreshLab();});
+$("lab-suite").addEventListener("change",()=>{labSuite=$("lab-suite").value;labPhase="explore";labSelection=null;labState=null;$("lab-content").hidden=true;$("strategy-research").hidden=true;researchRequest++;if(researchPending)researchPending.abort();researchPending=null;researchKey=null;researchState=null;$("lab-status").textContent="Loading selected study…";refreshLab();});
 $("lab-phase").addEventListener("change",()=>{labPhase=$("lab-phase").value;labSelection=null;renderLab();});
 $("lab-family").addEventListener("change",()=>{labSelection=null;renderLab();});
 $("lab-metric").addEventListener("change",renderLab);

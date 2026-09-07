@@ -1,4 +1,28 @@
-# Progress: explain experiment evidence and capture failures
+# Progress: strategy performance comparisons
+
+2026-09-07. `feat/research-comparisons`, isolated `.worktrees/research-comparisons`,
+based on PR10's `455e17f`. Single-agent implementation and own review. The user requested
+research tools for drawing conclusions, beyond operational diagnostics.
+
+- Added **Experiments → Strategy research** for both existing registered studies (84+17
+  variants). Individual market profit distributions, typical/average outcomes, removal of
+  the best one/three wins, fee and added-cost sensitivity, fixed entry/exit-condition groups,
+  hourly contributions, same-market comparisons, overlap/correlation, and paired 30/60-minute
+  block resampling use existing accounting. [Methods and practical reading guide](research/strategy-comparisons.md).
+- Reversal/continuation and absorption/continuation comparisons initially match lookback and
+  threshold. Manual comparator, phase and flagged/unflagged selectors are available; JSON
+  export retains the exact selected calculations. No strategy parameters, study definitions,
+  wallet balances, dependencies or funded execution were changed.
+- **642 tests passed in162.67seconds**. After fixed numerical group ordering was added,
+  all14research/dashboard tests passed again. Ruff lint/format, mypy33sources, dependency
+  lock and whitespace checks passed. New cases include complete/incomplete accounting,
+  delayed settlement, dollar conservation, missing rounds/blocks and read-only API boundaries.
+- Desktop and390px browser checks exercised84+17variants, opposite/manual comparisons,
+  every grouping, cohort filtering, downloads, overview return and six original wallets.
+  No JavaScript errors or Real-account requests. Follow-up mobile layout makes the grouping
+  control stack below its heading; long hourly tables scroll inside their panel.
+
+# Previous checkpoint: explain experiment evidence and capture failures
 
 2026-09-07. `fix/research-evidence`, isolated `.worktrees/evidence-audit`, based on
 PR9's `de70bf6`. Single-agent implementation and own review. No new dependency, strategy,

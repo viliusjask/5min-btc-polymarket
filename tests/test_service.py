@@ -32,6 +32,20 @@ def test_lab_service_is_continuous_public_only_and_separate_from_collector(tmp_p
     assert "--env-file" not in content and "--execute" not in content
 
 
+def test_order_flow_worker_has_distinct_runtime_and_collector_records_required_feeds(tmp_path):
+    import runpy
+
+    unit = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/install_paper_service.py")
+    )["unit"]
+    worker = unit(tmp_path, tmp_path / "paper", tmp_path / "config.toml", lab=True, order_flow=True)
+    collector = unit(tmp_path, tmp_path / "paper", tmp_path / "config.toml", order_flow=True)
+    assert '"--suite" "order-flow"' in worker
+    assert "paper/order-flow-lab" in worker
+    assert '"--capture-flow"' in collector
+    assert "--execute" not in worker + collector
+
+
 def test_service_notification_and_atomic_file_preserve_previous_on_failed_write(
     tmp_path, monkeypatch
 ):

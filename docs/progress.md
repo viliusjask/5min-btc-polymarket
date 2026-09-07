@@ -1,4 +1,42 @@
-# Progress: fix unfillable protected cash/share amounts
+# Progress: order-flow and pair experiments
+
+2026-09-07. `feat/order-flow-experiments`, `.worktrees/order-flow`, from merged PR8
+(`687ba4a`). Single-agent implementation and own review; [PR9](https://github.com/viliusjask/5min-btc-polymarket/pull/9).
+Implementation checkpoint `e75adfd`; no funded transactions, credential inspection or new dependencies.
+
+- Implemented the five authorized research ideas as **17 separate USD100 variants plus a
+  quote scanner**. Exact rules, controls and limits are in [order-flow.md](order-flow.md).
+  Public aggregate volume, depth and Polymarket trades are recorded with receipt timestamps.
+  Passive pair replay, delayed split/merge accounting and early-signal state recover atomically.
+- **621 tests passed in164.04seconds**. Ruff lint/format, mypy31sources, dependency-lock and
+  whitespace checks passed. Tests include directional symmetry, common early observations,
+  incompatible cross-duration contracts, queue uncertainty, delayed splits, two sale fills,
+  no-sale cancellation/merge, partial conversion accounting and restart recovery.
+- A300-second public probe recorded **583 frames**. Final-code replay produced nine opening
+  fills across nine directional variants. Split/sell recorded one passive fill and a taker
+  cleanup of the unmatched side. Its realized result was **−USD1.131500**, and a capture gap
+  made that round unsuitable for clean comparison. This is functional execution evidence,
+  not a performance sample. The scanner made275checks with zero protected quote candidates;
+  shared-expiry quotes, unavailable anchors/books and budget/price rejections remained distinct.
+- Desktop and390px browser checks passed with no JavaScript errors: original84variants,
+  new17variants, original six portfolios, study switching and actual conversion records.
+  A second pass used the deployed API. Split conversions and maker-sale fill rates are separate.
+- Continuous collection/dashboard switched to `e75adfd` in **12.719seconds**, retaining all
+  seven original journal sessions, prior fill/accounting/order rows and **12,623 tape frames**.
+  `btc5m-lab.service` stayed on its old process and registered code. Both old and new workers
+  caught up with the same extended tape; missing pre-capture volume was not fabricated.
+- `btc5m-flow-lab.service` is enabled with the existing WSL supervisor arrangement. An actual
+  SIGKILL test restarted it, preserving all17variant journals, cursor12800 and the unchanged
+  registration, without restarting the collector. That new study was still in its excluded
+  partial round and had no fills yet; synthetic restart tests separately cover filled and
+  partially completed conversion lifecycles. The original continuous portfolios remain active.
+
+Local ignored evidence: `work/final-tests.log`, `work/public-flow/capture.sqlite`,
+`work/flow-study-release-check/report.json`, `work/browser-check.log`,
+`work/live-browser-check.log`, `work/final-cutover.json` and `work/flow-restart.json`.
+The operating cheatsheet was updated. Both service-referenced worktrees remain preserved.
+
+# Previous checkpoint: fix unfillable protected cash/share amounts
 
 2026-09-07. `fix/limit-sizing`, isolated `.worktrees/limit-sizing`, based on merged PR6
 (`11f80d1`). Single-agent diagnosis/implementation. No new dependencies or funded operations.

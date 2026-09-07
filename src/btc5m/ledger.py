@@ -446,18 +446,9 @@ class Ledger:
             raise LedgerError("INVALID_ENTRY")
         reserve = decision.max_total_reserved
         risk = self.config.risk
-        if reserve > risk.trade_budget_usd or reserve > risk.allocation_usd:
-            raise LedgerError("ALLOCATION_LIMIT")
+        self.check_reservation(reserve, summary)
         if pair and summary.position_risk + reserve > risk.trade_budget_usd:
             raise LedgerError("PAIR_BUDGET_LIMIT")
-        if summary.cash is None or reserve > summary.cash - summary.risk_reserve:
-            raise LedgerError("INSUFFICIENT_CASH")
-        exposure = summary.position_risk + summary.risk_reserve + reserve
-        if (
-            max(D(0), -summary.daily_realized_net_pnl) + exposure > risk.daily_loss_usd
-            or max(D(0), -summary.session_realized_net_pnl) + exposure > risk.session_loss_usd
-        ):
-            raise LedgerError("LOSS_LIMIT")
         prior = self.round_orders(market.slug)
         if (
             risk.max_entries_per_day > 0
@@ -487,6 +478,23 @@ class Ledger:
                 or decision.minimum_receive_shares * decision.price_limit != decision.buy_principal
             ):
                 raise LedgerError("INVALID_PAIR_QUOTE")
+
+    def check_reservation(self, reserve: Decimal, summary: LedgerSummary) -> None:
+        """Common cash/loss limits for order spending and paper collateral conversion."""
+        if self.config is None:
+            raise LedgerError("SESSION_REQUIRED")
+        require_decimal(reserve, "reserve", positive=True)
+        risk = self.config.risk
+        if reserve > risk.trade_budget_usd or reserve > risk.allocation_usd:
+            raise LedgerError("ALLOCATION_LIMIT")
+        if summary.cash is None or reserve > summary.cash - summary.risk_reserve:
+            raise LedgerError("INSUFFICIENT_CASH")
+        exposure = summary.position_risk + summary.risk_reserve + reserve
+        if (
+            max(D(0), -summary.daily_realized_net_pnl) + exposure > risk.daily_loss_usd
+            or max(D(0), -summary.session_realized_net_pnl) + exposure > risk.session_loss_usd
+        ):
+            raise LedgerError("LOSS_LIMIT")
 
     def reserve_entry(
         self, decision: Decision, market: Market, session_id: str, now_ms: int
@@ -548,12 +556,16 @@ class Ledger:
         reason: str,
         session_id: str,
         now_ms: int,
+        *,
+        passive: bool = False,
     ) -> Intent:
         self._write()
         if self.config is None or self._meta("session") != session_id:
             raise LedgerError("SESSION_REQUIRED")
         require_decimal(quantity, "quantity", positive=True)
         require_decimal(price_limit, "price_limit", positive=True)
+        if passive and self.environment != "paper":
+            raise LedgerError("PAPER_ONLY_OPERATION")
         with self.db:
             actual = next(
                 (p for p in self.active_positions() if p.position_id == position.position_id), None
@@ -564,7 +576,13 @@ class Ledger:
                 or actual.quantity != position.quantity
                 or quantity > actual.quantity
                 or price_limit >= 1
-                or self.unresolved_orders()
+                or any(
+                    not passive
+                    or not o.passive
+                    or o.side != "SELL"
+                    or o.position_id == actual.position_id
+                    for o in self.unresolved_orders()
+                )
             ):
                 raise LedgerError("EXIT_EXPOSURE_UNRECONCILED")
             ident = uuid.uuid4().hex
@@ -584,6 +602,7 @@ class Ledger:
                 actual.decision,
                 actual.position_id,
                 outstanding_quantity=quantity,
+                passive=passive,
             )
             self.db.execute(
                 "INSERT INTO intents VALUES (?,NULL,?,?,NULL)",
@@ -870,7 +889,7 @@ class Ledger:
                         replace(pos, status="CLAIMABLE", claimable_value=pos.quantity)
                     )
                 else:
-                    session = self.order(pos.position_id).session_id
+                    session = self.position_session(pos)
                     self.db.execute(
                         "INSERT INTO accounting VALUES (?,?,?,?,?,?)",
                         (
@@ -898,7 +917,7 @@ class Ledger:
                     "INSERT INTO accounting VALUES (?,?,?,?,?,?)",
                     (
                         "paper_claim:" + position.position_id,
-                        self.order(position.position_id).session_id,
+                        self.position_session(position),
                         _day(now_ms),
                         str(position.claimable_value),
                         str(position.claimable_value - position.cost_basis),
@@ -917,6 +936,12 @@ class Ledger:
                         "assumption": "automatic zero-cost simulated redemption",
                     },
                 )
+
+    def position_session(self, position: Position) -> str:
+        session = position.decision.features.get("paper_split_session")
+        if self.environment == "paper" and isinstance(session, str) and session:
+            return session
+        return self.order(position.position_id).session_id
 
     def request_stop(self) -> None:
         self._write()
@@ -1149,6 +1174,13 @@ class Ledger:
 
     def _portfolio_results(self) -> dict[str, Any]:
         orders = {row[0]: _intent(row[1]) for row in self.db.execute("SELECT id,data FROM intents")}
+        positions = {p.position_id: p for p in self.positions()}
+        conversions = {
+            key: json.loads(raw)
+            for key, raw in self.db.execute(
+                "SELECT key,data FROM measurements WHERE key LIKE 'paper_conversion:%'"
+            )
+        }
         mapping = {
             f"{chain}:{tx}:{log}": orders[intent_id]
             for chain, tx, log, intent_id in self.db.execute(
@@ -1162,6 +1194,7 @@ class Ledger:
                 "fees": D(0),
                 "orders": 0,
                 "fills": 0,
+                "conversions": 0,
                 "rounds": {},
                 "open_cost_basis": D(0),
                 "claimable_value": D(0),
@@ -1183,10 +1216,20 @@ class Ledger:
             )
             if saved_order.state not in TERMINAL:
                 by_mode[mode]["rounds"][saved_order.market.slug]["unresolved"] = True
+        for position in positions.values():
+            mode = str(position.decision.features.get("mode", "value"))
+            if mode in by_mode:
+                by_mode[mode]["rounds"].setdefault(
+                    position.market.slug,
+                    {"realized_net_pnl": D(0), "fees": D(0), "unresolved": False, "filled": False},
+                )
         for ident, cash, pnl, fee in self.db.execute("SELECT id,cash,pnl,fee FROM accounting"):
-            order = mapping.get(ident)
+            order: Intent | Position | None = mapping.get(ident)
             if order is None and ident.startswith(("resolution:", "paper_claim:")):
-                order = orders.get(ident.split(":", 1)[1])
+                origin = ident.split(":", 1)[1]
+                order = orders.get(origin) or positions.get(origin)
+            if order is None and ident in conversions:
+                order = positions.get(conversions[ident]["position_ids"][0])
             if order is None:
                 continue
             mode = str(order.decision.features.get("mode", "value")) if order.decision else "value"
@@ -1197,6 +1240,9 @@ class Ledger:
             data["realized_net_pnl"] += D(pnl)
             data["fees"] += D(fee)
             data["fills"] += int(ident in mapping)
+            if ident in conversions:
+                data["conversions"] += 1
+                data["rounds"][order.market.slug]["converted"] = True
             data["rounds"][order.market.slug]["realized_net_pnl"] += D(pnl)
             data["rounds"][order.market.slug]["fees"] += D(fee)
             if ident in mapping:

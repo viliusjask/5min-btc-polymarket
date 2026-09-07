@@ -1,5 +1,6 @@
 "use strict";
 let labState, labFetching = false, labPhase = "explore", labSelection = null;
+let labSuite = "directional";
 const labNumber = (v, digits = 3) => number(v) === null ? "—" : Number(v).toFixed(digits);
 const labPercent = (v) => number(v) === null ? "—" : (Number(v) * 100).toFixed(1) + "%";
 
@@ -30,7 +31,7 @@ function labTable(id, headers, rows, message = "No records yet") {
 }
 function labValue(row, metric) {
   if (metric === "clean_completed_pnl" && !row.clean_completed_rounds) return null;
-  if (metric === "realized_pnl" && !row.filled_rounds) return null;
+  if (metric === "realized_pnl" && !(row.deployed_rounds ?? row.filled_rounds)) return null;
   return number(row[metric]);
 }
 function labFormat(value, metric) {
@@ -101,7 +102,7 @@ function labDetail(row, phase) {
   $("lab-parameters").textContent = p.mode.replaceAll("_"," ") + " · " + p.entry_min_seconds + "–" + p.entry_max_seconds + "s remaining · " + (p.signal === "core" ? "original entry rule" : p.signal + " signal, threshold " + p.signal_threshold) + " · " + p.exit_policy.replaceAll("_"," ") + " exits · " + money(p.stop_per_share) + " absolute stop when enabled · " + p.latency_ms + "ms minimum execution delay · " + (p.scenario === "central" ? "central probability" : "$" + p.adverse_reference_usd + " reference stress") + " · variant " + row.ident;
   labMetrics("lab-wallet", [
     ["PAPER EQUITY", money(row.equity), money(row.cash) + " cash · " + money(row.open_basis) + " held cost"],
-    ["REALIZED PROFIT", row.filled_rounds ? money(row.realized_pnl) : "—", money(row.fees) + " fees · " + row.unresolved_rounds + " unresolved rounds"],
+    ["REALIZED PROFIT", (row.deployed_rounds ?? row.filled_rounds) ? money(row.realized_pnl) : "—", money(row.fees) + " fees · " + row.unresolved_rounds + " unresolved rounds"],
     ["USABLE COMPLETED PROFIT", row.clean_completed_rounds ? money(row.clean_completed_pnl) : "—", row.clean_completed_rounds + " completed · " + row.uncertain_rounds + " uncertain observed rounds"],
     ["OBSERVED DRAWDOWN", money(row.observed_drawdown), row.missing_equity_marks + " missing marks · gaps may hide larger losses"],
   ]);
@@ -112,6 +113,18 @@ function labDetail(row, phase) {
     const line = node("div", "lab-funnel-row");
     line.append(node("span", "", label), node("strong", "", count(row.funnel[key]))); funnel.append(line);
   }
+  const conversions = row.conversions || {splits:0,merges:0,records:[]};
+  const split = p.signal === "split_sell";
+  $("lab-conversion-panel").hidden = !split && !conversions.records.length;
+  if (split) {
+    const line = node("div", "lab-funnel-row");
+    line.append(node("span", "", "Collateral splits · separate from fills"), node("strong", "", count(conversions.splits))); funnel.prepend(line);
+    const sales = node("div", "lab-funnel-row");
+    sales.append(node("span", "", "Filled maker sales / orders"), node("strong", "", count(row.funnel.filled_maker_sales) + " / " + count(row.funnel.maker_sale_orders))); funnel.append(sales);
+    $("lab-parameters").textContent = "Split collateral into equal Up and Down shares; post sell orders on both; cancel and merge matched remnants before exiting any imbalance. Same fixed trade budget. " + p.conversion_delay_ms + "ms simulated conversion delay. Variant " + row.ident;
+  }
+  $("lab-conversion-note").textContent = "Simulated collateral movements, not venue trades. " + (p.conversion_delay_ms ?? 1000) + "ms modeled delay; gas and rebates excluded. Equal token cost allocation is an accounting convention.";
+  labTable("lab-conversions", ["UTC time", "Operation", "Pairs", "Cash movement", "Realized profit"], [...conversions.records].reverse().map(r=>[dateTime(r.received_ms),human(r.kind),labNumber(r.quantity,2),money(r.cash),money(r.pnl)]));
   const reasons = Object.entries(row.reasons).sort((a,b) => b[1]-a[1]).slice(0,10);
   labTable("lab-reasons", ["Reason", "Checks"], reasons.map(([k,v]) => [human(k),count(v)]));
   labTable("lab-outcomes", ["Outcome", "Orders"], Object.entries(row.order_outcomes).map(([k,v]) => [human(k),count(v)]), "No order attempts yet");
@@ -130,6 +143,13 @@ function renderLab() {
   if (!data.phases.some(p => p.id === labPhase)) labPhase = data.phases[0].id;
   phaseSelect.value = labPhase;
   const phase = data.phases.find(p => p.id === labPhase), variants = phase.variants;
+  const familyNames = {control:"Controls",momentum:"Momentum thresholds",value:"Value thresholds",buffer:"Model buffers",exit:"Exit rules",feed:"Feed / latency",normalized:"Normalized opening lead",recent:"Recent continuation / reversal",flow:"Executed buying / selling pressure",pairs:"Pair construction",confirmation:"Early signal / later confirmation",split:"Split / sell / merge"};
+  const familySelect=$("lab-family"), previousFamily=familySelect.value;
+  familySelect.replaceChildren(...["all",...new Set(variants.map(v=>v.family))].map(k=>{const option=node("option","",k==="all"?"All families":familyNames[k]||human(k));option.value=k;return option;}));
+  familySelect.value=[...familySelect.options].some(o=>o.value===previousFamily)?previousFamily:"all";
+  $("lab-momentum-panel").hidden = !variants.some(v=>v.family==="momentum");
+  $("lab-momentum-panel").parentElement.style.gridTemplateColumns = $("lab-momentum-panel").hidden ? "minmax(0, 1fr)" : "";
+  renderFlowResearch(data.research);
   $("lab-phase-note").textContent = phase.kind === "exploratory" ? "Automatic selection after " + dateTime(data.explore_end_ms) + ": up to three positive variants with at least 30 usable completed rounds, plus Value control. That gate is not proof of profitability. The first partial round is excluded from trading." : "Frozen before " + dateTime(phase.start_ms) + "; entry evaluation ends " + dateTime(phase.end_ms) + ". Fresh $100 paper wallets. " + (phase.selection.reason || phase.selection.method) + ". This test's settings cannot change.";
   labMetrics("lab-metrics", [
     ["REGISTERED TRIALS", count(data.trial_count), "All variants retained, including failures"],
@@ -142,7 +162,7 @@ function renderLab() {
   filtered.sort((a,b) => { const av=labValue(a,metric),bv=labValue(b,metric); if(av===null) return bv===null ? a.label.localeCompare(b.label) : 1; if(bv===null)return -1; return (metric==="observed_drawdown" ? av-bv : bv-av)||a.label.localeCompare(b.label); });
   if (!variants.some(v => v.ident === labSelection)) labSelection = (filtered[0] || variants[0])?.ident;
   $("lab-variant-count").textContent = filtered.length + " SHOWN · " + variants.length + " IN THIS PHASE";
-  labTable("lab-variants", ["Variant · click to inspect", "Compared metric", "Usable rounds", "Opening fill rate", "Fees", "Unresolved", "Uncertain"], filtered.map(v => {
+  labTable("lab-variants", ["Variant · click to inspect", "Compared metric", "Usable rounds", "Entry fill rate · buys / maker sales", "Fees", "Unresolved", "Uncertain"], filtered.map(v => {
     const button = node("button", "lab-select"+(labSelection===v.ident?" selected":""), v.label); button.addEventListener("click",()=>labChoose(v.ident));
     return [button,labFormat(labValue(v,metric),metric),count(v.clean_completed_rounds),labPercent(v.fill_rate),money(v.fees),count(v.unresolved_rounds),count(v.uncertain_rounds)];
   }), "No variants in this family for the selected phase");
@@ -154,12 +174,27 @@ function renderLab() {
 async function refreshLab() {
   if(labFetching)return;labFetching=true;
   try {
-    const response=await fetch("/api/lab",{cache:"no-store",signal:AbortSignal.timeout(10000)});
+    const requestedSuite=labSuite;
+    const response=await fetch("/api/lab?suite="+encodeURIComponent(requestedSuite),{cache:"no-store",signal:AbortSignal.timeout(10000)});
     if(!response.ok)throw new Error("Experiment report unavailable. Saved portfolio data has not been reset.");
-    labState=await response.json();$("lab-error").hidden=true;renderLab();
+    const payload=await response.json();
+    if(requestedSuite===labSuite){labState=payload;$("lab-error").hidden=true;renderLab();}
   } catch(error){$("lab-error").hidden=false;$("lab-error").textContent=error.message;}
   finally{labFetching=false;}
 }
+function renderFlowResearch(research) {
+  $("lab-research").hidden = !research;
+  if(!research)return;
+  const flow=research.flow||{}, window30=flow.windows?.["30"]||{}, depth=flow.depth||{}, scanner=research.scanner||{}, valid=window30.status==="VALID"&&flow.status==="VALID";
+  labMetrics("lab-flow-metrics",[
+    ["30s EXECUTED IMBALANCE",valid?labPercent(window30.imbalance):"—", valid?labNumber(window30.buy_quantity,4)+" BTC bought · "+labNumber(window30.sell_quantity,4)+" BTC sold":human(window30.status||flow.status||"FLOW_INPUT_MISSING")],
+    ["RESTING BOOK PRESSURE",depth.status==="VALID"?labPercent(depth.imbalance):"—", "Order sizes, not win probability · "+human(depth.status||"DEPTH_MISSING")+" · receipt clock"],
+    ["PROTECTED QUOTE CANDIDATES",count(scanner.candidates), "Both prices fit the cost bound; no execution attempted"],
+    ["CROSS-DURATION CHECKS",count(scanner.checks),human(scanner.latest?.[0]?.status||"SCANNER_STARTING")],
+  ]);
+  labTable("lab-scanner",["UTC time","Result","Shares per side","Protected cost","Minimum payout if both fill"],(scanner.latest||[]).slice(0,6).map(r=>[dateTime(r.received_ms),human(r.status),r.shares??"—",money(r.protected_cost),money(r.minimum_payout)]));
+}
+$("lab-suite").addEventListener("change",()=>{labSuite=$("lab-suite").value;labPhase="explore";labSelection=null;labState=null;$("lab-content").hidden=true;$("lab-status").textContent="Loading selected study…";refreshLab();});
 $("lab-phase").addEventListener("change",()=>{labPhase=$("lab-phase").value;labSelection=null;renderLab();});
 $("lab-family").addEventListener("change",()=>{labSelection=null;renderLab();});
 $("lab-metric").addEventListener("change",renderLab);

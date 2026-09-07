@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, is_dataclass, replace
 from decimal import Decimal
 from typing import Any, get_type_hints
 
-from btc5m.config import Config
+from btc5m.config import PAIR_STRATEGIES, STRATEGIES, Config
 from btc5m.domain import Decision, Side, Snapshot
 from btc5m.lab_tape import encode
 from btc5m.strategy import FairValue, _quote, _safety_reason, _skip, evaluate, fair_value
@@ -27,12 +27,40 @@ class Variant:
     lookback_seconds: int = 30
     exit_policy: str = "baseline"
     scenario: str = "stress"
+    absorption_max_bps: Decimal = D(1)
+    confirmation_move: Decimal = D(".03")
+    conversion_delay_ms: int = 1000
 
     def __post_init__(self) -> None:
-        if self.config.strategy.mode not in ("momentum", "value", "fast_value", "model_exit"):
-            raise ValueError("LAB_DIRECTIONAL_ONLY")
-        if self.signal not in ("core", "normalized", "continuation", "reversal"):
+        if self.config.strategy.mode not in STRATEGIES:
+            raise ValueError("LAB_STRATEGY_REQUIRED")
+        if self.signal not in (
+            "core",
+            "normalized",
+            "continuation",
+            "reversal",
+            "absorption",
+            "flow_continuation",
+            "pressure_pair",
+            "pressure_confirm",
+            "confirmation_control",
+            "split_sell",
+        ):
             raise ValueError("INVALID_LAB_SIGNAL")
+        if (
+            self.signal in ("pressure_pair", "split_sell")
+            and self.config.strategy.mode not in PAIR_STRATEGIES
+        ):
+            raise ValueError("LAB_PAIR_STRATEGY_REQUIRED")
+        if not self.absorption_max_bps.is_finite() or not 0 <= self.absorption_max_bps <= 100:
+            raise ValueError("INVALID_ABSORPTION_MOVE")
+        if (
+            not self.confirmation_move.is_finite()
+            or not 0 < self.confirmation_move < 1
+            or type(self.conversion_delay_ms) is not int
+            or not 250 <= self.conversion_delay_ms <= 30000
+        ):
+            raise ValueError("INVALID_FLOW_PARAMETERS")
         if self.exit_policy not in ("baseline", "no_stop", "time_only", "settlement", "model"):
             raise ValueError("INVALID_LAB_EXIT")
         if self.scenario not in ("central", "stress"):
@@ -69,6 +97,9 @@ def variant_from(raw: dict[str, Any]) -> Variant:
     fields = {k: v for k, v in raw.items() if k != "ident"}
     fields["config"] = config_from_record(fields["config"])
     fields["threshold"] = D(fields["threshold"])
+    for name in ("absorption_max_bps", "confirmation_move"):
+        if name in fields:
+            fields[name] = D(fields[name])
     variant = Variant(**fields)
     if raw.get("ident") != variant.ident:
         raise ValueError("LAB_VARIANT_ID_MISMATCH")

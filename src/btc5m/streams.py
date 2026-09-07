@@ -18,6 +18,7 @@ from websockets.asyncio.client import connect
 
 from btc5m.config import Config
 from btc5m.domain import Book, Level, PricePoint
+from btc5m.order_flow import OrderFlow
 
 
 class StreamError(ValueError):
@@ -62,6 +63,7 @@ class PublicStreams:
         *,
         clock: Callable[[], float] = time.time,
         observer: Callable[[dict[str, object]], None] | None = None,
+        capture_flow: bool = False,
     ) -> None:
         self.config, self.clock, self.observer = config, clock, observer
         self.tokens: tuple[str, ...] = ()
@@ -78,6 +80,9 @@ class PublicStreams:
         self._market_task: asyncio.Task[None] | None = None
         self._closed = False
         self._last_exchange_logged = -1
+        self.flow = OrderFlow() if capture_flow else None
+        self._depth_task: asyncio.Task[None] | None = None
+        self._research_trades: list[PublicTrade] = []
 
     @property
     def exchange_history(self) -> tuple[PricePoint, ...]:
@@ -91,6 +96,8 @@ class PublicStreams:
         if self._closed or self._exchange_task is not None:
             raise StreamError("INVALID_LIFECYCLE")
         self._exchange_task = asyncio.create_task(self._consume_exchange())
+        if self.flow is not None:
+            self._depth_task = asyncio.create_task(self._consume_depth())
 
     async def select_market(self, tokens: tuple[str, str], condition_id: str) -> None:
         if self.tokens == tokens and self.condition_id == condition_id:
@@ -104,7 +111,9 @@ class PublicStreams:
 
     async def close(self) -> None:
         self._closed = True
-        tasks = [t for t in (self._exchange_task, self._market_task) if t is not None]
+        tasks = [
+            t for t in (self._exchange_task, self._market_task, self._depth_task) if t is not None
+        ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -125,6 +134,8 @@ class PublicStreams:
         if now - stamp > self.config.data.max_price_age_ms:
             raise StreamError("EXCHANGE_STALE")
         point = PricePoint("spot", stamp, now, _decimal(event.get("p")))
+        if self.flow is not None:
+            self.flow.trade(event, now)
         bucket = stamp // 100
         previous = self._exchange.get(bucket)
         if previous is None or previous.timestamp_ms <= stamp:
@@ -199,6 +210,10 @@ class PublicStreams:
                 transaction_hash,
             )
             self.trades.append(trade)
+            if self.flow is not None:
+                if len(self._research_trades) >= 100000:
+                    raise StreamError("RESEARCH_TRADE_BUFFER_LIMIT")
+                self._research_trades.append(trade)
             self._trade_keys.add(identity)
             while self.trades and (
                 len(self.trades) > 20000 or self.trades[0].received_ms < now - 300000
@@ -304,10 +319,55 @@ class PublicStreams:
                 raise
             except Exception as exc:
                 self._exchange.clear()
+                if self.flow is not None:
+                    self.flow.reset_trades("EXCHANGE_DISCONNECTED", int(self.clock() * 1000))
                 self._emit(
                     "stream_unavailable",
                     stream="exchange",
                     code=str(exc) if isinstance(exc, StreamError) else "EXCHANGE_DISCONNECTED",
+                    error_type=type(exc).__name__,
+                )
+                await asyncio.sleep(1)
+
+    def research_frame(self, now_ms: int) -> dict[str, Any] | None:
+        if self.flow is None:
+            return None
+        trades, self._research_trades = self._research_trades, []
+        return {
+            "version": 1,
+            "flow": self.flow.view(now_ms),
+            "exchange": self.flow.drain(),
+            "streams": {
+                "session_id": self.session_id,
+                "generation": self.generation,
+                "books": {k: asdict(v) for k, v in self.books.items()},
+                "pending_books": self.pending_books.copy(),
+                "trades": [asdict(t) for t in trades],
+            },
+        }
+
+    async def _consume_depth(self) -> None:
+        assert self.flow is not None
+        while not self._closed:
+            try:
+                async with connect(
+                    "wss://data-stream.binance.vision/ws/btcusdt@depth20@100ms",
+                    open_timeout=10,
+                    close_timeout=2,
+                    max_size=65536,
+                ) as ws:
+                    while not self._closed:
+                        async with asyncio.timeout(5):
+                            event = json.loads(await ws.recv(), parse_float=Decimal)
+                        self.flow.depth(event, int(self.clock() * 1000))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.flow.reset_depth("DEPTH_DISCONNECTED", int(self.clock() * 1000))
+                self._emit(
+                    "stream_unavailable",
+                    stream="exchange_depth",
+                    code="DEPTH_DISCONNECTED",
                     error_type=type(exc).__name__,
                 )
                 await asyncio.sleep(1)

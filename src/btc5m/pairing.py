@@ -10,7 +10,13 @@ from btc5m.strategy import _safety_reason, _skip, fair_value
 D = Decimal
 
 
-def pair_decision(snapshot: Snapshot, config: Config, positions: tuple[Position, ...]) -> Decision:
+def pair_decision(
+    snapshot: Snapshot,
+    config: Config,
+    positions: tuple[Position, ...],
+    *,
+    preferred_side: Side | None = None,
+) -> Decision:
     market, policy = snapshot.market, config.experiments
     features: dict[str, float | str] = {
         "mode": config.strategy.mode,
@@ -53,6 +59,8 @@ def pair_decision(snapshot: Snapshot, config: Config, positions: tuple[Position,
     p_up = value.probability_up
     spendable = config.risk.trade_budget_usd - sum((p.cost_basis for p in held), D(0))
     choices = (Side.DOWN if imbalance > 0 else Side.UP,) if held else tuple(Side)
+    if not held and preferred_side is not None:
+        choices = (preferred_side,)
     candidates: list[Decision] = []
     for side in choices:
         book = snapshot.up_book if side is Side.UP else snapshot.down_book

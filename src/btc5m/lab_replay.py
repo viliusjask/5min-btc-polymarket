@@ -4,20 +4,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
-from btc5m.config import Config
+from btc5m.config import PAIR_STRATEGIES, Config
 from btc5m.domain import Decision, Market, Side, Snapshot
 from btc5m.engine import Engine
-from btc5m.execution_types import PendingCandidate, Position
-from btc5m.lab_tape import Frame, encode
+from btc5m.execution_types import Intent, PendingCandidate, Position
+from btc5m.flow_signals import flow_side, observe_flow
+from btc5m.lab_tape import Frame, book_from, encode
 from btc5m.lab_variants import Valuations, Variant, evaluate_variant
 from btc5m.ledger import Ledger, LedgerError
+from btc5m.pairing import pair_decision
 from btc5m.paper import PaperBroker
-from btc5m.strategy import _skip, fee_for
+from btc5m.strategy import _quote, _safety_reason, _skip, fee_for
+from btc5m.streams import PublicStreams, PublicTrade
 
 D = Decimal
 
@@ -50,13 +53,76 @@ class LabEngine(Engine):
     cache: Valuations | None = None
     entry_start_ms: int = 0
     entry_end_ms: int | None = None
+    flow: dict[str, Any]
+    signal_state: dict[str, Any]
 
     def _evaluate(self, snapshot: Snapshot, config: Config) -> Decision:
         if snapshot.market.start_s * 1000 < self.entry_start_ms or (
             self.entry_end_ms is not None and snapshot.market.start_s * 1000 >= self.entry_end_ms
         ):
             return _skip(snapshot, "STUDY_ENTRY_WINDOW", {})
+        if config.strategy.mode in PAIR_STRATEGIES:
+            return self._pair_decision(snapshot, config, self.ledger.active_positions())
+        if self.variant.signal in (
+            "absorption",
+            "flow_continuation",
+            "pressure_confirm",
+            "confirmation_control",
+        ):
+            value = (self.cache or Valuations(snapshot)).get(self.variant)
+            safety = _safety_reason(snapshot, config)
+            if safety:
+                return _skip(snapshot, safety, value.features)
+            tau = (snapshot.market.end_s * 1000 - snapshot.now_ms) / 1000
+            if (
+                not config.strategy.momentum_min_seconds
+                <= tau
+                <= config.strategy.momentum_max_seconds
+            ):
+                return _skip(snapshot, "ENTRY_WINDOW", value.features)
+            if value.reason != "VALID":
+                return _skip(snapshot, value.reason, value.features)
+            side, reason, details = flow_side(snapshot, self.variant, self.flow, self.signal_state)
+            features = {**value.features, **details}
+            if side is None:
+                return _skip(snapshot, reason, features, value.probability_up)
+            assert value.probability_up is not None
+            return _quote(
+                snapshot,
+                config,
+                side,
+                snapshot.up_book if side is Side.UP else snapshot.down_book,
+                value.probability_up,
+                value.floors[side],
+                features,
+            )
         return evaluate_variant(snapshot, self.variant, self.cache)
+
+    def _pair_decision(
+        self, snapshot: Snapshot, config: Config, positions: tuple[Position, ...]
+    ) -> Decision:
+        if self.variant.signal != "pressure_pair" or positions:
+            return pair_decision(snapshot, config, positions)
+        side, reason, details = flow_side(snapshot, self.variant, self.flow, self.signal_state)
+        if side is None:
+            return _skip(snapshot, reason, details)
+        decision = pair_decision(snapshot, config, positions, preferred_side=side)
+        return replace(decision, features={**decision.features, **details})
+
+    def _resting_cancel_reason(
+        self, order: Intent, snapshot: Snapshot | None, now_ms: int
+    ) -> str | None:
+        reason = super()._resting_cancel_reason(order, snapshot, now_ms)
+        if (
+            reason
+            or self.variant.signal != "pressure_pair"
+            or snapshot is None
+            or order.decision is None
+            or order.decision.features.get("pair_role") != "OPEN"
+        ):
+            return reason
+        side, _, _ = flow_side(snapshot, self.variant, self.flow, self.signal_state)
+        return None if side is order.decision.side else "OPENING_PRESSURE_LOST"
 
     def _exit_enabled(self, trigger: str) -> bool:
         policy = self.variant.exit_policy
@@ -122,8 +188,19 @@ class Replay:
                 variant.config,
                 clock=lambda: self.now_ms / 1000,
                 final_reference=self.final_reference,
+                streams=PublicStreams(variant.config, clock=lambda: self.now_ms / 1000)
+                if variant.config.strategy.mode in PAIR_STRATEGIES
+                else None,
             )
-            self.engine = LabEngine(
+            # Replay has the exact intervening input sequence after a process restart.
+            # A live source-session change still invalidates passive queue continuity.
+            self.broker.submission_session = "replay:" + tape_identity
+            engine_type = LabEngine
+            if variant.signal == "split_sell":
+                from btc5m.split_engine import SplitEngine
+
+                engine_type = SplitEngine
+            self.engine = engine_type(
                 self.broker,
                 self.ledger,
                 variant.config,
@@ -132,6 +209,8 @@ class Replay:
                 record_screens=False,
             )
             self.engine.variant = variant
+            self.engine.flow = {}
+            self.engine.signal_state = {}
             self.engine.entry_start_ms, self.engine.entry_end_ms = start_ms, end_ms
             self._restore_pending()
         except BaseException:
@@ -146,6 +225,34 @@ class Replay:
                 D(raw["reference_price"]) if raw["reference_price"] is not None else None
             )
         self.engine.pending_candidate = PendingCandidate(**raw) if raw else None
+        self.engine.signal_state = json.loads(self.ledger._meta("lab_signal_state") or "{}")
+        saved = json.loads(self.ledger._meta("lab_streams") or "null")
+        if saved:
+            self._streams(saved, restore=True)
+
+    def _streams(self, raw: dict[str, Any] | None, *, restore: bool = False) -> None:
+        streams = self.broker.streams
+        if streams is None:
+            return
+        if raw is None:
+            streams.invalidate_market("LAB_TRADE_RECORDING_MISSING")
+            streams.trades.clear()
+            return
+        if (
+            restore
+            or streams.session_id != raw["session_id"]
+            or streams.generation != raw["generation"]
+        ):
+            streams.trades.clear()
+        streams.session_id, streams.generation = raw["session_id"], raw["generation"]
+        streams.books = {token: book_from(book) for token, book in raw["books"].items()}
+        streams.pending_books = raw["pending_books"].copy()
+        for row in raw["trades"]:
+            streams.trades.append(
+                PublicTrade(**{**row, "price": D(row["price"]), "quantity": D(row["quantity"])})
+            )
+        while streams.trades and streams.trades[0].received_ms < self.now_ms - 15000:
+            streams.trades.popleft()
 
     def final_reference(self, market: Market) -> tuple[Decimal, Decimal] | None:
         label = self.labels.get(market.slug)
@@ -168,6 +275,21 @@ class Replay:
         )
         if frame.labels:
             self.ledger._set("lab_labels", encode(self.labels))
+        self.ledger._set("lab_signal_state", encode(self.engine.signal_state))
+        if self.broker.streams:
+            streams = self.broker.streams
+            self.ledger._set(
+                "lab_streams",
+                encode(
+                    {
+                        "session_id": streams.session_id,
+                        "generation": streams.generation,
+                        "books": {k: asdict(v) for k, v in streams.books.items()},
+                        "pending_books": streams.pending_books,
+                        "trades": [asdict(t) for t in streams.trades],
+                    }
+                ),
+            )
 
     def _round(self, slug: str) -> dict[str, Any]:
         row = self.ledger.db.execute("SELECT data FROM lab_rounds WHERE slug=?", (slug,)).fetchone()
@@ -203,6 +325,13 @@ class Replay:
         snap = frame.snapshot
         try:
             with self.ledger.db:
+                event_watermark = self.ledger.db.execute(
+                    "SELECT COALESCE(MAX(id),0) FROM events"
+                ).fetchone()[0]
+                research = frame.research or {}
+                self.engine.flow = research.get("flow", {})
+                observe_flow(snap, self.variant, self.engine.flow, self.engine.signal_state)
+                self._streams(research.get("streams"))
                 gap = bool(
                     prior_ms and frame.now_ms - prior_ms > self.variant.config.data.max_price_age_ms
                 )
@@ -235,6 +364,17 @@ class Replay:
                     row["execution"][result.reason] = row["execution"].get(result.reason, 0) + 1
                     row["last_ms"], row["last_reason"] = frame.now_ms, result.reason
                     self._save_round(row)
+                # Transport/queue uncertainty can occur between otherwise timely
+                # capture frames. Propagate the broker's evidence to study quality.
+                for (raw_event,) in self.ledger.db.execute(
+                    "SELECT data FROM events WHERE id>? AND kind='PUBLIC_OBSERVATION' AND json_extract(data,'$.kind')='paper_uncertainty'",
+                    (event_watermark,),
+                ).fetchall():
+                    slug = json.loads(raw_event).get("slug")
+                    if isinstance(slug, str):
+                        row = self._round(slug)
+                        row["uncertain"] = True
+                        self._save_round(row)
                 # Conflicting later official metadata invalidates interpretation, while
                 # preserving cash entries that were legitimately recorded earlier.
                 for slug, label in frame.labels.items():

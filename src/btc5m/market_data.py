@@ -181,6 +181,7 @@ class MarketData:
         monotonic: Callable[[], float] = time.monotonic,
         observer: Callable[[dict[str, object]], None] | None = None,
         enhanced: bool = False,
+        capture_flow: bool = False,
     ) -> None:
         self.config = config
         self._client = client if client is not None else AsyncPublicClient()
@@ -201,7 +202,9 @@ class MarketData:
         self._history_ms = (config.strategy.volatility_long_seconds + 60) * 1000
         self._max_points = (config.strategy.volatility_long_seconds + 60) * 2 + 100
         self.streams = (
-            PublicStreams(config, clock=clock, observer=self._stream_observation)
+            PublicStreams(
+                config, clock=clock, observer=self._stream_observation, capture_flow=capture_flow
+            )
             if enhanced
             else None
         )
@@ -878,21 +881,27 @@ class MarketData:
                 )
                 raise DataUnavailable("INVALID_METADATA") from exc
 
-    def _parse_event(self, event: dict[str, Any], slug: str, start: int) -> dict[str, Any]:
+    def _parse_event(
+        self, event: dict[str, Any], slug: str, start: int, *, duration_seconds: int = 300
+    ) -> dict[str, Any]:
         markets = _array(event.get("markets"))
         if event.get("slug") != slug or len(markets) != 1:
             raise DataUnavailable("WRONG_MARKET")
         market = _mapping(markets[0])
-        if market.get("slug") != slug or ROUND_RE.fullmatch(slug) is None:
+        if (
+            duration_seconds not in (300, 900)
+            or slug != f"btc-updown-{duration_seconds // 60}m-{start}"
+            or market.get("slug") != slug
+        ):
             raise DataUnavailable("WRONG_MARKET")
         if (
             _iso_ms(market.get("eventStartTime")) != start * 1000
-            or _iso_ms(market.get("endDate")) != (start + 300) * 1000
+            or _iso_ms(market.get("endDate")) != (start + duration_seconds) * 1000
         ):
             raise DataUnavailable("WRONG_ROUND_TIME")
         if (
             _iso_ms(event.get("startTime")) != start * 1000
-            or _iso_ms(event.get("endDate")) != (start + 300) * 1000
+            or _iso_ms(event.get("endDate")) != (start + duration_seconds) * 1000
         ):
             raise DataUnavailable("WRONG_ROUND_TIME")
         for raw in (market, event):

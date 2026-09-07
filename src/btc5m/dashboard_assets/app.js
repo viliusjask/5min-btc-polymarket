@@ -191,7 +191,7 @@ function topSummary() {
     .filter((s) => s.at_ms === latestCheck)
     .map((s) => s.features);
   const historyReady = historyChecks.some(
-    (f) => f.short_sampling_status === "VALID" && f.long_sampling_status === "VALID",
+    (f) => f.short_sampling_status === "VALID" && ["VALID", "NOT_REQUIRED"].includes(f.long_sampling_status),
   );
   const gap = !historyReady && historyChecks.some(
     (f) => [f.short_sampling_status, f.long_sampling_status].some(
@@ -217,6 +217,9 @@ function topSummary() {
       "Recorded market trades are other participants' activity. Our six bots have not executed a paper trade yet. " +
       $("insight-body").textContent;
   const legacyOrders = sum(p, "legacy_matching_orders");
+  if (state.policy_change?.reason === "RECENT_MOMENTUM_AND_EXECUTION_FIXES") {
+    $("insight-body").textContent += ` Policy updated ${new Date(state.policy_change.at_ms).toISOString().replace("T", " ").slice(0, 19)} UTC: Momentum now follows recent movement; pair funding/timeouts and Model exit freshness were corrected. Balances and loss limits were preserved. Totals include both earlier and corrected policies; they are not a result for the new policy alone.`;
+  }
   if (legacyOrders > 0) {
     $("insight-body").textContent =
       $("insight-body").textContent +
@@ -705,6 +708,10 @@ function feedHealth() {
   );
   if (features.long_sampling_status) {
     for (const label of ["short", "long"]) {
+      if (features[label + "_sampling_status"] === "NOT_REQUIRED") {
+        h.append(node("div", "", "Long history and terminal probability: not required for recent Momentum."));
+        continue;
+      }
       const row = node(
         "div",
         "",
@@ -725,12 +732,15 @@ function feedHealth() {
         "No sampling check was reached in this capture; earlier guards prevented it.",
       ),
     );
+  if (features.momentum_signal === "recent_continuation" && features.momentum_signal_z !== undefined) {
+    h.append(node("div", "", `Recent ${features.momentum_elapsed_seconds}s move: $${features.momentum_recent_move_usd} · relative size ${Number(features.momentum_signal_z).toFixed(2)} / ${features.momentum_required_z} required. This measures movement, not win probability.`));
+  }
   if (state.thresholds)
     h.append(
       node(
         "div",
         "",
-        `Recorded configuration matches: ${state.thresholds.history_seconds / 60}m history · intervals above ${state.thresholds.max_gap_ms / 1000}s consume the gap budget · ${Number(state.thresholds.coverage) * 100}% minimum sample and regular-time coverage.`,
+        `Recorded configuration matches: ${features.long_sampling_status === "NOT_REQUIRED" ? (Number(features.short_requested_sample_count) - 1) * 5 / 60 : state.thresholds.history_seconds / 60}m history · intervals above ${state.thresholds.max_gap_ms / 1000}s consume the gap budget · ${Number(state.thresholds.coverage) * 100}% minimum sample and regular-time coverage.`,
       ),
     );
   else

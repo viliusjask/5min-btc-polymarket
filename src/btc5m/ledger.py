@@ -447,6 +447,15 @@ class Ledger:
         reserve = decision.max_total_reserved
         risk = self.config.risk
         self.check_reservation(reserve, summary)
+        if pair and not active:
+            # An opening creates directional exposure. Require enough headroom
+            # for a cap-priced completion before allowing that first fill; only
+            # the actual order is reserved below, and all existing limits apply.
+            completion_funding = max(
+                reserve,
+                decision.minimum_receive_shares * self.config.experiments.pair_max_cost,
+            )
+            self.check_reservation(completion_funding, summary)
         if pair and summary.position_risk + reserve > risk.trade_budget_usd:
             raise LedgerError("PAIR_BUDGET_LIMIT")
         prior = self.round_orders(market.slug)

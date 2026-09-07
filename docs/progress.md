@@ -1,3 +1,35 @@
+# Progress: Momentum and execution policy corrections
+
+2026-09-07. `fix/strategy-policy-audit`, isolated `.worktrees/strategy-policy-audit`.
+User-authorized Astra implementation and bounded strategy audits; no cross-model workflow.
+[Methods, defects, frozen replay and limitations](research/strategy-policy-audit.md).
+
+- Corrected Momentum to use the recent signed 30-second BTC move relative to five-minute
+  observed price variation. It no longer requires a terminal model or half-hour history.
+  Preserved price/timing bands, trade budgets, confirmation and exits; retained explicit
+  `opening_lead` comparison and unchanged pinned legacy studies.
+- Corrected pair completion funding checks, unmatched timeout behind a resting hedge, and
+  Model exit input freshness after awaited book/settlement operations. Value/Fast entry
+  policies were audited; no unsupported parameter changes were made.
+- Frozen 44,752-frame replay: old and explicit legacy policy match exactly. Recent policy
+  had 66 candidate rounds versus 18, but only three completed trades, all flagged uncertain.
+  The retained loss limit then blocked more orders. This is no profitability result.
+- Dashboard describes the current signal and required history, and marks the policy cutover
+  so lifetime totals cannot be mistaken for a clean result of the new policy.
+- Main lacked the PR11 research dashboard: PR11 was merged into PR10's branch after PR10
+  had merged. This feature branch includes that merge so the PR to main preserves it.
+
+Validation: **681 tests passed in 210.19 seconds**. Ruff lint/format, mypy (33 source
+files), dependency lock, CLI help and whitespace checks passed. Browser checks covered
+all six Paper portfolios, both unchanged registered studies (84 + 17 variants), research
+comparisons/export, corrected Momentum sampling and the policy notice, desktop/mobile
+layout, no JavaScript errors and no Real-account requests. Service unit verification used
+an isolated XDG_RUNTIME_DIR. A seven-journal metadata migration passed on backed-up copies,
+preserving sessions/accounting; its final bounded path took 0.699 seconds on those copies.
+Deployment confirmation is recorded after the service cutover.
+
+---
+
 # Progress: strategy performance comparisons
 
 2026-09-07. `feat/research-comparisons`, isolated `.worktrees/research-comparisons`,

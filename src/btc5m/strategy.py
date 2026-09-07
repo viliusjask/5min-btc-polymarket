@@ -248,14 +248,15 @@ def _quote(
     config: Config,
     side: Side,
     book: Book,
-    probability_up: float,
-    floor: float,
+    probability_up: float | None,
+    floor: float | None,
     features: dict[str, float | str],
 ) -> Decision:
     market, strategy = snapshot.market, config.strategy
     features = dict(features)
     features["evaluated_side"] = side.value
-    features["scenario_floor"] = floor
+    if floor is not None:
+        features["scenario_floor"] = floor
     if book.asks[0].price - book.bids[0].price > strategy.max_spread:
         return _skip(snapshot, "SPREAD_TOO_WIDE", features, probability_up, floor)
     minimum_ask, maximum_ask = (
@@ -326,11 +327,15 @@ def _quote(
     buy_fee_per_share = buy_fee / shares
     sell_fee_reserve = market.fee_rate * Decimal(".25") ** market.fee_exponent
     surplus = (
-        Decimal(str(floor))
-        - average_ask
-        - buy_fee_per_share
-        - sell_fee_reserve
-        - strategy.extra_price_allowance
+        (
+            Decimal(str(floor))
+            - average_ask
+            - buy_fee_per_share
+            - sell_fee_reserve
+            - strategy.extra_price_allowance
+        )
+        if floor is not None
+        else None
     )
     features.update(
         {
@@ -341,10 +346,13 @@ def _quote(
             "reserved_buy_fee": str(reserved_fee),
             "selected_spread": str(book.asks[0].price - book.bids[0].price),
             "terminal_surplus_proxy_units": "USD/share; uncalibrated terminal screen, not stopped-policy return",
-            "terminal_surplus_proxy": str(surplus),
         }
     )
-    if strategy.mode != "momentum" and surplus <= strategy.min_terminal_surplus:
+    if surplus is not None:
+        features["terminal_surplus_proxy"] = str(surplus)
+    if strategy.mode != "momentum" and (
+        surplus is None or surplus <= strategy.min_terminal_surplus
+    ):
         return _skip(
             snapshot, "INSUFFICIENT_TERMINAL_SURPLUS", features, probability_up, floor, surplus
         )
@@ -361,6 +369,78 @@ def _quote(
         probability_up,
         floor,
         surplus,
+        features,
+    )
+
+
+def _recent_momentum(
+    snapshot: Snapshot, config: Config, features: dict[str, float | str]
+) -> Decision:
+    """Recent signed return in units of observed short-window price variation.
+
+    This is a continuation hypothesis, not a terminal win-probability model.
+    No interpolation or future observations may supply the lookback endpoint.
+    """
+    strategy, spot = config.strategy, snapshot.spot
+    features.update(model_status="NOT_REQUIRED", long_sampling_status="NOT_REQUIRED")
+    if any(max(p.timestamp_ms, p.received_ms) > snapshot.now_ms for p in (*snapshot.history, spot)):
+        return _skip(snapshot, "FUTURE_DATA", features)
+    history = tuple(sorted(snapshot.history, key=lambda p: p.timestamp_ms))
+    if any(p.kind != "spot" for p in history) or len({p.timestamp_ms for p in history}) != len(
+        history
+    ):
+        return _skip(snapshot, "INVALID_HISTORY", features)
+    window = _sample_window(history, spot.timestamp_ms, strategy.volatility_short_seconds, config)
+    features.update(
+        short_span_seconds=window.span_seconds,
+        short_sample_count=window.sample_count,
+        short_requested_sample_count=window.requested_count,
+        short_sample_coverage=window.coverage,
+        short_max_sample_gap_ms=window.max_gap_ms,
+        short_regular_time_coverage=window.regular_time_coverage,
+        short_irregular_seconds=window.irregular_seconds,
+        short_effective_increments=window.effective_increments,
+        short_sampling_status=window.rejection or "VALID",
+    )
+    if window.rejection:
+        return _skip(
+            snapshot,
+            "INVALID_MODEL" if window.rejection == "INVALID_VARIANCE" else "INSUFFICIENT_HISTORY",
+            features,
+        )
+    assert window.sigma is not None
+    features["short_sigma"] = window.sigma
+    if window.sigma == 0:
+        return _skip(snapshot, "ZERO_VARIANCE", features)
+    target = spot.timestamp_ms - strategy.momentum_lookback_seconds * 1000
+    index = bisect_right([p.timestamp_ms for p in history], target) - 1
+    if index < 0 or target - history[index].timestamp_ms > config.data.sample_tolerance_ms:
+        return _skip(snapshot, "RECENT_ENDPOINT_MISSING", features)
+    endpoint = history[index]
+    assert snapshot.market.reference_price is not None  # Validated by _safety_reason.
+    elapsed = (spot.timestamp_ms - endpoint.timestamp_ms) / 1000
+    move = spot.price - endpoint.price
+    strength = float(abs(move)) / (window.sigma * math.sqrt(elapsed))
+    if not math.isfinite(strength):
+        return _skip(snapshot, "INVALID_MODEL", features)
+    features.update(
+        momentum_recent_move_usd=str(move),
+        momentum_endpoint_ms=str(endpoint.timestamp_ms),
+        momentum_elapsed_seconds=elapsed,
+        momentum_signal_z=strength,
+        momentum_required_z=str(strategy.momentum_min_signal_z),
+        spot_reference_move_usd=str(spot.price - snapshot.market.reference_price),
+    )
+    if move == 0 or strength < float(strategy.momentum_min_signal_z):
+        return _skip(snapshot, "MOMENTUM_RECENT_MOVE", features)
+    side = Side.UP if move > 0 else Side.DOWN
+    return _quote(
+        snapshot,
+        config,
+        side,
+        snapshot.up_book if side is Side.UP else snapshot.down_book,
+        None,
+        None,
         features,
     )
 
@@ -600,6 +680,8 @@ def evaluate(snapshot: Snapshot, config: Config, *, valuation: FairValue | None 
         "spot_source_ms": str(snapshot.spot.timestamp_ms),
         "spot_received_ms": str(snapshot.spot.received_ms),
     }
+    if selected == "momentum":
+        features["momentum_signal"] = strategy.momentum_signal
     safety = _safety_reason(snapshot, config)
     if safety:
         return _skip(snapshot, safety, features)
@@ -610,6 +692,8 @@ def evaluate(snapshot: Snapshot, config: Config, *, valuation: FairValue | None 
     )
     if not low <= float(features["entry_tau_seconds"]) <= high:
         return _skip(snapshot, "ENTRY_WINDOW", features)
+    if selected == "momentum" and strategy.momentum_signal == "recent_continuation":
+        return _recent_momentum(snapshot, config, features)
     if float(features["model_tau_seconds"]) < 60:
         return _skip(snapshot, "MODEL_HORIZON", features)
     value = valuation if valuation is not None else fair_value(snapshot, config)

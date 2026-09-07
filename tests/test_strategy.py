@@ -115,7 +115,9 @@ def test_value_candidate_reserves_affordable_cash_and_records_cost_components():
 
 @pytest.mark.parametrize("mode,ask", [("value", D(".92")), ("momentum", D(".93"))])
 def test_optional_slippage_cannot_disqualify_an_affordable_current_ask(mode, ask):
-    config = replace(Config(), strategy=replace(Config().strategy, mode=mode))
+    config = replace(
+        Config(), strategy=replace(Config().strategy, mode=mode, momentum_signal="opening_lead")
+    )
     decision = evaluate(make_snapshot(ask=ask), config)
     assert decision.reason == "ENTRY"
     assert decision.price_limit == ask
@@ -125,7 +127,10 @@ def test_optional_slippage_cannot_disqualify_an_affordable_current_ask(mode, ask
 
 
 def test_slippage_cap_does_not_authorize_an_unaffordable_current_ask():
-    config = replace(Config(), strategy=replace(Config().strategy, mode="momentum"))
+    config = replace(
+        Config(),
+        strategy=replace(Config().strategy, mode="momentum", momentum_signal="opening_lead"),
+    )
     assert evaluate(make_snapshot(ask=D(".94")), config).reason == "BELOW_MINIMUM_SIZE"
 
 
@@ -375,9 +380,11 @@ def test_down_value_uses_actual_down_book():
     assert decision.scenario_floor > 0.99
 
 
-def test_momentum_uses_explicit_move_ask_and_timing_settings_with_shared_safety():
+def test_legacy_opening_lead_uses_explicit_move_ask_and_timing_with_shared_safety():
     config = Config()
-    config = replace(config, strategy=replace(config.strategy, mode="momentum"))
+    config = replace(
+        config, strategy=replace(config.strategy, mode="momentum", momentum_signal="opening_lead")
+    )
     assert config.strategy.momentum_min_move_usd == D(50)
     assert evaluate(make_snapshot(move=D("50")), config).side is Side.UP
     assert evaluate(make_snapshot(move=D("49.99")), config).reason == "MOMENTUM_MOVE"

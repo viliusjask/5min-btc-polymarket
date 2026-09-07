@@ -147,6 +147,7 @@ def default_variants(base: Config, *, dense: bool = False) -> tuple[Variant, ...
                 f"${lead} lead · {low}–{high}s",
                 "momentum",
                 strategy={
+                    "momentum_signal": "opening_lead",
                     "momentum_min_move_usd": D(lead),
                     "momentum_min_seconds": low,
                     "momentum_max_seconds": high,
@@ -273,6 +274,21 @@ def evaluate_variant(
     snapshot: Snapshot, variant: Variant, cache: Valuations | None = None
 ) -> Decision:
     cfg = variant.config
+    if (
+        variant.signal == "core"
+        and cfg.strategy.mode == "momentum"
+        and cfg.strategy.momentum_signal == "recent_continuation"
+    ):
+        decision = evaluate(snapshot, cfg)
+        return replace(
+            decision,
+            features={
+                **decision.features,
+                "lab_variant": variant.ident,
+                "lab_signal": variant.signal,
+                "lab_scenario": variant.scenario,
+            },
+        )
     value = (cache or Valuations(snapshot)).get(variant)
     if variant.signal == "core":
         return evaluate(snapshot, cfg, valuation=value)

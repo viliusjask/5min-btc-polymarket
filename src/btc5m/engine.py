@@ -149,6 +149,11 @@ class Engine:
             if position is not None:
                 if position.decision.features.get("mode") in PAIR_STRATEGIES:
                     return await self._pair_step(model_snapshot, now_ms, exit_book)
+                if self._read_model_snapshot is not None:
+                    # Book/settlement I/O can age or invalidate the earlier model input.
+                    # Preserve a missing result; never fall back to superseded evidence.
+                    model_snapshot = self._read_model_snapshot()
+                    now_ms = self._now(now_ms)
                 return await self._exit(exit_book, now_ms, snapshot=model_snapshot)
             if self.ledger.stop_requested():
                 self._cancel_pending("STOP_REQUESTED", snapshot, now_ms)
@@ -375,6 +380,31 @@ class Engine:
     def _mode_config(self, mode: str) -> Config:
         return replace(self.config, strategy=replace(self.config.strategy, mode=mode))
 
+    def _timed_out_pair_position(self, market: Market, now_ms: int) -> Position | None:
+        positions = tuple(
+            p
+            for p in self.ledger.active_positions()
+            if p.market.condition_id == market.condition_id
+            and p.decision.features.get("mode") in PAIR_STRATEGIES
+        )
+        up = sum((p.quantity for p in positions if p.token_id == market.up_token), D(0))
+        down = sum((p.quantity for p in positions if p.token_id == market.down_token), D(0))
+        if up == down:
+            return None
+        token = market.up_token if up > down else market.down_token
+        position = next(p for p in positions if p.token_id == token)
+        row = self.ledger.db.execute(
+            "SELECT MIN(json_extract(data,'$.timestamp_ms')) FROM fills WHERE intent_id IN (SELECT id FROM intents WHERE json_extract(data,'$.position_id')=?)",
+            (position.position_id,),
+        ).fetchone()
+        if (
+            row
+            and row[0] is not None
+            and (now_ms - row[0] >= self.config.experiments.pair_max_unhedged_seconds * 1000)
+        ):
+            return position
+        return None
+
     def _resting_cancel_reason(
         self, order: Intent, snapshot: Snapshot | None, now_ms: int
     ) -> str | None:
@@ -382,6 +412,8 @@ class Engine:
             return "ORDER_UNKNOWN"
         if self.ledger.stop_requested() or self._shutting_down:
             return "STOP_REQUESTED"
+        if self._timed_out_pair_position(order.market, now_ms) is not None:
+            return "UNPAIRED_TIMEOUT"
         if now_ms - order.created_ms >= self.config.experiments.pair_quote_seconds * 1000:
             return "QUOTE_EXPIRED"
         if snapshot is None:
@@ -427,6 +459,12 @@ class Engine:
                 continue
             reason = self._resting_cancel_reason(order, snapshot, now_ms)
             if order.cancel_requested_ms is not None or reason is not None:
+                if reason == "UNPAIRED_TIMEOUT":
+                    position = self._timed_out_pair_position(order.market, now_ms)
+                    if position is not None and position.exit_reason is None:
+                        self.ledger.note_exit(
+                            position.position_id, reason, "CANCEL_RECONCILIATION_REQUIRED", now_ms
+                        )
                 if order.cancel_requested_ms is None:
                     self.ledger.record_observation(
                         {
@@ -473,14 +511,9 @@ class Engine:
             book = await self._read_exit_book(token)
             now_ms = self._now(now_ms)
         mode = str(position.decision.features["mode"])
-        rows = self.ledger.db.execute(
-            "SELECT MIN(json_extract(data,'$.timestamp_ms')) FROM fills WHERE intent_id IN (SELECT id FROM intents WHERE json_extract(data,'$.position_id')=?)",
-            (position.position_id,),
-        ).fetchone()
-        opened_ms = rows[0] if rows and rows[0] is not None else now_ms
         forced = (
             "UNPAIRED_TIMEOUT"
-            if now_ms - opened_ms >= self.config.experiments.pair_max_unhedged_seconds * 1000
+            if self._timed_out_pair_position(position.market, now_ms) is not None
             else None
         )
         if (

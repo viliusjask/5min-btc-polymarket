@@ -25,7 +25,7 @@ strategy modes with shared execution and measurement. Defer passive orders and f
 momentum/reversal models: fill selection and training need separate evidence. Do not add a
 language-model decision layer, neural models, automatic compounding, or a micro-hedge.
 
-The default candidate is `value`; `momentum` is a modified upstream reference comparison,
+The default candidate is `value`; `momentum` now tests recent continuation, with an explicit legacy opening-lead comparison,
 not a literal reproduction of the screenshot price band. Neither is validated. Older trader
 studies generally predate TWAP60 settlement; their execution lessons transfer, not their
 measured reversal frequencies or strategy profitability.
@@ -99,12 +99,17 @@ reserve rate*(0.25**exponent) per share, and one-cent additional price allowance
 The maximum ask is0.92; apply it to the rounded signed buy limit,
 not merely the best ask. Max selected-side spread is 0.03. Record each cost-reserve component.
 The displayed model probability is not considered ground truth or proven better than the market.
-For `momentum`, use abs(spot-reference)>=50, direction of that move, selected-side ask>=0.70,
-ask<=0.95, and 90..150 seconds left. Same data, price/depth, sizing and execution protections apply.
-Baseline timing/price/move settings remain explicit configuration rather than hardcoded secret logic.
-The [entry-filter comparison](research/entry-filters-and-dashboard.md) documents this exploratory
-paper setting and the limitations of its candidate counts. The unchanged absolute0.08 stop cannot
-trigger before zero for entries below0.08; the budget, time exit and other applicable exits remain.
+For `momentum`, the default `recent_continuation` signal uses the signed 30-second BTC move,
+scaled by the 300-second observed sigma times sqrt(actual endpoint elapsed seconds), requiring
+at least 0.5. The lookback uses a received, source-time endpoint at or before its target,
+within the existing 2-second tolerance; no interpolation or future observations. It chooses
+Up for a rising recent move and Down for a falling move independently of the opening lead.
+Its 70–95 cent ask band, 90–150 second entry interval, confirmation and hard exits are retained.
+The terminal probability model and 1800-second window are unnecessary for this entry rule;
+probability, scenario floor and terminal surplus are absent rather than manufactured.
+`opening_lead` explicitly retains the prior USD50 opening-distance comparison and its model
+history dependency, including the existing dollar-lead experiment grid. Neither signal is
+validated profitable. See [the policy audit](research/strategy-policy-audit.md).
 
 All prices, cash, quantities, fees and receipts use Decimal. Float math is isolated to probability
 and volatility calculations; reject NaN/Infinity. Book levels are validated and sorted explicitly.

@@ -206,7 +206,7 @@ def setup(tmp_path, strategy="value"):
     session = ledger.start_or_resume_session(config)
     streams = PublicStreams(config, clock=lambda: clock[0] / 1000)
     broker = PaperBroker(ledger, config, streams=streams, clock=lambda: clock[0] / 1000)
-    broker.update(make_snapshot())
+    broker.update(momentum_history(make_snapshot()) if strategy == "momentum" else make_snapshot())
     ledger.observe_account(D(100), {}, (), now_ms=clock[0])
     return clock, config, ledger, session, streams, broker
 
@@ -596,6 +596,18 @@ def test_all_six_modes_use_same_engine_with_paper_broker(tmp_path):
     asyncio.run(run())
 
 
+def momentum_history(snap):
+    # Synthetic sustained recent rise; opening distance alone is no longer a signal.
+    return replace(
+        snap,
+        history=tuple(
+            replace(p, price=p.price - D(snap.spot.timestamp_ms - p.timestamp_ms) / 2500)
+            for p in snap.history
+            if p.timestamp_ms >= snap.spot.timestamp_ms - 320000
+        ),
+    )
+
+
 def publish(broker, clock, **kwargs):
     snap = make_snapshot(now_ms=clock[0] // 5000 * 5000, **kwargs)
     snap = replace(
@@ -607,6 +619,8 @@ def publish(broker, clock, **kwargs):
         up_book=replace(snap.up_book, timestamp_ms=clock[0], received_ms=clock[0]),
         down_book=replace(snap.down_book, timestamp_ms=clock[0], received_ms=clock[0]),
     )
+    if broker.config.strategy.mode == "momentum":
+        snap = momentum_history(snap)
     if broker.config.strategy.mode == "fast_value":
         prior = snap.history[0]
         snap = replace(

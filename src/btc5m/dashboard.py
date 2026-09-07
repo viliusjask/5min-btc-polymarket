@@ -42,7 +42,7 @@ def lab_profit_context(payload: dict[str, Any]) -> None:
 
 
 DESCRIPTIONS = {
-    "momentum": "Late directional entry with protected exits",
+    "momentum": "Recent BTC continuation with protected exits; the current signal is shown in sampling details",
     "value": "Settlement value after execution costs",
     "fast_value": "Value with aligned Binance information",
     "model_exit": "Value entry with a sale-versus-hold exit",
@@ -76,6 +76,16 @@ EXPLANATIONS = {
 
 def explain(reason: str, features: dict[str, Any] | None = None) -> tuple[str, str]:
     features = features or {}
+    if reason == "MOMENTUM_RECENT_MOVE" and all(
+        k in features
+        for k in ("momentum_recent_move_usd", "momentum_signal_z", "momentum_required_z")
+    ):
+        move = D(str(features["momentum_recent_move_usd"]))
+        return "strategy", (
+            f"Recent BTC move {'-' if move < 0 else '+'}${abs(move):.2f}; "
+            f"size relative to recent price variation {float(features['momentum_signal_z']):.2f}, "
+            f"requiring {float(features['momentum_required_z']):.2f}. This ratio is not a win probability."
+        )
     if reason == "PRICE_BAND" and all(
         k in features for k in ("best_ask", "minimum_ask", "maximum_ask")
     ):
@@ -185,11 +195,14 @@ class DashboardReader:
         self.lifecycle: dict[str, Any] = {}
         self.heartbeat: dict[str, Any] = {}
         self.restarts: list[int] = []
+        self.policy_change: dict[str, Any] = {}
 
     def _consume(self, kind: str, stamp: int, data: dict[str, Any]) -> None:
         self.first_ms = min(self.first_ms, stamp) if self.first_ms is not None else stamp
         self.last_ms = max(self.last_ms or stamp, stamp)
         minute = stamp // 60000 * 60000
+        if kind == "CONFIGURATION_CHANGED":
+            self.policy_change = {**data, "at_ms": stamp}
         if kind == "STOP_CLEARED":
             self.restarts.append(stamp)
             self.restarts = self.restarts[-100:]
@@ -546,6 +559,7 @@ class DashboardReader:
                 },
                 "portfolios": portfolios,
                 "descriptions": DESCRIPTIONS,
+                "policy_change": self.policy_change,
                 "decisions": {name: self.decisions[name] for name in selected},
                 "feeds": self.feeds,
                 "books": latest_books,

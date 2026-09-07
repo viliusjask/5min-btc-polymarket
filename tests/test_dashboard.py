@@ -19,6 +19,27 @@ D = Decimal
 STAMP = 1_800_000_000_000
 
 
+def test_recent_momentum_explanation_and_policy_cutover_are_explicit(tmp_path):
+    from btc5m.dashboard import explain
+
+    category, text = explain(
+        "MOMENTUM_RECENT_MOVE",
+        {"momentum_recent_move_usd": "-2", "momentum_signal_z": 0.12, "momentum_required_z": ".5"},
+    )
+    assert (
+        category == "strategy" and "30" not in text
+    )  # Use recorded values, no hardcoded lookback.
+    assert "0.12" in text and "0.50" in text and "-$2.00" in text
+    reader = DashboardReader(tmp_path, Config())
+    reader._consume(
+        "CONFIGURATION_CHANGED",
+        STAMP,
+        {"reason": "RECENT_MOMENTUM_AND_EXECUTION_FIXES", "session_and_accounting_preserved": True},
+    )
+    assert reader.policy_change["at_ms"] == STAMP
+    assert reader.policy_change["session_and_accounting_preserved"] is True
+
+
 def runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(comparison, "MarketData", AnonymousData)
     args = cli.parse_args(["paper", "--duration", ".01", "--runtime", str(tmp_path)])

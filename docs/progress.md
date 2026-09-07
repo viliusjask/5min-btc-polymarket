@@ -42,6 +42,12 @@ no new dependencies or funded operations.
   corrected counters without JavaScript errors. Public books now show labeled outcomes and
   actual quotes (at the check, Up0.34/0.35 and Down0.65/0.66). The original four directional
   portfolios still have no recorded fills; passing mechanical tests is not evidence of an edge.
+- Prospective check at04:17:22UTC: the next opening reference was captured and the short
+  history was valid, but the long history contained92 irregular seconds (22 from an earlier
+  interruption and70 from this maintenance reload), exceeding its90-second allowance.
+  Therefore new entries remained paused. The earlier gap leaves the30-minute window around
+  04:26:15UTC, conditional on no further gaps. This is recorded separately from passing
+  execution tests; a running service does not prove current entry readiness.
 
 ## Previous history checkpoint
 

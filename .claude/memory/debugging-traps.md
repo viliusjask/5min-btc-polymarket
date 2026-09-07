@@ -25,6 +25,11 @@ The user then rejected the arbitrary20-entry cap itself: it was our added policy
 the six strategies. Default and continuous paper config now use0 (disabled). Do not invent a
 daily trade quota for a24/7 strategy comparison or confuse a self-imposed guard with venue rules.
 
+Prepare every migration/check script and PR draft before stopping the collector. Writing
+operational scripts while it was stopped prolonged this reload's source gap to70seconds;
+combined with an earlier22-second gap it exceeded the long-history allowance. Verify a
+post-restart entry-window sampling result, not an older cached VALID result in the dashboard.
+
 ## 2026-09-07: A completed capture concealed an unready experiment
 
 Zero orders were summarized without a causal breakdown of the rejection counts. The 38-minute

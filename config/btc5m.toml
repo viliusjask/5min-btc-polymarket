@@ -7,12 +7,13 @@ volatility_short_seconds = 300
 volatility_long_seconds = 1800
 volatility_stress_multiplier = 1.25
 adverse_reference_usd = 10
-value_min_ask = 0.60
+# Zero disables the value price floor; positive executable prices still need model surplus.
+value_min_ask = 0
 value_max_ask = 0.92
 min_terminal_surplus = 0.02
 extra_price_allowance = 0.01
 max_spread = 0.03
-momentum_min_move_usd = 70
+momentum_min_move_usd = 50
 momentum_min_ask = 0.70
 momentum_max_ask = 0.95
 momentum_min_seconds = 90

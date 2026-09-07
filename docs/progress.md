@@ -1,3 +1,47 @@
+# Progress: broaden entry filters and explain one-sided books
+
+2026-09-07. `fix/entry-filters`, isolated `.worktrees/entry-filters`, based on merged PR5
+(`c851d83`). Single-agent implementation and own review; public feeds and synthetic execution only.
+
+- Removed the default0.60 ask floor for Value, Fast value and Model exit. Positive executable
+  prices, the0.92 ceiling, model-surplus/cost requirements, confirmation and USD5 budget remain.
+- Reduced Momentum's minimum lead fromUSD70 toUSD50 for the paper experiment. A fixed-capture
+  comparison produced2/23/45 eligible checks atUSD70/50/35, subject to recorded-book limitations.
+  None had positive conservative terminal surplus; this broadens observations, not proven returns.
+- Traced the original Momentum candidates through the actual execution journal: one expired
+  on a widened spread while awaiting source confirmation; another failed minimum sizing.
+- Matched the screenshot's0.99 Up bid/0.01 Down ask and99 mirrored levels to recorded books.
+  Stable Up/Down order, explicit Buy/Sell quotes and expandable depth details replace ambiguous
+  primary counts. Fresh flat portfolios outside their entry window show the schedule; actual
+  in-window failures, stale data, held inventory, unresolved orders and halts remain visible.
+- Entry-filter changes passed548 tests in187.98seconds, including full confirmation/submission/
+  synthetic fill for each directional mode. Dashboard13 tests passed after the schedule change.
+  Ruff lint/format, mypy20sources, locked dependencies and JavaScript syntax passed. Edge verified
+  desktop/mobile output, all six cards, schedule cases, preserved warnings and depth expansion
+  through refreshes. The paper-only migration was rehearsed on seven SQLite backup copies.
+
+- Reloaded the existing services from the entry-filters worktree at05:03:25–05:03:57UTC.
+  All seven session IDs and all prior orders, fills and accounting rows survived. Only the two
+  requested strategy settings changed, with old/new configuration hashes in dated journal events.
+  The manifest, loaded config and latest decision hashes agree. The collector still reports
+  SOURCE_ORDERED_FLOW_V3 and BOUNDED_INTERVALS_V1; both services are active with no restarts.
+- The cutover's largest raw spot gap was10seconds (05:03:47–05:03:57UTC), measured from captured
+  observations rather than the full service-stop interval. Live Edge verified all six cards,
+  Buy/Sell quotes, stable ordering and retained depth expansion without JavaScript errors or
+  mobile overflow. The paper/dashboard remain unfunded/read-only, respectively. Rehearsal and
+  preservation evidence are under ignored `work/entry-filter-migration` and `work/filter-reload-result.json`.
+- At05:08:07UTC all six strategies produced fresh, valid short/long sampling checks under the
+  new configuration. The sampled15-second interval remained within the coverage allowance.
+  Momentum rejected an8.68-dollar lead; the three value variants rejected insufficient modeled
+  surplus with `minimum_ask = 0`; both pair engines had new pending orders. The four directional
+  portfolios still had no public-data fills. This confirms resumed evaluation, not profitability.
+
+Evidence, limitations and the unchanged absolute-stop behavior at cheap entries are documented
+in [entry filters and dashboard](research/entry-filters-and-dashboard.md). Passing fixtures do
+not establish profitable public fills; entry readiness still depends on current source history.
+
+## Previous execution checkpoint
+
 # Progress: repair missing fills, entry sizing and misleading counters
 
 2026-09-07. Work verified on `fix/strategy-execution`, based on `fix/history-resilience`.

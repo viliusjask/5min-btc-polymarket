@@ -225,6 +225,26 @@ function topSummary() {
   $("runtime-label").textContent =
     `${state.runtime_name} · ${count(c.events_loaded)} journal events · ${Math.max(0, c.restart_times.length - 1)} recorder restarts`;
 }
+function entrySchedule(name, latest, portfolio) {
+  const window = state.thresholds?.entry_windows?.[name];
+  if (!window || !["MISSING_BOOK_SIDE", "ENTRY_WINDOW", "PAIR_WINDOW"].includes(latest?.reason) ||
+      number(portfolio.open_cost_basis) > 0 || portfolio.unresolved_orders || portfolio.halts.length ||
+      !state.collector.caught_up || state.collector.status !== "running") return null;
+  const at = state.collector.last_ms, start = Number(latest.slug?.split("-").at(-1)) * 1000;
+  const age = state.generated_ms - latest.at_ms;
+  if (!start || !Number.isFinite(age) || !Number.isFinite(at) || age < 0 || age > state.thresholds.price_age_ms || at < start || at >= start + 300000) return null;
+  const remaining = (start + 300000 - at) / 1000;
+  if (remaining > window[1]) return {
+    title: "Waiting for entry window",
+    detail: `Opens in ${Math.ceil(remaining - window[1])}s.` + (latest.reason === "MISSING_BOOK_SIDE" ? " Current book also has no buyers or sellers on one side." : ""),
+  };
+  if (remaining < window[0]) return {
+    title: "Entry window closed",
+    detail: `Next window ${clock(start + 300000 + (300 - window[1]) * 1000)} UTC. Current round ends in ${Math.ceil(remaining)}s.`,
+  };
+  return null;
+}
+
 function portfolioCards() {
   const root = clear("portfolios");
   for (const [index, [name, p]] of Object.entries(state.portfolios).entries()) {
@@ -268,17 +288,18 @@ function portfolioCards() {
     const latest = state.decisions[name]?.latest,
       exec = p.last_execution;
     const reason = latest?.reason || exec?.code;
+    const schedule = entrySchedule(name, latest, p);
     const gap = ["short", "long"].some(
       (label) => ["EXCESSIVE_GAP", "INSUFFICIENT_INTERVAL_COVERAGE"].includes(latest?.features?.[label + "_sampling_status"]),
     );
     const decision = node(
       "div",
-      "decision-status",
-      gap
+      "decision-status" + (schedule ? " scheduled" : ""),
+      schedule ? schedule.title : gap
         ? "History coverage below requirement"
         : human(reason),
     );
-    decision.title = latest?.explanation || human(reason);
+    decision.title = schedule?.detail || latest?.explanation || human(reason);
     const time = latest?.at_ms || exec?.received_ms || 0;
     card.append(
       top,
@@ -286,6 +307,7 @@ function portfolioCards() {
       values,
       mini,
       decision,
+      ...(schedule ? [node("p", "caption", schedule.detail)] : []),
       node(
         "p",
         "decision-time",
@@ -595,6 +617,7 @@ function charts() {
   ]);
 }
 function feedHealth() {
+  const expandedBooks = new Set([...$("feeds").querySelectorAll("details[open]")].map(d => d.dataset.token));
   const root = clear("feeds"),
     end = state.collector.last_ms || Date.now();
   for (const [key, label] of Object.entries(FEEDS)) {
@@ -635,18 +658,34 @@ function feedHealth() {
     row.append(left, right);
     root.append(row);
   }
-  for (const [i, book] of state.books.entries()) {
+  const books = [...state.books].sort((a, b) =>
+    (a.side === "UP" ? 0 : a.side === "DOWN" ? 1 : 2) -
+    (b.side === "UP" ? 0 : b.side === "DOWN" ? 1 : 2) || a.token_id.localeCompare(b.token_id));
+  const roundStart = Number(books[0]?.slug?.split("-").at(-1)) * 1000;
+  const remaining = roundStart ? (roundStart + 300000 - end) / 1000 : null;
+  const windows = Object.values(state.thresholds?.entry_windows || {});
+  const closed = remaining !== null && remaining >= 0 && windows.length && remaining < Math.min(...windows.map(w => w[0]));
+  if (closed) root.append(node("p", "caption", `New entries closed · ${Math.ceil(remaining)}s left in this round. Existing positions are still managed.`));
+  for (const [i, book] of books.entries()) {
     const row = node("div", "feed-row"),
       emptyBook = !book.bid_count || !book.ask_count;
     const left = node("div"), right = node("div", "feed-value");
     left.append(node("div", "feed-name", book.side ? `${human(book.side)} order book` : `Outcome book ${i + 1}`));
     const start = Number(book.slug?.split("-").at(-1)) * 1000;
-    left.append(node("div", "feed-detail", `${start ? `Round ${clock(start)} UTC · ` : ""}Source ${clock(book.source_ms)} UTC`));
-    right.append(
-      node("div", emptyBook ? "warning" : "muted", `Best bid ${quotePrice(book.best_bid)} · Best ask ${quotePrice(book.best_ask)}`),
-      node("div", "feed-detail", `${book.bid_count || 0} buy-price levels · ${book.ask_count || 0} sell-price levels · ${((end - book.source_ms) / 1000).toFixed(1)}s old`),
-    );
-    if (emptyBook) right.append(node("div", "feed-detail warning", "One side is empty; entries need both sides."));
+    const age = (end - book.source_ms) / 1000;
+    const freshness = age >= 0 ? `${age.toFixed(1)}s old` : `source ${(-age).toFixed(1)}s ahead`;
+    left.append(node("div", "feed-detail", `${start ? `Round ${clock(start)} UTC · ` : ""}Source ${clock(book.source_ms)} UTC · ${freshness}`));
+    const side = book.side ? human(book.side) : "shares";
+    right.append(node("div", emptyBook && !closed ? "warning" : "muted", `Buy ${side}: ${number(book.best_ask) === null ? "unavailable" : quotePrice(book.best_ask)} · Sell ${side}: ${number(book.best_bid) === null ? "unavailable" : quotePrice(book.best_bid)}`));
+    if (emptyBook) right.append(node("div", "feed-detail", [
+      !book.bid_count ? `No buy orders for ${side}.` : "",
+      !book.ask_count ? `No ${side} offered for sale.` : "",
+    ].filter(Boolean).join(" ")));
+    const depth = node("details", "feed-detail");
+    depth.dataset.token = book.token_id;
+    depth.open = expandedBooks.has(book.token_id);
+    depth.append(node("summary", "", "Depth details"), node("div", "", `Best bid ${quotePrice(book.best_bid)} · Best ask ${quotePrice(book.best_ask)} · ${book.bid_count || 0} buy-price levels · ${book.ask_count || 0} sell-price levels`));
+    right.append(depth);
     row.append(left, right);
     root.append(row);
   }

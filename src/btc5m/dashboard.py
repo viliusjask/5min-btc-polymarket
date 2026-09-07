@@ -542,6 +542,17 @@ class DashboardReader:
                     "max_gap_ms": self.config.data.max_sample_gap_ms,
                     "coverage": self.config.data.min_sample_coverage,
                     "price_age_ms": self.config.data.max_price_age_ms,
+                    "entry_windows": {
+                        name: [
+                            self.config.strategy.momentum_min_seconds
+                            if name == "momentum"
+                            else self.config.strategy.entry_min_seconds,
+                            self.config.strategy.momentum_max_seconds
+                            if name == "momentum"
+                            else self.config.strategy.entry_max_seconds,
+                        ]
+                        for name in selected
+                    },
                 }
                 if matches
                 else None,

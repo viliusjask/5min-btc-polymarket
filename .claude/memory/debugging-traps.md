@@ -1,5 +1,15 @@
 # Debugging traps (this project)
 
+## 2026-09-07: Correct raw quotes still made a misleading dashboard
+
+Near expiry, the UI repeatedly showed99/0 levels and Missing book side, with Up/Down swapping
+position. Captured full books matched the complementary0.99 Up bid and0.01 Down ask exactly;
+the actual UI defects were receipt-based ordering and a liquidity check masking already-closed
+entry windows. Check timestamp, round phase and raw levels before calling this a probability bug.
+Show stable outcome ordering and executable Buy/Sell quotes. Explain a flat portfolio's schedule
+without hiding held-position, stale-input or in-window liquidity failures. Trace candidate →
+confirmation → order in the execution journal: repeated ENTRY screens are not submitted trades.
+
 ## 2026-09-07: A falsely unfilled hedge caused a simulated stop loss
 
 The UI showed two identical pair portfolios losing USD0.734265, each with two fills amid

@@ -24,12 +24,12 @@ class StrategyConfig:
     volatility_long_seconds: int = 1800
     volatility_stress_multiplier: Decimal = Decimal("1.25")
     adverse_reference_usd: Decimal = Decimal("10")
-    value_min_ask: Decimal = Decimal(".60")
+    value_min_ask: Decimal = Decimal("0")  # Zero disables the optional value price floor.
     value_max_ask: Decimal = Decimal(".92")
     min_terminal_surplus: Decimal = Decimal(".02")
     extra_price_allowance: Decimal = Decimal(".01")
     max_spread: Decimal = Decimal(".03")
-    momentum_min_move_usd: Decimal = Decimal("70")
+    momentum_min_move_usd: Decimal = Decimal("50")
     momentum_min_ask: Decimal = Decimal(".70")
     momentum_max_ask: Decimal = Decimal(".95")
     momentum_min_seconds: int = 90
@@ -54,12 +54,10 @@ class StrategyConfig:
             raise ValueError("volatility stress must have a finite float representation")
         if self.volatility_stress_multiplier < 1:
             raise ValueError("volatility stress cannot reduce sigma")
-        for low, high in (
-            (self.value_min_ask, self.value_max_ask),
-            (self.momentum_min_ask, self.momentum_max_ask),
-        ):
-            if not 0 < low <= high < 1:
-                raise ValueError("ask band must lie strictly inside zero and one")
+        if not 0 <= self.value_min_ask <= self.value_max_ask < 1 or self.value_max_ask == 0:
+            raise ValueError("value ask band needs a positive ceiling below one")
+        if not 0 < self.momentum_min_ask <= self.momentum_max_ask < 1:
+            raise ValueError("momentum ask band must lie strictly inside zero and one")
         if any(
             value >= 1
             for value in (self.min_terminal_surplus, self.extra_price_allowance, self.max_spread)

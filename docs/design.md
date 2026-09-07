@@ -95,12 +95,16 @@ statistical confidence intervals. Every default is a hypothesis recorded with a 
 Evaluate both actual outcome books. For `value`, require the side-specific scenario floor minus
 expected ask-depth cost, estimated buy fees across consumed levels, a worst-case sell-fee
 reserve rate*(0.25**exponent) per share, and one-cent additional price allowance to exceed
-0.02/share. Default acceptable ask band is 0.60..0.92; apply its maximum to the rounded signed buy limit,
+0.02/share. The default lower ask floor is disabled (0); actual book prices must be positive.
+The maximum ask is0.92; apply it to the rounded signed buy limit,
 not merely the best ask. Max selected-side spread is 0.03. Record each cost-reserve component.
 The displayed model probability is not considered ground truth or proven better than the market.
-For `momentum`, use abs(spot-reference)>=70, direction of that move, selected-side ask>=0.70,
+For `momentum`, use abs(spot-reference)>=50, direction of that move, selected-side ask>=0.70,
 ask<=0.95, and 90..150 seconds left. Same data, price/depth, sizing and execution protections apply.
 Baseline timing/price/move settings remain explicit configuration rather than hardcoded secret logic.
+The [entry-filter comparison](research/entry-filters-and-dashboard.md) documents this exploratory
+paper setting and the limitations of its candidate counts. The unchanged absolute0.08 stop cannot
+trigger before zero for entries below0.08; the budget, time exit and other applicable exits remain.
 
 All prices, cash, quantities, fees and receipts use Decimal. Float math is isolated to probability
 and volatility calculations; reject NaN/Infinity. Book levels are validated and sorted explicitly.

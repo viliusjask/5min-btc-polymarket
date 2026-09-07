@@ -82,6 +82,8 @@ def test_all_portfolios_and_missing_history_are_explained_without_fake_performan
     data = reader.snapshot(now_ms=STAMP + 60000)
     assert set(data["portfolios"]) == set(STRATEGIES)
     assert data["portfolios"]["value"]["fills"] == 0
+    assert data["thresholds"]["entry_windows"]["value"] == [60, 180]
+    assert data["thresholds"]["entry_windows"]["momentum"] == [90, 150]
     assert data["portfolios"]["value"]["win_rate"] is None
     assert data["decisions"]["value"]["latest"]["category"] == "data"
     assert "gap" in data["decisions"]["value"]["latest"]["explanation"].lower()

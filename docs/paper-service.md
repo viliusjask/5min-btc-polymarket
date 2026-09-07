@@ -7,10 +7,11 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/history-resilience` (`fix/history-resilience`).
+- Code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/entry-filters` (`fix/entry-filters`).
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
 - Configuration: `/home/vilius/.config/btc5m/paper.toml` — USD600 allocation, USD5 entry budget,
-  USD10 day/session loss allowance per portfolio. Restarting preserves sessions and balances.
+  USD10 day/session loss allowance per portfolio. The Value-family price floor is disabled and
+  Momentum requires aUSD50 lead. Restarting preserves sessions and balances.
 - Units: `~/.config/systemd/user/btc5m-paper.service` and `btc5m-dashboard.service`.
 - Dashboard: [localhost:8765](http://127.0.0.1:8765/). Real view remains read-only and explicitly
   references the canonical ignored `.env`; the collector has no account credentials.

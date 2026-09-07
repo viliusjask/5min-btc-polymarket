@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BTC5m · Trading observatory</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand-mark">₿</span>
+        <div>
+          <span class="eyebrow">FIVE MINUTE LAB</span>
+          <h1 id="view-title">Paper observatory</h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="mode-switch" role="group" aria-label="Dashboard account">
+          <button data-view="paper" aria-pressed="true" class="selected">
+            Paper
+          </button>
+          <button data-view="live" aria-pressed="false">Real</button>
+        </div>
+        <span id="view-badge" class="badge">SIMULATED · READ ONLY</span
+        ><button id="export" class="quiet">Export snapshot ↓</button>
+      </div>
+    </header>
+    <main>
+      <div id="paper-view">
+        <div class="statusbar">
+          <div>
+            <span id="status-dot" class="status-dot"></span
+            ><strong id="run-state">Loading capture…</strong
+            ><span id="capture-label"></span>
+          </div>
+          <span id="refreshed">Refreshes every 5s</span>
+        </div>
+        <div id="error" class="error" role="alert" hidden></div>
+        <section class="insight" aria-labelledby="insight-title">
+          <span class="insight-mark">i</span>
+          <div>
+            <h2 id="insight-title">Reading the paper journals</h2>
+            <p id="insight-body">
+              Portfolio results and data-quality checks will appear here.
+            </p>
+          </div>
+        </section>
+        <section
+          id="metrics"
+          class="metrics"
+          aria-label="Combined portfolio metrics"
+        ></section>
+        <section class="workspace">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">SIX INDEPENDENT PORTFOLIOS</span>
+              <h2>Same market. Different decisions.</h2>
+            </div>
+            <label class="select-label"
+              >Inspect strategy
+              <select id="strategy">
+                <option value="all">All strategies</option>
+              </select></label
+            >
+          </div>
+          <div id="portfolios" class="portfolios"></div>
+        </section>
+        <div class="section-heading chart-heading">
+          <div>
+            <span class="eyebrow">CAPTURE EXPLORER</span>
+            <h2>Performance &amp; the path to a trade</h2>
+          </div>
+          <div class="range" aria-label="Chart period">
+            <button data-hours="1">1h</button><button data-hours="6">6h</button
+            ><button data-hours="24">24h</button
+            ><button data-hours="0" class="selected">Capture</button>
+          </div>
+        </div>
+        <div class="chart-grid">
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Realized profit / loss</h3>
+              <span class="unit">USD · after recorded fees</span>
+            </div>
+            <div id="pnl-chart" class="chart"></div>
+            <div id="pnl-legend" class="legend"></div>
+            <p id="pnl-quality" class="caption negative" hidden></p>
+            <p class="caption">
+              Buying inventory uses cash; it is not booked as a loss. Open
+              holdings and claimable payouts are shown separately.
+            </p>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Why a screen did not become an entry</h3>
+              <span class="unit">EVALUATION CHECKS</span>
+            </div>
+            <div id="decision-chart" class="chart"></div>
+            <div id="decision-legend" class="legend"></div>
+            <p class="caption">
+              Only the first failed guard is counted per check. Repeated checks
+              are not independent opportunities or trades.
+            </p>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Observed Bitcoin prices</h3>
+              <span class="unit">USD · LAST OBSERVATION / MINUTE</span>
+            </div>
+            <div id="price-chart" class="chart"></div>
+            <div id="price-legend" class="legend"></div>
+            <p class="caption">
+              Binance and Chainlink can differ in price. Fast value uses aligned
+              relative changes, not raw exchange dollars as settlement.
+            </p>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Data health</h3>
+              <span class="unit">AT THE LAST CAPTURED EVENT</span>
+            </div>
+            <div id="feeds" class="feeds"></div>
+            <div id="history" class="history"></div>
+          </section>
+        </div>
+        <div class="detail-grid">
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Decision breakdown</h3>
+              <span id="check-count" class="unit"></span>
+            </div>
+            <div id="reasons"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Feed &amp; metadata incidents</h3>
+              <span class="unit">LIFETIME COUNTS</span>
+            </div>
+            <div id="incidents"></div>
+          </section>
+        </div>
+        <section class="panel activity">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">EXECUTION JOURNAL</span>
+              <h3>Orders, fills &amp; open holdings</h3>
+            </div>
+            <div class="tabs">
+              <button data-tab="orders" class="selected">Orders</button
+              ><button data-tab="fills">Fills</button
+              ><button data-tab="positions">Holdings</button>
+            </div>
+          </div>
+          <div id="activity" class="table-wrap"></div>
+        </section>
+        <footer>
+          <p>
+            Paper simulation uses delayed fills and approximate queue priority.
+            Portfolios do not compete for depth. Settlement assumes free
+            automatic redemption; live redemption remains manual.
+          </p>
+          <p id="runtime-label"></p>
+        </footer>
+      </div>
+      <div id="live-view" hidden>
+        <div class="statusbar">
+          <div>
+            <span id="live-dot" class="status-dot"></span
+            ><strong id="live-status">Reading account…</strong>
+          </div>
+          <span id="live-refreshed"></span>
+        </div>
+        <section class="insight">
+          <span class="insight-mark">i</span>
+          <div>
+            <h2 id="live-insight-title">Your real Polymarket account</h2>
+            <p id="live-insight-body">
+              Viewing this account does not start trading.
+            </p>
+            <p id="live-wallet" class="wallet-label"></p>
+          </div>
+        </section>
+        <section
+          id="live-metrics"
+          class="metrics"
+          aria-label="Real account metrics"
+        ></section>
+        <div class="detail-grid">
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Current holdings by value</h3>
+              <span class="unit">VENUE PRICE ESTIMATES</span>
+            </div>
+            <div id="live-holdings-chart"></div>
+            <p class="caption">
+              Position values come from Polymarket's public index and may lag.
+              They are estimates, not guaranteed proceeds from selling.
+            </p>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>This bot's funded activity</h3>
+              <span class="unit">LOCAL LIVE JOURNAL</span>
+            </div>
+            <div id="live-bot"></div>
+            <p class="caption">
+              Real trading uses one shared wallet. Account-wide holdings and
+              trades can include activity from outside this bot.
+            </p>
+          </section>
+        </div>
+        <section class="panel activity">
+          <div class="panel-heading">
+            <h3>Account holdings</h3>
+            <span id="live-positions-note" class="unit"></span>
+          </div>
+          <div id="live-positions" class="table-wrap"></div>
+        </section>
+        <section class="panel activity">
+          <div class="panel-heading">
+            <h3>Open orders</h3>
+            <span class="unit">ACTUAL VENUE ORDERS</span>
+          </div>
+          <div id="live-orders" class="table-wrap"></div>
+        </section>
+        <section class="panel activity">
+          <div class="panel-heading">
+            <h3>Recent account trades</h3>
+            <span id="live-trades-note" class="unit"
+              >PAST 7 DAYS · LATEST PAGE</span
+            >
+          </div>
+          <div id="live-trades" class="table-wrap"></div>
+          <p class="caption">
+            A venue match may still await confirmation or fail. These are
+            account trade records, not independently verified receipts or an
+            all-time profit calculation.
+          </p>
+        </section>
+        <footer>
+          <p>
+            Read-only account monitoring. No orders, cancellations, approvals or
+            transfers can be sent from this page. Cash is read on Polygon;
+            orders and trades use authenticated Polymarket reads. Account
+            requests refresh at most every 30 seconds while this view is open.
+          </p>
+        </footer>
+      </div>
+    </main>
+    <div id="tooltip" class="tooltip" hidden></div>
+  </body>
+</html>

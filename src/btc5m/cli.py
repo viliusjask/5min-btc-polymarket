@@ -195,9 +195,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="explicitly create trading credentials if needed; no wallet or order actions",
     )
-    for name in ("observe", "doctor", "run", "paper", "stop", "status", "report", "reconcile"):
+    for name in (
+        "observe",
+        "doctor",
+        "run",
+        "paper",
+        "dashboard",
+        "stop",
+        "status",
+        "report",
+        "reconcile",
+    ):
         command = commands.add_parser(name, allow_abbrev=False)
-        if name in ("observe", "doctor", "run", "paper", "reconcile"):
+        if name in ("observe", "doctor", "run", "paper", "dashboard", "reconcile"):
             command.add_argument("--config", type=Path, default=default_config())
         if name in ("observe", "doctor", "run", "reconcile"):
             command.add_argument(
@@ -221,17 +231,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             )
         if name in ("doctor", "run", "reconcile", "stop", "status", "report"):
             command.add_argument("--wallet", help="public account/funder address")
-        if name in ("doctor", "run", "reconcile"):
+        if name in ("doctor", "run", "reconcile", "dashboard"):
             command.add_argument(
                 "--env-file", type=Path, help="explicit existing credentials; parsed as data"
             )
-        if name in ("observe", "stop", "status", "report", "paper"):
+        if name in ("observe", "stop", "status", "report", "paper", "dashboard"):
             command.add_argument(
                 "--runtime",
                 type=Path,
                 required=name not in ("observe", "paper"),
                 default=repository() / "work" / "paper" if name == "paper" else None,
-                help="SQLite journal, or paper runtime directory for paper/status/report/stop; no credential loading",
+                help="SQLite journal, or paper runtime directory for paper/dashboard/status/report/stop",
             )
         if name == "doctor":
             command.add_argument(
@@ -261,6 +271,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 default="all",
                 help="all or comma-separated strategy names; total allocation is split equally",
             )
+        if name == "dashboard":
+            command.add_argument(
+                "--account",
+                action="store_true",
+                help="enable read-only Real account monitoring; never enables trading",
+            )
+            command.add_argument(
+                "--port",
+                type=int,
+                default=8765,
+                help="local read-only monitoring port; binds to 127.0.0.1 only",
+            )
         if name == "report":
             command.add_argument(
                 "--records",
@@ -274,6 +296,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         and (args.env_file is not None or args.wallet is not None)
     ):
         parser.error("--env-file and --wallet require doctor --account")
+    if args.command == "dashboard" and args.env_file is not None and not args.account:
+        parser.error("dashboard --env-file requires --account")
     return args
 
 
@@ -837,6 +861,27 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
 async def async_main(args: argparse.Namespace) -> int:
     if args.command == "credentials":
         return await configure_credentials(args)
+    if args.command == "dashboard":
+        from btc5m.dashboard import serve_dashboard
+        from btc5m.dashboard_live import LiveDashboardReader
+
+        async def dashboard_account() -> tuple[Any, str, Path]:
+            credentials = load_credentials(args.env_file, None)
+            path = runtime_path(repository(), credentials.wallet)
+            client = await create_secure_client(
+                private_key=credentials.private_key,
+                wallet=credentials.wallet,
+                credentials=credentials.api,
+            )
+            return client, credentials.wallet, path
+
+        serve_dashboard(
+            args.runtime,
+            load_config(args.config),
+            args.port,
+            LiveDashboardReader(dashboard_account) if args.account else None,
+        )
+        return 0
     if args.command in ("stop", "status", "report"):
         if args.runtime.is_dir():
             from btc5m.comparison import paper_report, stop_paper

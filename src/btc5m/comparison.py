@@ -132,6 +132,8 @@ async def run_paper(
     loop = asyncio.get_running_loop()
     data = MarketData(config, enhanced=True, observer=master.record_observation)
     code = 0
+    lifecycle_started = False
+    lifecycle_status = "failed"
     try:
         manifest = {
             "version": 1,
@@ -200,6 +202,10 @@ async def run_paper(
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
         await data.__aenter__()
+        master.record_observation(
+            {"kind": "paper_run", "received_ms": int(time.time() * 1000), "status": "started"}
+        )
+        lifecycle_started = True
         emit({"kind": "paper_started", **manifest, "runtime": str(path), "credentials_used": False})
 
         async def produce() -> None:
@@ -220,6 +226,7 @@ async def run_paper(
         tasks.append(producer)
         deadline, shutdown_deadline = loop.time() + args.duration, None
         last_results: dict[str, tuple[str, str]] = {}
+        last_heartbeat = 0.0
         while True:
             data.retain_markets(
                 tuple(p.market for ledger in ledgers for p in ledger.active_positions())
@@ -233,6 +240,15 @@ async def run_paper(
                 shutdown_deadline = loop.time() + args.shutdown_seconds
                 for ledger in ledgers:
                     ledger.request_stop()
+            if loop.time() - last_heartbeat >= 5:
+                master.record_observation(
+                    {
+                        "kind": "paper_heartbeat",
+                        "received_ms": int(time.time() * 1000),
+                        "status": "stopping" if shutdown_deadline is not None else "running",
+                    }
+                )
+                last_heartbeat = loop.time()
             snapshot = data.current_snapshot()
             for name, broker, engine, ledger in zip(
                 selected, brokers, engines, ledgers, strict=True
@@ -259,6 +275,7 @@ async def run_paper(
                 )
                 if not unresolved or loop.time() >= shutdown_deadline:
                     code = 2 if unresolved else 0
+                    lifecycle_status = "unresolved" if unresolved else "stopped"
                     break
             await asyncio.sleep(0.25)
     finally:
@@ -267,12 +284,25 @@ async def run_paper(
         await asyncio.gather(*tasks, return_exceptions=True)
         try:
             await data.close()
+        except BaseException:
+            lifecycle_status = "failed"
+            raise
         finally:
-            for ledger in ledgers:
-                ledger.close()
-            master.close()
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.remove_signal_handler(sig)
+            try:
+                if lifecycle_started:
+                    master.record_observation(
+                        {
+                            "kind": "paper_run",
+                            "received_ms": int(time.time() * 1000),
+                            "status": lifecycle_status,
+                        }
+                    )
+            finally:
+                for ledger in ledgers:
+                    ledger.close()
+                master.close()
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    loop.remove_signal_handler(sig)
     summary_report = paper_report(path)
     output = path / "report.json"
     output.write_text(json.dumps(summary_report, default=str, indent=2) + "\n")

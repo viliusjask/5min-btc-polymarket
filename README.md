@@ -57,6 +57,57 @@ The first run needs about 30 minutes of Chainlink history. Restarting the **same
 restores recent recorded price history but still requires fresh feeds; a real gap stays a gap.
 The same directory resumes balances and daily limits. Changed configuration requires a new directory.
 
+For **USD100 per strategy**, copy `config/btc5m.toml` to a local file under `work/`, change only
+`risk.allocation_usd` to `600`, and pass it with `--config`. That is USD600 simulated total;
+the per-entry budget and loss limits remain separate settings. Use a fresh runtime directory.
+
+## Paper and real account dashboard
+
+In another terminal, point the dashboard at the paper run's directory:
+
+```bash
+uv run --locked btc5m dashboard --runtime work/paper-six --port 8765
+```
+
+Open [the local dashboard](http://127.0.0.1:8765/). It refreshes every five seconds and includes
+six portfolio cards, recorded profit/loss, orders and fills, Bitcoin prices, feed health, history
+sampling and explanations for skipped entries. Use the same `--config` as the collector to show
+its thresholds. The collector and dashboard are separate processes: closing or restarting the
+page/server does not interrupt paper trading. The dashboard starts no collector of its own.
+
+**Paper / Real at the top switches views only.** Paper needs no credentials. To also connect the
+Real view, explicitly provide the existing ignored account file:
+
+```bash
+uv run --locked btc5m dashboard --runtime work/paper-six --port 8765 \
+  --account --env-file /absolute/path/to/.env
+```
+
+Account reads start when the Real view is requested and refresh at most once every 30 seconds.
+It shows Polygon trading cash, indexed holdings and estimated values, actual open orders,
+the latest page of account trades within seven days, and local funded-bot accounting when a
+live journal exists. Maker trade rows use this wallet's matched leg, excluding other participants'
+size and API-key owner fields. Account activity from outside this bot is labelled separately.
+Position estimates can lag; balances plus holdings are not a profit calculation. Trade statuses
+are venue reports, while the bot's live ledger only records fills after receipt verification.
+Unavailable sections display unknown values. Monitoring does not provision credentials, create
+a live journal, initialize funds, approve, place/cancel orders, or redeem positions.
+
+The server binds to `127.0.0.1`, offers read-only routes, and has no browser credential form.
+JSON export contains the selected view's safe snapshot, which can include your account address
+and trading activity. Never share a real-account export unintentionally. No runtime dependencies
+were added for the dashboard.
+
+Zero fills means **awaiting first trade**, not demonstrated flat performance. Public trade records
+are other market participants' activity. The original 38-minute capture had no bot orders or
+fills; [its missing-data diagnosis](docs/research/paper-capture-diagnosis.md) explains the restart
+gaps that continued blocking entries after warm-up. New collectors record a heartbeat and final
+stop state; older captures are labelled historical. Decision counts are repeated checks, not
+independent opportunities. Charts retain the latest 24 hours of public observations, while
+counters and accounting remain cumulative. Account-wide lifetime returns are not inferred.
+
+## The six policies
+
 | # | CLI strategy | What changes |
 | --- | --- | --- |
 | 1 | `momentum` | Late directional baseline using the BTC move, entry band and hard exits. |

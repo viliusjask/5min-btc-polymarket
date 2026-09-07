@@ -7,9 +7,12 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Collector/dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/evidence-audit`
-  (`fix/research-evidence`, PR10). The original registered lab remains on `.worktrees/experiment-lab`;
-  the17-variant order-flow study remains on `.worktrees/order-flow`. Keep all three checkouts.
+- Collector code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/evidence-audit`
+  (`fix/research-evidence`, PR10).
+- Dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/research-comparisons`
+  (`feat/research-comparisons`, PR11). The original registered lab remains on
+  `.worktrees/experiment-lab`; the17-variant order-flow study remains on `.worktrees/order-flow`.
+  Keep all four checkouts until their respective services have been repointed.
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
 - Configuration: `/home/vilius/.config/btc5m/paper.toml` — USD600 allocation, USD5 entry budget,
   USD10 day/session loss allowance per portfolio. The Value-family price floor is disabled and
@@ -83,7 +86,13 @@ WAL/NORMAL caches. The original portfolio journals retain the durability describ
 An unchanged semantic code identity can resume a registered study after a merge. A code change
 requires a preserved, separate study rather than silently mixing implementations.
 
-For a collector/dashboard-only update of the currently installed setup, preserve both
+For a dashboard-only update, change only its `WorkingDirectory` and `ExecStart` checkout paths,
+verify with an isolated temporary `XDG_RUNTIME_DIR`, then reload units and restart only
+`btc5m-dashboard.service`. PR11 used this operation: the collector and both study process ids,
+both registration hashes and all six portfolio sessions remained unchanged. The Real view's
+existing explicit account-file path is preserved without reading that file.
+
+For an update that also changes the collector, preserve both
 study units and the collector's `--capture-flow` argument. Change only the checkout paths
 in `WorkingDirectory` and `ExecStart` for `btc5m-paper` and `btc5m-dashboard`, then run
 `systemctl --user daemon-reload` and restart those two services. PR10 used this operation,
@@ -121,6 +130,11 @@ upstream fault. Their start time is explicit: old generic gap flags are not recl
 The bounded counter record commits atomically inside `capture.sqlite`; restarts retain it.
 The dashboard reads it without modifying either registered study or its report. See the
 [reversal audit](research/reversal-evidence-audit.md) for the historical reconstruction.
+
+**Experiments → Strategy research** adds profit distributions, outlier/cost sensitivity,
+entry-condition breakdowns, hourly contributions and comparisons on the same markets for
+the existing84+17variants. It reads the journals independently of the trading workers.
+The [research guide](research/strategy-comparisons.md) explains the calculations and limits.
 
 For the Windows task, copy `scripts/windows/*.ps1` to a local Windows directory, then run
 `install-wsl-task.ps1 -Distribution Ubuntu -LinuxUser vilius` in PowerShell. The installer copies

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import signal
+import sqlite3
 import threading
 import time
 from collections import Counter
@@ -19,6 +20,7 @@ from btc5m.config import STRATEGIES, Config
 from btc5m.dashboard_live import LiveDashboardReader
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.paper import PAPER_MATCHING_MODEL
+from btc5m.research import ResearchReader
 
 D = Decimal
 ASSETS = Path(__file__).with_name("dashboard_assets")
@@ -583,6 +585,7 @@ def make_server(
 ) -> ThreadingHTTPServer:
     if not 0 <= port <= 65535:
         raise LedgerError("INVALID_DASHBOARD_PORT")
+    research = ResearchReader(reader.path)
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self) -> None:
@@ -624,6 +627,7 @@ def make_server(
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/lab.js": ("lab.js", "text/javascript; charset=utf-8"),
+                "/research.js": ("research.js", "text/javascript; charset=utf-8"),
                 "/style.css": ("style.css", "text/css; charset=utf-8"),
                 "/icon.svg": ("icon.svg", "image/svg+xml"),
             }
@@ -672,6 +676,36 @@ def make_server(
                     payload = json.dumps(lab_payload, allow_nan=False).encode()
                 except (OSError, ValueError, KeyError, TypeError, ArithmeticError):
                     self.respond(503, b'{"error":"LAB_REPORT_UNAVAILABLE"}', "application/json")
+                    return
+                self.respond(200, payload, "application/json")
+            elif path == "/api/research":
+                from urllib.parse import parse_qs
+
+                params = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                names = ("suite", "phase", "selected", "comparison", "cohort")
+                if set(params) != set(names) or any(len(params[k]) != 1 for k in names):
+                    self.respond(400, b'{"error":"INVALID_RESEARCH_QUERY"}', "application/json")
+                    return
+                try:
+                    result = research.snapshot(*(params[k][0] for k in names))
+                    payload = json.dumps(result, allow_nan=False).encode()
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    ArithmeticError,
+                    sqlite3.Error,
+                    LedgerError,
+                ) as exc:
+                    invalid = isinstance(exc, ValueError) and str(exc).startswith(
+                        "UNKNOWN_RESEARCH_"
+                    )
+                    self.respond(
+                        400 if invalid else 503,
+                        b'{"error":"RESEARCH_UNAVAILABLE_OR_INVALID_SELECTION"}',
+                        "application/json",
+                    )
                     return
                 self.respond(200, payload, "application/json")
             elif path == "/api/live":

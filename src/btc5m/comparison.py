@@ -17,6 +17,7 @@ from typing import Any
 
 from btc5m.config import STRATEGIES, Config
 from btc5m.engine import Engine
+from btc5m.lab_tape import Tape
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.market_data import DataUnavailable, MarketData
 from btc5m.paper import PAPER_MATCHING_MODEL, PaperBroker
@@ -143,7 +144,9 @@ async def run_paper(
     code = 0
     lifecycle_started = False
     lifecycle_status = "failed"
+    tape: Tape | None = None
     try:
+        tape = Tape(path / "capture.sqlite")
         manifest = {
             "version": 1,
             "environment": "paper",
@@ -237,15 +240,42 @@ async def run_paper(
         async def produce() -> None:
             last_code = None
             while True:
+                snapshot = None
+                capture_code = "CAPTURED"
                 try:
                     snapshot = await data.snapshot()
                     # One public record per variant, independent of its portfolio state.
                     master.record_snapshot(snapshot, config, modes=selected)
                     last_code = None
                 except DataUnavailable as exc:
+                    capture_code = exc.code
                     if exc.code != last_code:
                         emit({"kind": "paper_data_skip", "code": exc.code})
                         last_code = exc.code
+                # Exact shared inputs for the independent experiment worker. Tick histories
+                # are deduplicated on disk; no variant evaluation runs in this collector.
+                assert tape is not None
+                markets = dict(tape.known_markets)
+                if snapshot:
+                    markets[snapshot.market.slug] = snapshot.market
+                labels: dict[str, Any] = {}
+                for slug, market in markets.items():
+                    final = data.final_reference(market)
+                    if final is not None:
+                        labels[slug] = {
+                            "condition_id": market.condition_id,
+                            "opening": str(final[0]),
+                            "final": str(final[1]),
+                        }
+                    elif slug in tape.label_cache:
+                        labels[slug] = None
+                capture_ms = int(time.time() * 1000)
+                tape.append(
+                    capture_ms,
+                    replace(snapshot, now_ms=capture_ms) if snapshot else None,
+                    labels=labels,
+                    code=capture_code,
+                )
                 await asyncio.sleep(0.5)
 
         producer = asyncio.create_task(produce())
@@ -359,6 +389,8 @@ async def run_paper(
             finally:
                 for ledger in ledgers:
                     ledger.close()
+                if tape is not None:
+                    tape.close()
                 master.close()
                 for sig in (signal.SIGINT, signal.SIGTERM):
                     loop.remove_signal_handler(sig)

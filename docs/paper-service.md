@@ -7,8 +7,9 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Collector/dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/order-flow`
-  (`feat/order-flow-experiments`). The original registered lab remains on `.worktrees/experiment-lab`.
+- Collector/dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/evidence-audit`
+  (`fix/research-evidence`, PR10). The original registered lab remains on `.worktrees/experiment-lab`;
+  the17-variant order-flow study remains on `.worktrees/order-flow`. Keep all three checkouts.
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
 - Configuration: `/home/vilius/.config/btc5m/paper.toml` — USD600 allocation, USD5 entry budget,
   USD10 day/session loss allowance per portfolio. The Value-family price floor is disabled and
@@ -75,13 +76,23 @@ grow by several GB/day, so check disk usage and keep independent backups for lon
 When the [experiment lab](experiment-lab.md) is enabled, also manage `btc5m-lab.service`.
 Pass `--lab` only when its registered implementation matches the target checkout.
 For the separate [order-flow study](order-flow.md), use `--order-flow` and manage
-`btc5m-flow-lab.service`; preserve the original lab unit on its registered checkout. Its input
+`btc5m-flow-lab.service` only when that worker's registered implementation matches the checkout;
+preserve both existing lab units on their registered checkouts. Its input
 tape and study registry retain FULL durability; its derived replay journals use recoverable
 WAL/NORMAL caches. The original portfolio journals retain the durability described above.
 An unchanged semantic code identity can resume a registered study after a merge. A code change
 requires a preserved, separate study rather than silently mixing implementations.
 
-From the intended feature checkout, run `uv sync --locked`, then:
+For a collector/dashboard-only update of the currently installed setup, preserve both
+study units and the collector's `--capture-flow` argument. Change only the checkout paths
+in `WorkingDirectory` and `ExecStart` for `btc5m-paper` and `btc5m-dashboard`, then run
+`systemctl --user daemon-reload` and restart those two services. PR10 used this operation,
+with both study process ids and manifests checked before/after. The generic installer below
+without `--order-flow` would remove flow capture; adding `--order-flow` would repoint its
+worker. Neither is appropriate for a collector-only update while studies are pinned.
+
+For a new basic six-portfolio installation without a registered flow study, run
+`uv sync --locked` in the intended feature checkout, then:
 
 ```bash
 .venv/bin/python scripts/install_paper_service.py \
@@ -97,6 +108,19 @@ The installer never reads the account file. It verifies units with an isolated t
 the real runtime. A regression checks this isolation. The script enables services without starting
 or stopping existing owners; the restart above is the explicit cutover. Preserve this checkout
 until the units have been repointed after merging.
+
+## Capture quality and experiment profit
+
+Experiments shows all realized profit, completed unflagged profit and the excluded remainder
+together. The remainder can include realized amounts on incomplete rounds; held cost appears
+separately. Unflagged means no recorded warning, not validated profitability.
+
+New capture diagnostics distinguish rejected snapshots from intervals longer than the
+configured recorder-gap limit. Cause counts record the first failed check, not every possible
+upstream fault. Their start time is explicit: old generic gap flags are not reclassified.
+The bounded counter record commits atomically inside `capture.sqlite`; restarts retain it.
+The dashboard reads it without modifying either registered study or its report. See the
+[reversal audit](research/reversal-evidence-audit.md) for the historical reconstruction.
 
 For the Windows task, copy `scripts/windows/*.ps1` to a local Windows directory, then run
 `install-wsl-task.ps1 -Distribution Ubuntu -LinuxUser vilius` in PowerShell. The installer copies

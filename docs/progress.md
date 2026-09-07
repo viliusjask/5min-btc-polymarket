@@ -3,6 +3,7 @@
 2026-09-07. `fix/research-evidence`, isolated `.worktrees/evidence-audit`, based on
 PR9's `de70bf6`. Single-agent implementation and own review. No new dependency, strategy,
 parameter change, credential inspection or funded operation.
+[PR10](https://github.com/viliusjask/5min-btc-polymarket/pull/10), implementation `d26bf49`.
 
 - Independently audited the two reversal gains totaling **USD195.147396** against original
   frame checksums, timestamps, token identities, depth, protected order amounts, fees and
@@ -23,6 +24,16 @@ parameter change, credential inspection or funded operation.
   round rollover. Desktop/390px browser checks passed:84+17variants, six original wallets,
   visible profit partitions, metric denominators, conversions and diagnostic failure states.
   No JavaScript errors, mobile page overflow or real-account requests occurred.
+- Deployed only collector/dashboard; restart25.444seconds, actual last-old/first-new frame
+  interval25.041seconds. The old35,024-frame prefix, seven journal sessions, all prior
+  fills/accounting/intents, both study manifests and both study process ids were retained.
+  Both workers consumed new diagnostic-bearing frames and reached one-frame lag in the
+  subsequent check. The original six remain continuous, and their prior cash/loss history
+  was not reset. Live8765 browser checks passed; PR10's implementation CI passed.
+- Updated installed-location documentation and the global operating cheatsheet. Both lab
+  workers remain pinned to their original code. The generic installer is not appropriate
+  for collector-only updates with those studies pinned; preserve its flow-capture argument
+  while changing only collector/dashboard checkout paths.
 
 Local ignored verification: `work/reversal-audit.json`, `work/probe-quality.json`,
 `work/full-tests.log`, `work/browser-check.log` and `work/cutover/`.

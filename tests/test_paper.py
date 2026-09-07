@@ -272,6 +272,42 @@ def test_affordable_capped_entry_confirms_submits_and_fills_through_engine(tmp_p
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    "name,ask,move",
+    [
+        ("value", D(".41"), D(10)),
+        ("fast_value", D(".41"), D(10)),
+        ("model_exit", D(".41"), D(10)),
+        ("momentum", D(".70"), D(50)),
+    ],
+)
+def test_broadened_entries_confirm_and_fill_through_each_directional_engine(
+    tmp_path, name, ask, move
+):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, name)
+        engine = Engine(broker, ledger, config, session, read_exit_book=broker.book)
+
+        def snapshot():
+            return publish(broker, clock, ask=ask, move=move)
+
+        assert (
+            await engine.step(snapshot(), None, clock[0])
+        ).reason == "ENTRY_CONFIRMATION_WAITING"
+        clock[0] += 1000
+        assert (await engine.step(snapshot(), None, clock[0])).action == "SUBMITTED"
+        clock[0] += 1000
+        await engine.step(snapshot(), None, clock[0])
+        position = ledger.open_position()
+        assert position is not None and position.gross_entry_price == ask
+        assert position.quantity > 5 and position.cost_basis <= 5
+        assert ledger.summary(clock[0]).cash == 100 - position.cost_basis
+        assert not ledger.unresolved_orders()
+        ledger.close()
+
+    asyncio.run(run())
+
+
 def test_immediate_order_cannot_fill_from_a_fresh_book_after_a_long_outage(tmp_path):
     async def run():
         clock, config, ledger, session, streams, broker = setup(tmp_path)

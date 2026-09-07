@@ -77,6 +77,18 @@ def test_configuration_hash_changes_with_material_setting():
     assert config.fingerprint != changed.fingerprint
 
 
+def test_value_price_floor_can_be_disabled_without_allowing_invalid_price_bands():
+    assert Config().strategy.value_min_ask == 0
+    assert load_config(CONFIG_PATH).strategy.value_min_ask == 0
+    for updates in (
+        {"value_min_ask": Decimal("-0.01")},
+        {"value_max_ask": Decimal(0)},
+        {"momentum_min_ask": Decimal(0)},
+    ):
+        with pytest.raises(ValueError):
+            replace(Config().strategy, **updates)
+
+
 def test_budget_cannot_exceed_wallet_or_loss_allocation():
     config = Config()
     with pytest.raises(ValueError):

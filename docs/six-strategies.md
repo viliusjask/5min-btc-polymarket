@@ -10,11 +10,12 @@ This document supersedes the latter's implementation deferrals. It does not esta
 
 ## Executable policies
 
-1. **`momentum`** preserves the modified late-direction baseline: minimum USD70 BTC lead,
+1. **`momentum`** uses the modified late-direction baseline: minimum USD50 BTC lead,
    90–150 seconds remaining, ask 0.70–0.95, depth/cost constraints and shared hard exits.
 2. **`value`** estimates the final contract payout probability from the settlement reference,
    remaining time and observed volatility. It buys only when the conservative scenario value
-   exceeds executable entry cost plus fees/allowances. Both baselines retain their shared
+   exceeds executable entry cost plus fees/allowances. There is no lower ask floor; the0.92
+   maximum and positive executable-price validation remain. Both baselines retain their shared
    300/1800-second history requirements and entry confirmation rule.
 3. **`fast_value`** keeps policy 2 but updates the last Chainlink spot using the relative Binance
    BTCUSDT move since an aligned exchange tick. The latest exchange tick must be newer than
@@ -42,6 +43,9 @@ their opening rule. The inventory adjustment can also hit the same hedge cap, pr
 same quote. Simultaneous identical orders in independent portfolios are therefore possible.
 The [September7 execution and entry audit](research/execution-and-entry-audit.md) distinguishes
 that behavior from the confirmed missed-fill and entry-sizing defects.
+The later [entry-filter comparison](research/entry-filters-and-dashboard.md) reduces Momentum's
+lead fromUSD70 toUSD50 and removes the0.60 floor shared by `value`, `fast_value` and `model_exit`.
+These changes broaden the unfunded experiment; they do not establish an improvement in returns.
 
 The five-second order lifetime is implemented through explicit GTC cancellation. GTC means
 "good till cancelled": an abrupt process failure can leave a venue order active. A cancel

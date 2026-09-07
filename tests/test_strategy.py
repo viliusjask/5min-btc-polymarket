@@ -138,6 +138,27 @@ def test_improved_asks_increase_estimate_without_increasing_spending():
     assert after.max_total_reserved == before.max_total_reserved
 
 
+def test_disabled_value_floor_accepts_low_prices_with_depth_and_fixed_cash():
+    snap = make_snapshot(ask=D(".03"))
+    snap = replace(snap, up_book=replace(snap.up_book, asks=(Level(D(".03"), D(1000)),)))
+    decision = evaluate(snap, Config())
+    assert decision.reason == "ENTRY"
+    assert decision.side is Side.UP
+    assert decision.expected_shares > 100
+    assert decision.max_total_reserved <= 5
+    assert decision.terminal_surplus_proxy > Config().strategy.min_terminal_surplus
+
+
+def test_explicit_value_floor_still_applies_and_low_price_alone_is_not_an_edge():
+    config = Config()
+    explicit = replace(config, strategy=replace(config.strategy, value_min_ask=D(".60")))
+    assert evaluate(make_snapshot(ask=D(".41")), explicit).reason == "PRICE_BAND"
+    snap = make_snapshot(move=D(0), ask=D(".41"))
+    # Both sides cost41c, exceeding their conservative probability floors after costs.
+    snap = replace(snap, down_book=replace(snap.up_book, token_id="down"))
+    assert evaluate(snap, config).reason == "INSUFFICIENT_TERMINAL_SURPLUS"
+
+
 def test_cash_depth_consumption_and_tick_rounding():
     snap = make_snapshot()
     book = replace(
@@ -356,8 +377,11 @@ def test_down_value_uses_actual_down_book():
 def test_momentum_uses_explicit_move_ask_and_timing_settings_with_shared_safety():
     config = Config()
     config = replace(config, strategy=replace(config.strategy, mode="momentum"))
-    assert evaluate(make_snapshot(move=D("70")), config).side is Side.UP
-    assert evaluate(make_snapshot(move=D("69.99")), config).reason == "MOMENTUM_MOVE"
+    assert config.strategy.momentum_min_move_usd == D(50)
+    assert evaluate(make_snapshot(move=D("50")), config).side is Side.UP
+    assert evaluate(make_snapshot(move=D("49.99")), config).reason == "MOMENTUM_MOVE"
+    old = replace(config, strategy=replace(config.strategy, momentum_min_move_usd=D(70)))
+    assert evaluate(make_snapshot(move=D("50")), old).reason == "MOMENTUM_MOVE"
     assert evaluate(make_snapshot(ask=D(".69")), config).reason == "PRICE_BAND"
     assert evaluate(make_snapshot(now_ms=(START + 220) * 1000), config).reason == "ENTRY_WINDOW"
     snap = make_snapshot()

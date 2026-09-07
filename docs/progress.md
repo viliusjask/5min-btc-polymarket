@@ -1,3 +1,31 @@
+# Progress: broaden entry filters and explain one-sided books
+
+2026-09-07. `fix/entry-filters`, isolated `.worktrees/entry-filters`, based on merged PR5
+(`c851d83`). Single-agent implementation and own review; public feeds and synthetic execution only.
+
+- Removed the default0.60 ask floor for Value, Fast value and Model exit. Positive executable
+  prices, the0.92 ceiling, model-surplus/cost requirements, confirmation and USD5 budget remain.
+- Reduced Momentum's minimum lead fromUSD70 toUSD50 for the paper experiment. A fixed-capture
+  comparison produced2/23/45 eligible checks atUSD70/50/35, subject to recorded-book limitations.
+  None had positive conservative terminal surplus; this broadens observations, not proven returns.
+- Traced the original Momentum candidates through the actual execution journal: one expired
+  on a widened spread while awaiting source confirmation; another failed minimum sizing.
+- Matched the screenshot's0.99 Up bid/0.01 Down ask and99 mirrored levels to recorded books.
+  Stable Up/Down order, explicit Buy/Sell quotes and expandable depth details replace ambiguous
+  primary counts. Fresh flat portfolios outside their entry window show the schedule; actual
+  in-window failures, stale data, held inventory, unresolved orders and halts remain visible.
+- Entry-filter changes passed548 tests in187.98seconds, including full confirmation/submission/
+  synthetic fill for each directional mode. Dashboard13 tests passed after the schedule change.
+  Ruff lint/format, mypy20sources, locked dependencies and JavaScript syntax passed. Edge verified
+  desktop/mobile output, all six cards, schedule cases, preserved warnings and depth expansion
+  through refreshes. The paper-only migration was rehearsed on seven SQLite backup copies.
+
+Evidence, limitations and the unchanged absolute-stop behavior at cheap entries are documented
+in [entry filters and dashboard](research/entry-filters-and-dashboard.md). Live reload evidence
+will be recorded separately below; passing fixtures do not establish profitable public fills.
+
+## Previous execution checkpoint
+
 # Progress: repair missing fills, entry sizing and misleading counters
 
 2026-09-07. Work verified on `fix/strategy-execution`, based on `fix/history-resilience`.

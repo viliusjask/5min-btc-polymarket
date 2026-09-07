@@ -321,6 +321,9 @@ main {
   font-size: 11px;
   color: var(--amber);
 }
+.decision-status.scheduled {
+  color: var(--muted);
+}
 .decision-time {
   color: var(--muted);
   font-size: 10px;

@@ -154,15 +154,15 @@ Both outcome books and raw Chainlink spot history are required; there is no subs
 | --- | --- |
 | Selected executable screen | `value` |
 | Shared new-entry window | 60–180 seconds before expiry |
-| Value ask band / maximum spread | 0.60–0.92 / 0.03 |
+| Value ask band / maximum spread | Positive executable prices up to0.92; no lower floor / 0.03 |
 | Value minimum terminal surplus proxy | 0.02/share after estimated fees and allowances |
-| Momentum comparison | USD70 move, ask0.70–0.95, 90–150 seconds left |
+| Momentum comparison | USD50 move, ask0.70–0.95, 90–150 seconds left |
 | Raw volatility windows / stress | 300 and1800 seconds / 1.25 times sigma |
 | Adverse reference scenario | USD10 |
 | Price/book maximum age | 5 seconds; future tolerance1 second |
 | Experimental allocation / trade spending target | USD100 / USD5 |
 | Daily and session loss allowance | USD10 each, including remaining exposure/reserves |
-| Maximum entries per UTC day | 20, persisted through restart |
+| Maximum entries per UTC day | Disabled (0); explicit positive limits persist through restart |
 | Exit requests | 0.08/share below gross entry, bid0.98, or20 seconds before expiry |
 | BUY / SELL price allowance | 0.01 / 0.01 |
 
@@ -173,6 +173,12 @@ The complete source registers are [scientific research](docs/research/scientific
 [trader evidence](docs/research/trader-sentiment.md), and the [SDK contract dossier](docs/research/sdk-contract.md).
 [Design](docs/design.md) specifies the operating contract and
 [public integration evidence](docs/research/adapter-integration-probe.md) records availability limits.
+
+The [entry-filter comparison](docs/research/entry-filters-and-dashboard.md) records why the
+60-cent Value floor was removed and Momentum's lead reduced fromUSD70 toUSD50 for paper testing.
+More candidate checks do not establish better returns. Below8-cent entry prices, the unchanged
+absolute8-cent stop cannot trigger before the token reaches zero; time/model exits and the
+USD5 spending cap still apply. A stop request never guarantees a sale.
 
 `observe` defaults to recording the two original baselines. `observe --strategy compare` and
 `paper --strategies all` record all six on the same public snapshots. Only the selected policy can

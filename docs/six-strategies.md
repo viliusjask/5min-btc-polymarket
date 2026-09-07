@@ -10,13 +10,18 @@ This document supersedes the latter's implementation deferrals. It does not esta
 
 ## Executable policies
 
-1. **`momentum`** uses the modified late-direction baseline: minimum USD50 BTC lead,
-   90–150 seconds remaining, ask 0.70–0.95, depth/cost constraints and shared hard exits.
+1. **`momentum`** follows the signed BTC move over the last 30 seconds, requiring its magnitude
+   to reach 0.5 × short-window sigma × sqrt(actual elapsed seconds). Sigma measures observed
+   price variation per square-root second, using 300 seconds of history. This ratio is not a
+   probability or statistical confidence level. The 90–150 second entry window, 0.70–0.95 ask
+   band, depth/cost constraints, confirmation and hard exits remain. The explicit
+   `opening_lead` comparator retains the earlier USD50 reference-distance rule.
+   [Policy audit and replay limitations](research/strategy-policy-audit.md).
 2. **`value`** estimates the final contract payout probability from the settlement reference,
    remaining time and observed volatility. It buys only when the conservative scenario value
    exceeds executable entry cost plus fees/allowances. There is no lower ask floor; the0.92
-   maximum and positive executable-price validation remain. Both baselines retain their shared
-   300/1800-second history requirements and entry confirmation rule.
+   maximum and positive executable-price validation remain. The Value family requires
+   300/1800 seconds of history; recent Momentum requires only 300 seconds. Both use entry confirmation.
 3. **`fast_value`** keeps policy 2 but updates the last Chainlink spot using the relative Binance
    BTCUSDT move since an aligned exchange tick. The latest exchange tick must be newer than
    Chainlink and at most 1500ms old; the as-of alignment gap is at most 1000ms. Moves above 50
@@ -26,12 +31,16 @@ This document supersedes the latter's implementation deferrals. It does not esta
 4. **`model_exit`** uses exactly policy 2's entry calculation. While holding, it compares the
    executable sale proceeds after fees with the most optimistic value in its sensitivity scenarios.
    An extra 0.01/share sale advantage triggers a persistent `MODEL` exit. Hard stop, target and
-   time exit remain available even if the model is unavailable.
+   time exit remain available even if the model is unavailable. The engine rereads the model
+   after awaited book/settlement operations, retaining identity and freshness checks.
 5. **`passive_pairs`** starts with a five-share post-only limit buy below modeled value, then
    tries to buy the opposite token so completed equal quantities cost at most 0.97 per pair,
    including the first leg's actual fee-inclusive basis and the second leg's conservative reserve.
    Quotes expire locally after five seconds; unmatched inventory has a 30-second timeout.
    The entire round shares the USD5 spending cap and permits at most 24 order attempts.
+   An opening also requires enough existing cash and loss allowance to fund the intended
+   completion; only the real order is reserved. At the unmatched deadline, a resting hedge
+   is cancelled and reconciled before any sale. Late fills that complete the pair preserve it.
 6. **`inventory_pairs`** uses the same pair engine and limits. On the hedge leg it increases
    the quote by up to 0.04 × min(1, unmatched shares / 5) × 4p(1−p), still below the ask and
    within the pair-cost cap. Here p is the estimated Up probability; p=0.5 is used if the

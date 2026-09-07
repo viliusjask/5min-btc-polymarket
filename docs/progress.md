@@ -1,4 +1,76 @@
-# Progress: explain experiment evidence and capture failures
+# Progress: Momentum and execution policy corrections
+
+2026-09-07. `fix/strategy-policy-audit`, isolated `.worktrees/strategy-policy-audit`.
+User-authorized Astra implementation and bounded strategy audits; no cross-model workflow.
+[Methods, defects, frozen replay and limitations](research/strategy-policy-audit.md).
+
+- Corrected Momentum to use the recent signed 30-second BTC move relative to five-minute
+  observed price variation. It no longer requires a terminal model or half-hour history.
+  Preserved price/timing bands, trade budgets, confirmation and exits; retained explicit
+  `opening_lead` comparison and unchanged pinned legacy studies.
+- Corrected pair completion funding checks, unmatched timeout behind a resting hedge, and
+  Model exit input freshness after awaited book/settlement operations. Value/Fast entry
+  policies were audited; no unsupported parameter changes were made.
+- Frozen 44,752-frame replay: old and explicit legacy policy match exactly. Recent policy
+  had 66 candidate rounds versus 18, but only three completed trades, all flagged uncertain.
+  The retained loss limit then blocked more orders. This is no profitability result.
+- Dashboard describes the current signal and required history, and marks the policy cutover
+  so lifetime totals cannot be mistaken for a clean result of the new policy.
+- Main lacked the PR11 research dashboard: PR11 was merged into PR10's branch after PR10
+  had merged. This feature branch includes that merge so the PR to main preserves it.
+
+Validation: **681 tests passed in 210.19 seconds**. Ruff lint/format, mypy (33 source
+files), dependency lock, CLI help and whitespace checks passed. Browser checks covered
+all six Paper portfolios, both unchanged registered studies (84 + 17 variants), research
+comparisons/export, corrected Momentum sampling and the policy notice, desktop/mobile
+layout, no JavaScript errors and no Real-account requests. Service unit verification used
+an isolated XDG_RUNTIME_DIR. A seven-journal metadata migration passed on backed-up copies,
+preserving sessions/accounting; its final bounded path took 0.699 seconds on those copies.
+Deployed paper-only at approximately 18:44 UTC. Seven sessions, six balances and all existing
+financial rows were preserved; both pinned study PIDs/configuration/registrations remained
+unchanged. The source tape retained its prefix and resumed advancing after a recorded
+73.950-second shutdown/startup gap. Saved history was restored without refreshing timestamps.
+[PR12](https://github.com/viliusjask/5min-btc-polymarket/pull/12), code `93e91b2`; both CI runs passed.
+[Current service locations and cutover notes](paper-service.md).
+
+---
+
+# Progress: strategy performance comparisons
+
+2026-09-07. `feat/research-comparisons`, isolated `.worktrees/research-comparisons`,
+based on PR10's `455e17f`. Single-agent implementation and own review. The user requested
+research tools for drawing conclusions, beyond operational diagnostics.
+[PR11](https://github.com/viliusjask/5min-btc-polymarket/pull/11), implementation `4d58848`.
+
+- Added **Experiments → Strategy research** for both existing registered studies (84+17
+  variants). Individual market profit distributions, typical/average outcomes, removal of
+  the best one/three wins, fee and added-cost sensitivity, fixed entry/exit-condition groups,
+  hourly contributions, same-market comparisons, overlap/correlation, and paired 30/60-minute
+  block resampling use existing accounting. [Methods and practical reading guide](research/strategy-comparisons.md).
+- Reversal/continuation and absorption/continuation comparisons initially match lookback and
+  threshold. Manual comparator, phase and flagged/unflagged selectors are available; JSON
+  export retains the exact selected calculations. No strategy parameters, study definitions,
+  wallet balances, dependencies or funded execution were changed.
+- **642 tests passed in162.67seconds**. After fixed numerical group ordering was added,
+  all14research/dashboard tests passed again. Ruff lint/format, mypy33sources, dependency
+  lock and whitespace checks passed. New cases include complete/incomplete accounting,
+  delayed settlement, dollar conservation, missing rounds/blocks and read-only API boundaries.
+- Desktop and390px browser checks exercised84+17variants, opposite/manual comparisons,
+  every grouping, cohort filtering, downloads, overview return and six original wallets.
+  No JavaScript errors or Real-account requests. Follow-up mobile layout makes the grouping
+  control stack below its heading; long hourly tables scroll inside their panel.
+- Deployed only the dashboard to this checkout. Collector3917006, original lab3802676 and
+  flow lab3850281 retained their process ids; both study manifests and all six portfolio
+  sessions matched before/after. Dashboard4022225 serves the research API on8765. The unit
+  verifier used an isolated temporary runtime; neither credentials nor study state were changed.
+  The complete browser check passed again on live8765, including all research selectors,
+  downloads, both studies and the six original wallets. Updated installed-location docs and
+  the global operating cheatsheet; preserve all four service-referenced worktrees.
+
+Local ignored verification: `work/browser-check.log`, `work/live-browser-check.log`,
+`work/research-probe.json` and `work/cutover/`.
+
+# Previous checkpoint: explain experiment evidence and capture failures
 
 2026-09-07. `fix/research-evidence`, isolated `.worktrees/evidence-audit`, based on
 PR9's `de70bf6`. Single-agent implementation and own review. No new dependency, strategy,

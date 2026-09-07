@@ -59,6 +59,68 @@ def bid_book(now, *, price=".68", size="100"):
     return Book(TOKEN, now, now, (Level(D(price), D(size)),), ())
 
 
+@pytest.mark.parametrize(
+    "updated", ["valid", "missing", "other_condition", "wrong_round", "stale", "conflict"]
+)
+def test_model_exit_refreshes_snapshot_after_awaited_book(tmp_path, updated):
+    from test_paper import publish, setup, submit
+
+    from btc5m.strategy import evaluate
+
+    async def run():
+        clock, config, ledger, session, _, broker = setup(tmp_path, "model_exit")
+        intent = await submit(ledger, broker, evaluate(broker.snapshot, config), session, clock[0])
+        clock[0] += 1000
+        publish(broker, clock)
+        ledger.apply_evidence(intent.intent_id, await broker.reconcile(intent))
+        clock[0] += 1000
+        original = publish(broker, clock, move=D(-50))
+        latest = original
+
+        async def book(token):
+            nonlocal latest
+            clock[0] += 6000 if updated in ("valid", "stale") else 1000
+            latest = publish(broker, clock, move=D(-50))
+            if updated == "missing":
+                latest = None
+            elif updated == "other_condition":
+                latest = replace(latest, market=replace(latest.market, condition_id="other"))
+            elif updated == "wrong_round":
+                latest = replace(
+                    latest,
+                    market=replace(
+                        latest.market,
+                        slug=f"btc-updown-5m-{latest.market.start_s + 300}",
+                        start_s=latest.market.start_s + 300,
+                        end_s=latest.market.end_s + 300,
+                    ),
+                )
+            elif updated == "stale":
+                latest = original
+            elif updated == "conflict":
+                latest = replace(latest, market=replace(latest.market, reference_status="conflict"))
+            return await broker.book(token)
+
+        engine = Engine(
+            broker,
+            ledger,
+            config,
+            session,
+            read_exit_book=book,
+            read_model_snapshot=lambda: latest,
+        )
+        result = await engine.step(original, None, clock[0])
+        if updated == "valid":
+            assert result.action == "SUBMITTED", result
+            assert ledger.unresolved_orders()[0].reason == "MODEL"
+        else:
+            assert result.action == "HOLD", result
+            assert not ledger.unresolved_orders()
+        ledger.close()
+
+    asyncio.run(run())
+
+
 def test_current_decision_time_rejects_old_completed_snapshot(tmp_path, monkeypatch):
     async def run():
         venue = Venue()
@@ -195,7 +257,8 @@ def test_first_candidates_and_fixed_calibration_missing_are_durable(tmp_path, mo
             }
         )
         rows = ledger.measurements()
-        assert len([r for r in rows if r["kind"] == "candidate"]) == 2
+        # Oscillating prices still qualify Value; a large opening lead no longer qualifies Momentum.
+        assert len([r for r in rows if r["kind"] == "candidate"]) == 1
         calibration = next(r for r in rows if r["kind"] == "calibration")
         assert calibration["status"] == "missing"
         assert len([r for r in ledger.observations() if r["kind"] == "final_reference"]) == 1
@@ -382,16 +445,34 @@ def confirmation_snapshot(now=NOW, *, source=None, book_source=None, price="8020
     )
 
 
-@pytest.mark.parametrize("mode", ["value", "momentum"])
+@pytest.mark.parametrize(
+    "mode,signal",
+    [("value", "opening_lead"), ("momentum", "opening_lead"), ("momentum", "recent_continuation")],
+)
 def test_entry_waits_for_newer_same_side_confirmation_without_reserving_cash(
-    tmp_path, monkeypatch, mode
+    tmp_path, monkeypatch, mode, signal
 ):
+    def candidate(now=NOW):
+        snap = confirmation_snapshot(now)
+        if signal == "recent_continuation":
+            snap = replace(
+                snap,
+                history=tuple(
+                    replace(p, price=snap.spot.price - D(now - p.timestamp_ms) / 2500)
+                    for p in snap.history
+                    if p.timestamp_ms >= now - 320000
+                ),
+            )
+        return snap
+
     async def run():
-        config = replace(Config(), strategy=replace(Config().strategy, mode=mode))
+        config = replace(
+            Config(), strategy=replace(Config().strategy, mode=mode, momentum_signal=signal)
+        )
         venue = Venue()
         broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue, config=config)
         engine = Engine(broker, ledger, config, session)
-        initial = confirmation_snapshot()
+        initial = candidate()
         first = await engine.step(initial, None, NOW)
         assert first.reason == "ENTRY_CONFIRMATION_WAITING"
         assert engine.pending_candidate is not None
@@ -400,7 +481,7 @@ def test_entry_waits_for_newer_same_side_confirmation_without_reserving_cash(
         assert repeat.reason == "ENTRY_CONFIRMATION_WAITING" and venue.posts == 0
         venue.now = NOW + 1000
         venue.post_loss = True
-        result = await engine.step(confirmation_snapshot(venue.now), None, venue.now)
+        result = await engine.step(candidate(venue.now), None, venue.now)
         assert result.action == "SUBMITTED" and ledger.summary(venue.now).daily_entries == 1
         assert engine.pending_candidate is None and venue.posts == 1
         await broker.close()

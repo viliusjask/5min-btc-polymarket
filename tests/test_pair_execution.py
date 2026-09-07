@@ -124,3 +124,133 @@ def test_cancelled_unfilled_round_is_an_attempt_not_a_completed_trade(tmp_path):
     fill(ledger, second, quantity=D(1), terminal=True)
     assert ledger.summary(snap.now_ms + 1).daily_entries == 1
     ledger.close()
+
+
+@pytest.mark.parametrize("strategy", ["passive_pairs", "inventory_pairs"])
+@pytest.mark.parametrize("constraint", ["daily", "session", "cash"])
+def test_pair_open_requires_funding_for_its_completion(tmp_path, strategy, constraint):
+    from datetime import UTC, datetime
+
+    ledger, config, session = setup(tmp_path, strategy)
+    snap = make_snapshot()
+    day = datetime.fromtimestamp(snap.now_ms / 1000, UTC).date().isoformat()
+    # Synthetic prior accounting leaves only USD4 of the selected resource.
+    with ledger.db:
+        ledger.db.execute(
+            "INSERT INTO accounting VALUES (?,?,?,?,?,?)",
+            (
+                "prior",
+                session if constraint == "session" else "prior-session",
+                day if constraint == "daily" else "2000-01-01",
+                "-96" if constraint == "cash" else "-6",
+                "0" if constraint == "cash" else "-6",
+                "0",
+            ),
+        )
+    decision = pair_decision(snap, config, ())
+    assert decision.max_total_reserved < 4
+    with pytest.raises(LedgerError, match="INSUFFICIENT_CASH|LOSS_LIMIT"):
+        ledger.reserve_entry(decision, snap.market, session, snap.now_ms)
+    assert not ledger.round_orders(snap.market.slug)
+    ledger.close()
+
+
+@pytest.mark.parametrize(
+    "hedge_fill,late_completion",
+    [(D(0), False), (D(2), False), (D(5), False), (D(0), True), (D(2), True)],
+)
+@pytest.mark.parametrize("fill_at_deadline", [False, True])
+def test_resting_hedge_cancels_at_exact_inventory_deadline(
+    tmp_path, hedge_fill, late_completion, fill_at_deadline
+):
+    import asyncio
+
+    from test_paper import aggressive_sell, publish, submit
+    from test_paper import setup as paper_setup
+
+    from btc5m.engine import Engine
+
+    async def run():
+        clock, config, ledger, session, streams, broker = paper_setup(tmp_path, "passive_pairs")
+        first = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        clock[0] += 1000
+        publish(broker, clock)
+        await broker.reconcile(first)
+        clock[0] += 1
+        aggressive_sell(streams, first, clock, "opening")
+        ledger.apply_evidence(first.intent_id, await broker.reconcile(first))
+        filled_ms = clock[0]
+        clock[0] = filled_ms + 29000
+        publish(broker, clock)
+        hedge = await submit(
+            ledger,
+            broker,
+            pair_decision(broker.snapshot, config, ledger.active_positions()),
+            session,
+            clock[0],
+        )
+        clock[0] += 500
+        publish(broker, clock)
+        await broker.reconcile(hedge)
+        clock[0] = filled_ms + 29999
+        if hedge_fill and not fill_at_deadline:
+            aggressive_sell(streams, hedge, clock, "hedge", hedge_fill)
+        engine = Engine(broker, ledger, config, session, read_exit_book=broker.book)
+        await engine.step(publish(broker, clock), None, clock[0])
+        assert ledger.order(hedge.intent_id).cancel_requested_ms is None
+        clock[0] = filled_ms + 30000
+        if hedge_fill and fill_at_deadline:
+            aggressive_sell(streams, hedge, clock, "hedge", hedge_fill)
+        result = await engine.step(publish(broker, clock), None, clock[0])
+        if hedge_fill == 5:
+            assert result.reason == "PAIR_COMPLETE_AWAITING_RESOLUTION"
+            assert all(p.exit_reason is None for p in ledger.active_positions())
+        else:
+            assert result.reason == "CANCEL_RECONCILIATION_REQUIRED"
+            order = ledger.order(hedge.intent_id)
+            assert order.cancel_requested_ms == clock[0]
+            assert order.remaining_reserve > 0
+            assert not any(o.side == "SELL" for o in ledger.round_orders(first.market.slug))
+            assert (
+                next(
+                    p for p in ledger.active_positions() if p.position_id == first.position_id
+                ).exit_reason
+                == "UNPAIRED_TIMEOUT"
+            )
+            if late_completion:
+                clock[0] += 100
+                aggressive_sell(streams, hedge, clock, "cancel-race", D(5) - hedge_fill)
+            clock[0] = filled_ms + 36000
+            result = await engine.step(publish(broker, clock), None, clock[0])
+            if late_completion:
+                assert result.reason == "PAIR_COMPLETE_AWAITING_RESOLUTION"
+                assert not any(o.side == "SELL" for o in ledger.round_orders(first.market.slug))
+            elif hedge_fill == 0:
+                assert result.action == "SUBMITTED"
+                assert ledger.unresolved_orders()[0].reason == "UNPAIRED_TIMEOUT"
+            else:
+                assert result.reason == "BELOW_VENUE_MINIMUM"
+        ledger.close()
+
+    asyncio.run(run())
+
+
+def test_pair_completion_funding_check_does_not_reserve_a_fictional_hedge(tmp_path):
+    ledger, config, session = setup(tmp_path)
+    snap = make_snapshot()
+    with ledger.db:
+        ledger.db.execute(
+            "INSERT INTO accounting VALUES (?,?,?,?,?,?)",
+            ("prior", "prior-session", "2000-01-01", "-95.15", "0", "0"),
+        )
+    decision = pair_decision(snap, config, ())
+    assert ledger.summary(snap.now_ms).cash == D("4.85")
+    intent = ledger.reserve_entry(decision, snap.market, session, snap.now_ms)
+    assert intent.reserved_cash == decision.max_total_reserved < D("4.85")
+    assert ledger.summary(snap.now_ms).risk_reserve == intent.reserved_cash
+    fill(ledger, intent)
+    hedge = pair_decision(snap, config, ledger.active_positions())
+    ledger.reserve_entry(hedge, snap.market, session, snap.now_ms + 1)
+    ledger.close()

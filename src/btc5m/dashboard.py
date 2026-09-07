@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import signal
+import sqlite3
 import threading
 import time
 from collections import Counter
@@ -19,6 +20,7 @@ from btc5m.config import STRATEGIES, Config
 from btc5m.dashboard_live import LiveDashboardReader
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.paper import PAPER_MATCHING_MODEL
+from btc5m.research import ResearchReader
 
 D = Decimal
 ASSETS = Path(__file__).with_name("dashboard_assets")
@@ -40,7 +42,7 @@ def lab_profit_context(payload: dict[str, Any]) -> None:
 
 
 DESCRIPTIONS = {
-    "momentum": "Late directional entry with protected exits",
+    "momentum": "Recent BTC continuation with protected exits; the current signal is shown in sampling details",
     "value": "Settlement value after execution costs",
     "fast_value": "Value with aligned Binance information",
     "model_exit": "Value entry with a sale-versus-hold exit",
@@ -74,6 +76,16 @@ EXPLANATIONS = {
 
 def explain(reason: str, features: dict[str, Any] | None = None) -> tuple[str, str]:
     features = features or {}
+    if reason == "MOMENTUM_RECENT_MOVE" and all(
+        k in features
+        for k in ("momentum_recent_move_usd", "momentum_signal_z", "momentum_required_z")
+    ):
+        move = D(str(features["momentum_recent_move_usd"]))
+        return "strategy", (
+            f"Recent BTC move {'-' if move < 0 else '+'}${abs(move):.2f}; "
+            f"size relative to recent price variation {float(features['momentum_signal_z']):.2f}, "
+            f"requiring {float(features['momentum_required_z']):.2f}. This ratio is not a win probability."
+        )
     if reason == "PRICE_BAND" and all(
         k in features for k in ("best_ask", "minimum_ask", "maximum_ask")
     ):
@@ -183,11 +195,14 @@ class DashboardReader:
         self.lifecycle: dict[str, Any] = {}
         self.heartbeat: dict[str, Any] = {}
         self.restarts: list[int] = []
+        self.policy_change: dict[str, Any] = {}
 
     def _consume(self, kind: str, stamp: int, data: dict[str, Any]) -> None:
         self.first_ms = min(self.first_ms, stamp) if self.first_ms is not None else stamp
         self.last_ms = max(self.last_ms or stamp, stamp)
         minute = stamp // 60000 * 60000
+        if kind == "CONFIGURATION_CHANGED":
+            self.policy_change = {**data, "at_ms": stamp}
         if kind == "STOP_CLEARED":
             self.restarts.append(stamp)
             self.restarts = self.restarts[-100:]
@@ -544,6 +559,7 @@ class DashboardReader:
                 },
                 "portfolios": portfolios,
                 "descriptions": DESCRIPTIONS,
+                "policy_change": self.policy_change,
                 "decisions": {name: self.decisions[name] for name in selected},
                 "feeds": self.feeds,
                 "books": latest_books,
@@ -583,6 +599,7 @@ def make_server(
 ) -> ThreadingHTTPServer:
     if not 0 <= port <= 65535:
         raise LedgerError("INVALID_DASHBOARD_PORT")
+    research = ResearchReader(reader.path)
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self) -> None:
@@ -624,6 +641,7 @@ def make_server(
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/lab.js": ("lab.js", "text/javascript; charset=utf-8"),
+                "/research.js": ("research.js", "text/javascript; charset=utf-8"),
                 "/style.css": ("style.css", "text/css; charset=utf-8"),
                 "/icon.svg": ("icon.svg", "image/svg+xml"),
             }
@@ -672,6 +690,36 @@ def make_server(
                     payload = json.dumps(lab_payload, allow_nan=False).encode()
                 except (OSError, ValueError, KeyError, TypeError, ArithmeticError):
                     self.respond(503, b'{"error":"LAB_REPORT_UNAVAILABLE"}', "application/json")
+                    return
+                self.respond(200, payload, "application/json")
+            elif path == "/api/research":
+                from urllib.parse import parse_qs
+
+                params = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                names = ("suite", "phase", "selected", "comparison", "cohort")
+                if set(params) != set(names) or any(len(params[k]) != 1 for k in names):
+                    self.respond(400, b'{"error":"INVALID_RESEARCH_QUERY"}', "application/json")
+                    return
+                try:
+                    result = research.snapshot(*(params[k][0] for k in names))
+                    payload = json.dumps(result, allow_nan=False).encode()
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    ArithmeticError,
+                    sqlite3.Error,
+                    LedgerError,
+                ) as exc:
+                    invalid = isinstance(exc, ValueError) and str(exc).startswith(
+                        "UNKNOWN_RESEARCH_"
+                    )
+                    self.respond(
+                        400 if invalid else 503,
+                        b'{"error":"RESEARCH_UNAVAILABLE_OR_INVALID_SELECTION"}',
+                        "application/json",
+                    )
                     return
                 self.respond(200, payload, "application/json")
             elif path == "/api/live":

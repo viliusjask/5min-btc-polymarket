@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
     <script src="/lab.js" defer></script>
+    <script src="/research.js" defer></script>
   </head>
   <body>
     <header class="masthead">
@@ -35,7 +36,27 @@
         <label class="select-label">Experiment study<select id="lab-suite"><option value="directional">Original parameter study</option><option value="order-flow">Order flow and pair construction</option></select></label>
         <div class="statusbar"><strong id="lab-status">Loading experiments…</strong><span id="lab-updated"></span></div>
         <div id="lab-error" class="error" role="alert" hidden></div>
+        <nav class="tabs" aria-label="Experiment analysis"><button data-lab-section="overview" class="selected" aria-pressed="true">Overview</button><button data-lab-section="research" aria-pressed="false">Strategy research</button></nav>
         <section class="insight"><span class="insight-mark">i</span><div><h2>Find evidence, then test it on later rounds.</h2><p id="lab-intro">Each variant has its own paper wallet, using the same recorded inputs and execution rules. These balances are separate from the six original portfolios.</p></div></section>
+        <div id="strategy-research" hidden>
+          <div class="section-heading lab-filters">
+            <label class="select-label">Phase<select id="research-phase"></select></label>
+            <label class="select-label">Strategy<select id="research-selected"></select></label>
+            <label class="select-label">Compare against<select id="research-comparison"></select></label>
+            <label class="select-label">Completed results<select id="research-cohort"><option value="all">All recorded, including flags</option><option value="unflagged">Unflagged only</option></select></label>
+          </div>
+          <p id="research-scope" class="caption"></p><p id="research-error" class="error" hidden role="alert"></p>
+          <section class="insight"><span class="insight-mark">i</span><div><h2 id="research-title">What supports this result?</h2><p id="research-conclusion">Reading existing completed trades…</p></div></section>
+          <section id="research-metrics" class="metrics"></section>
+          <div class="chart-grid"><section class="panel"><h3>Profit from each completed market</h3><div id="research-round-chart" class="chart"></div><p class="caption">One bar per five-minute market that used capital. Several fills in one market remain one result. Hover for the amount and UTC time.</p></section><section class="panel"><h3>Does it repeat across hours?</h3><div id="research-hour-chart" class="chart"></div><p class="caption">Profit grouped by market opening hour, not payment time. Partial hours and excluded rounds are shown in the table.</p><div id="research-hours" class="table-wrap"></div></section></div>
+          <div class="chart-grid"><section class="panel"><h3>What if the biggest wins disappear?</h3><div id="research-outliers" class="table-wrap"></div><p class="caption">Remove the best one or three profitable market rounds. This is a concentration check on this sample, not a new strategy or a forecast.</p></section><section class="panel"><h3>How much do trading costs matter?</h3><div id="research-costs" class="table-wrap"></div><p id="research-cost-note" class="caption"></p></section></div>
+          <section class="panel"><div class="panel-heading"><h3>Which entry conditions earned or lost money?</h3><label class="select-label">Group by<select id="research-group"><option value="entry_price">Entry price</option><option value="entry_time">Seconds remaining at entry</option><option value="direction">First purchased outcome</option><option value="exit_reason">Executed exit reason</option></select></label></div><div id="research-groups" class="table-wrap"></div><p class="caption">Fixed groups, selected completed cohort. Entry means the first filled purchase, not an unfilled quote. Split conversions are separate. Exit groups explain outcomes after the fact; none is a validated entry filter.</p></section>
+          <section class="panel"><h3>Does it beat the comparison on the same markets?</h3><section id="research-matched" class="metrics"></section><div id="research-compare-chart" class="chart"></div><p id="research-match-note" class="caption"></p><div id="research-parameters" class="table-wrap"></div></section>
+          <section class="panel"><h3>How sensitive is the average to the sampled time periods?</h3><div id="research-blocks" class="table-wrap"></div><p class="caption">Descriptive 95% resampling ranges for mean net dollars per market round. Whole 30/60-minute blocks keep nearby rounds together. Only complete calendar blocks enter; a missing or unfinished round removes its whole block. At least six blocks are required. These ranges depend on the observed sample and block choice; they are not the probability of future profit, do not adjust for trying many variants, and do not validate a strategy.</p></section>
+          <div class="chart-grid"><section class="panel"><h3>Largest winning rounds</h3><div id="research-best" class="table-wrap"></div></section><section class="panel"><h3>Largest losing rounds</h3><div id="research-worst" class="table-wrap"></div></section></div>
+          <p class="caption">This is performance research on simulated fills. Accounting and data flags remain in Overview. Later-data tests retain their registered rules; viewing these results does not change them.</p>
+          <button id="research-export">Download this analysis</button>
+        </div>
         <div id="lab-content" hidden>
           <div class="section-heading lab-filters">
             <label class="select-label">Study phase<select id="lab-phase"></select></label>

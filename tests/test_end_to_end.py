@@ -115,7 +115,8 @@ def test_entry_partial_exits_confirmed_fees_flat_report(tmp_path, monkeypatch):
         assert output["summary"]["risk_reserve"] == 0
         assert output["summary"]["claimable_value"] == 0
         assert output["summary"]["unresolved_orders"] == ()
-        assert len(output["first_eligible_screens"]) == 2
+        # The synthetic flat recent path qualifies Value only, despite its large opening lead.
+        assert len(output["first_eligible_screens"]) == 1
         assert output["confirmation_counts"]["confirmed"] == 1
         assert venue.posts == 3
         await broker.close()

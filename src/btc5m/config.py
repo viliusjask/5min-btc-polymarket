@@ -29,6 +29,9 @@ class StrategyConfig:
     min_terminal_surplus: Decimal = Decimal(".02")
     extra_price_allowance: Decimal = Decimal(".01")
     max_spread: Decimal = Decimal(".03")
+    momentum_signal: str = "recent_continuation"
+    momentum_lookback_seconds: int = 30
+    momentum_min_signal_z: Decimal = Decimal(".5")
     momentum_min_move_usd: Decimal = Decimal("50")
     momentum_min_ask: Decimal = Decimal(".70")
     momentum_max_ask: Decimal = Decimal(".95")
@@ -65,6 +68,12 @@ class StrategyConfig:
             raise ValueError("per-share allowances must be less than one")
         if self.momentum_min_move_usd == 0:
             raise ValueError("momentum move must be positive")
+        if self.momentum_signal not in ("opening_lead", "recent_continuation"):
+            raise ValueError("unsupported momentum signal")
+        if not 5 <= self.momentum_lookback_seconds <= self.volatility_short_seconds:
+            raise ValueError("momentum lookback must fit the short history window")
+        if not 0 < self.momentum_min_signal_z <= 100:
+            raise ValueError("momentum normalized move must be positive and bounded")
 
 
 @dataclass(frozen=True)

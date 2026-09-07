@@ -120,7 +120,7 @@ counters and accounting remain cumulative. Account-wide lifetime returns are not
 
 | # | CLI strategy | What changes |
 | --- | --- | --- |
-| 1 | `momentum` | Late directional baseline using the BTC move, entry band and hard exits. |
+| 1 | `momentum` | Recent 30-second BTC continuation, scaled by five-minute variation, with entry band and hard exits. |
 | 2 | `value` | Settlement-aware probability, executable depth, fees and conservative sensitivity scenarios. |
 | 3 | `fast_value` | Strategy 2 with a Binance BTCUSDT return aligned to the latest Chainlink point. |
 | 4 | `model_exit` | Strategy 2 entries, plus a fresh sale-versus-hold decision, including the final averaging minute. |
@@ -162,7 +162,7 @@ Both outcome books and raw Chainlink spot history are required; there is no subs
 | Shared new-entry window | 60–180 seconds before expiry |
 | Value ask band / maximum spread | Positive executable prices up to0.92; no lower floor / 0.03 |
 | Value minimum terminal surplus proxy | 0.02/share after estimated fees and allowances |
-| Momentum comparison | USD50 move, ask0.70–0.95, 90–150 seconds left |
+| Momentum | Recent 30s move / (five-minute sigma × sqrt(elapsed)) ≥0.5; ask 0.70–0.95; 90–150 seconds left |
 | Raw volatility windows / stress | 300 and1800 seconds / 1.25 times sigma |
 | Adverse reference scenario | USD10 |
 | Price/book maximum age | 5 seconds; future tolerance1 second |

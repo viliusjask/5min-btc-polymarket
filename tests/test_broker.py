@@ -292,7 +292,9 @@ def test_capped_cash_entry_signs_exact_affordable_shares_with_actual_sdk(
 
     async def run():
         venue = Venue()
-        config = replace(Config(), strategy=replace(Config().strategy, mode=mode))
+        config = replace(
+            Config(), strategy=replace(Config().strategy, mode=mode, momentum_signal="opening_lead")
+        )
         broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue, config=config)
         snap = make_snapshot(ask=ask)
         snap = replace(

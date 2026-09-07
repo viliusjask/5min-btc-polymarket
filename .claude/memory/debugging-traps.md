@@ -270,3 +270,23 @@ retroactive attribution. Two audited large gains had adequate recorded endpoint 
 and matching nearby public trade prices despite path gaps; neither dismiss them as fake
 nor promote them to validated profit. Preserve registered studies on their original code
 when deploying collector/dashboard diagnostics.
+
+### 2026-09-07 — strategy name versus actual signal, and awaited exit inputs
+
+- A large positive opening-reference distance can coexist with a falling recent BTC path.
+  Audit actual entry-time 10/30-second returns before treating a quiet or losing Momentum
+  portfolio as a threshold-tuning problem. The previous implementation never used those
+  returns and depended on an unnecessary terminal model. Keep an explicit legacy comparator;
+  compare causal filled outcomes separately from raw candidate counts and flagged replays.
+- A model snapshot captured before awaited book/settlement work can be stale or invalidated
+  by the time an exit evaluates. Reproduce with delayed I/O and a missing/conflicted replacement;
+  reread immediately before evaluation, retaining the existing freshness/identity checks.
+- Pair opening risk checks must consider funding the intended completion before acquiring
+  unhedged inventory. A resting hedge also must not postpone the inventory's timeout. Test
+  zero/partial/full late fills at the exact deadline, then cancellation reconciliation.
+- New Config fields change every mode's fingerprint. Ordinary reload can reset session-loss
+  accounting or reject active exposure. An explicitly audited paper metadata cutover must
+  preserve sessions and financial rows. Both pinned lab workers read the original paper.toml:
+  a changed schema requires a separate new config path for updated collector/dashboard. Keep
+  full backup verification online; avoid multi-GB offline copies turning deployment into a
+  multi-minute capture gap. Never recover by restoring stale financial rows.

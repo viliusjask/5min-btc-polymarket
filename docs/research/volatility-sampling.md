@@ -1,3 +1,76 @@
+# Current policy: bounded irregular intervals
+
+2026-09-07. This supersedes the hard 12-second veto in the historical September 6 audit below.
+The continuous capture repeatedly contained 15-second sampled gaps following short feed outages.
+Rejecting every window containing one such gap disabled all six strategies for up to 30 minutes,
+even with 98–99% point coverage and currently healthy inputs.
+
+`BOUNDED_INTERVALS_V1` retains both history lengths, the five-second grid, the two-second selection
+tolerance, distinct source observations, required endpoints/span and at least 95% point coverage.
+Intervals longer than `max_sample_gap_ms` (12 seconds by default) consume an additional time
+budget: together they may occupy at most 5% of the actual sampled span. Both percentages come
+from the existing `min_sample_coverage` setting; no new configuration knobs were added.
+
+For a 300-second span, one 15-second interval fits exactly. A 20-second interval does not.
+For an 1800-second span, up to 90 seconds in such intervals fits, but point coverage and the
+separate recent five-minute check must also pass. A large outage still blocks model-based entry.
+A missing start or end remains unavailable, rather than being reconstructed. Raising the
+coverage requirement tightens both checks. The existing configuration key now identifies which
+intervals consume this budget; it is no longer an unconditional maximum interval.
+
+All observed endpoint price changes remain in `sum(delta_price²) / actual_elapsed_seconds`,
+including returns across irregular intervals. Dropping those returns could erase observed jumps;
+filling holes with repeated or interpolated prices would claim unobserved data. Neither is done.
+Under the model's constant-variance, zero-drift and exogenous-observation assumptions,
+`E[delta_price² | delta_time] = sigma² * delta_time`, so uneven intervals do not require inventing
+five-second returns. The estimator's square root retains finite-sample bias. Real oracle/BTC
+observations can violate these assumptions, and reversals inside missing intervals remain unknown.
+The literature treats random observation timing as a statistical issue, rather than equating
+one irregular interval with unusable data: [Aït-Sahalia and Mykland](https://arxiv.org/abs/math/0503679).
+That paper does not validate this application's 95% threshold or its profitability.
+
+Diagnostics record point coverage, total duration of long intervals, regular-time coverage,
+largest interval, policy version and effective increment count. The latter is
+`sum(delta_time)² / sum(delta_time²)`: under independent Gaussian increments it measures precision
+relative to equally spaced returns. A single 15-second interval in a 300-second window gives
+about 54.55 effective increments instead of 60, roughly 4.9% greater variance-estimator standard
+error under those assumptions. This is a diagnostic, not a confidence bound on contract prices.
+
+Current price/book freshness remains five seconds. The SDK feed's inactivity deadline is now
+15 seconds (or the configured freshness budget if larger), while subscription/HTTP setup remains
+bounded separately. Brief silence pauses entries through existing freshness checks without
+immediately tearing down a potentially healthy subscription. Persistent silence or an actual
+transport error still reconnects. [Polymarket's real-time feed interface](https://docs.polymarket.com/market-data/realtime-data)
+remains the source; no alternate settlement source or invented backfill was introduced.
+
+## Captured-data verification
+
+Read-only replay used 7,226 public records in original receipt order through observation event
+203848. The copied public-prefix SHA256 is
+`8f48005e2172d1084dc39a6e21e92c0d93671a3c59d7ffa9e69c0bb8662244ed`.
+It includes genuine gaps and earlier development interruptions. Of checks with sufficient
+observed span:
+
+| History | Checks with enough span | Old valid | New valid | Newly usable |
+|---|---:|---:|---:|---:|
+| 5 minutes | 1,393 | 1,268 | 1,380 | 112 |
+| 30 minutes | 1,104 | 405 | 797 | 392 |
+
+Every previously valid estimate is exactly unchanged. These are overlapping availability
+checks, not independent trials, a portfolio backtest, or evidence of higher returns. The last
+captured long window retained 357/361 points, a 15-second largest interval and 99.17% regular-time
+coverage; the old policy rejected it and the new policy accepted it. The unavailable windows
+still fail coverage, endpoint or span requirements. Original paper journals were not rewritten.
+
+Ignored reproduction files in `.worktrees/history-resilience/work`: `replay_history.py`,
+`history-public-prefix.json`, `history-window-replay.json`, `history-replay-summary.json`,
+and `baseline_strategy.py` from merged commit d26e799. Unit checks cover budget boundaries,
+large outages, observed jumps, tighter coverage, unchanged full-history estimates, stale prices,
+brief delayed streams, persistent silence and dashboard readiness. The adapter tests exercise
+real cancellation deadlines scaled down for fixture speed; both fail against the prior consumer.
+
+## Historical September 6 audit
+
 Review date: 6 September 2026. Scope: a read-only viability check of volatility sampling against recorded anonymous public feeds. No repository code, configuration, market orders, or research objectives were changed.
 
 **Recommendation: adopt the proposed sparse-grid policy as a documented operational hypothesis.** Retain the two-second source-age tolerance for each historical grid selection, permit isolated unavailable grid points, require at least 95% requested-point coverage, require actual accepted span within two seconds of the target span, and cap the interval between accepted source observations at 12 seconds. Keep the estimator based on actual source-price differences and actual elapsed time. Keep entry-price/order-book freshness and exact opening-anchor rules separate and unchanged. The evidence supports this bounded handling of sparse historical observations; it does not establish that 95% or 12 seconds is statistically optimal.

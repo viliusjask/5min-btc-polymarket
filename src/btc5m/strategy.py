@@ -28,6 +28,7 @@ _AMOUNT_DECIMALS = {
     Decimal(".0001"): 6,
 }
 _ZERO = Decimal(0)
+SAMPLING_POLICY = "BOUNDED_INTERVALS_V1"
 
 
 def fee_for(shares: Decimal, price: Decimal, rate: Decimal, exponent: int = 1) -> Decimal:
@@ -148,6 +149,9 @@ class _SampleWindow:
     coverage: float
     max_gap_ms: int
     rejection: str | None
+    regular_time_coverage: float = 0.0
+    irregular_seconds: float = 0.0
+    effective_increments: float = 0.0
 
 
 def _sample_window(
@@ -177,8 +181,19 @@ def _sample_window(
         right.timestamp_ms - left.timestamp_ms
         for left, right in zip(samples, samples[1:], strict=False)
     ]
+    total_ms = sum(gaps)
+    irregular_ms = sum(gap for gap in gaps if gap > data.max_sample_gap_ms)
     result = _SampleWindow(
-        None, elapsed, count, requested, count / requested, max(gaps, default=0), None
+        None,
+        elapsed,
+        count,
+        requested,
+        count / requested,
+        max(gaps, default=0),
+        None,
+        (total_ms - irregular_ms) / total_ms if total_ms else 0.0,
+        irregular_ms / 1000,
+        total_ms**2 / sum(gap**2 for gap in gaps) if total_ms else 0.0,
     )
     if count < 2:
         return replace(result, rejection="INSUFFICIENT_SAMPLES")
@@ -190,8 +205,12 @@ def _sample_window(
         return replace(result, rejection="INSUFFICIENT_SPAN")
     if Decimal(count) < data.min_sample_coverage * requested:
         return replace(result, rejection="INSUFFICIENT_COVERAGE")
-    if result.max_gap_ms > data.max_sample_gap_ms:
-        return replace(result, rejection="EXCESSIVE_GAP")
+    # A single delayed interval must not veto an otherwise usable half-hour.
+    # Bound the total time in intervals above the normal-gap threshold using
+    # the same completeness requirement as point coverage. Keep ALL observed
+    # endpoint changes below: dropping gap returns would discard observed jumps.
+    if Decimal(irregular_ms) > (1 - data.min_sample_coverage) * total_ms:
+        return replace(result, rejection="INSUFFICIENT_INTERVAL_COVERAGE")
     # A gap contributes the actual endpoint change over its actual elapsed time.
     # Decimal subtraction retains source precision; only variance math uses float.
     try:
@@ -205,6 +224,23 @@ def _sample_window(
     except (ValueError, OverflowError):
         return replace(result, rejection="INVALID_VARIANCE")
     return replace(result, sigma=math.sqrt(variance_rate))
+
+
+def _cash_depth(
+    book: Book, principal: Decimal, rate: Decimal, exponent: int
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    remaining = principal
+    shares, buy_fee, last_price = _ZERO, _ZERO, _ZERO
+    for level in book.asks:
+        cash = min(remaining, level.price * level.size)
+        quantity = cash / level.price
+        shares += quantity
+        buy_fee += fee_for(quantity, level.price, rate, exponent)
+        remaining -= cash
+        last_price = level.price
+        if remaining == 0:
+            break
+    return remaining, shares, buy_fee, last_price
 
 
 def _quote(
@@ -227,6 +263,13 @@ def _quote(
         if strategy.mode != "momentum"
         else (strategy.momentum_min_ask, strategy.momentum_max_ask)
     )
+    features.update(
+        best_bid=str(book.bids[0].price),
+        best_ask=str(book.asks[0].price),
+        minimum_ask=str(minimum_ask),
+        maximum_ask=str(maximum_ask),
+        required_terminal_surplus=str(strategy.min_terminal_surplus),
+    )
     if not minimum_ask <= book.asks[0].price <= maximum_ask:
         return _skip(snapshot, "PRICE_BAND", features, probability_up, floor)
 
@@ -239,27 +282,44 @@ def _quote(
     reserved = principal + reserved_fee
     if principal <= 0:
         return _skip(snapshot, "BELOW_MINIMUM_SIZE", features, probability_up, floor)
-    remaining = principal
-    shares, buy_fee, last_price = _ZERO, _ZERO, _ZERO
-    for level in book.asks:
-        cash = min(remaining, level.price * level.size)
-        quantity = cash / level.price
-        shares += quantity
-        buy_fee += fee_for(quantity, level.price, market.fee_rate, market.fee_exponent)
-        remaining -= cash
-        last_price = level.price
-        if remaining == 0:
-            break
+    remaining, shares, buy_fee, last_price = _cash_depth(
+        book, principal, market.fee_rate, market.fee_exponent
+    )
     if remaining > 0:
         return _skip(snapshot, "INSUFFICIENT_DEPTH", features, probability_up, floor)
     limit = ((last_price + config.execution.buy_slippage) / market.tick_size).to_integral_value(
         rounding=ROUND_CEILING
     ) * market.tick_size
-    if limit > maximum_ask or limit > 1 - market.tick_size:
+    if last_price > maximum_ask or last_price > 1 - market.tick_size:
         return _skip(snapshot, "PRICE_BAND", features, probability_up, floor)
+    # Slippage is permission to pay more, not a requirement to reserve a
+    # price that violates the share minimum or the configured price band.
+    ceiling = min(maximum_ask, 1 - market.tick_size, principal / market.min_order_size)
+    ceiling = (ceiling / market.tick_size).to_integral_value(rounding=ROUND_DOWN) * market.tick_size
+    limit = min(limit, ceiling)
+    if limit < last_price:
+        return _skip(snapshot, "BELOW_MINIMUM_SIZE", features, probability_up, floor)
     # Protected SDK BUY ceilings the requested shares, never worsening the signed cash/share cap.
     quantum = Decimal(10) ** -_AMOUNT_DECIMALS[market.tick_size]
     minimum_receive = (principal / limit).quantize(quantum, rounding=ROUND_CEILING)
+    if shares < minimum_receive:
+        # A protected SDK BUY rounds shares UP. At an exact-price ceiling that
+        # can demand a fraction more than the cash can buy. Reduce cents to the
+        # nearest amount whose shares are exact on the SDK grid, then reprice
+        # the smaller cash order. Never round required shares down or spend more.
+        numerator, denominator = limit.as_integer_ratio()
+        cash_step = (
+            100
+            * numerator
+            // math.gcd(100 * numerator, denominator * 10 ** _AMOUNT_DECIMALS[market.tick_size])
+        )
+        principal = Decimal(int(principal * 100) // cash_step * cash_step) / 100
+        remaining, shares, buy_fee, _ = _cash_depth(
+            book, principal, market.fee_rate, market.fee_exponent
+        )
+        reserved_fee = principal * market.fee_rate
+        reserved = principal + reserved_fee
+        minimum_receive = (principal / limit).quantize(quantum, rounding=ROUND_CEILING)
     if minimum_receive < market.min_order_size or shares < minimum_receive:
         return _skip(snapshot, "BELOW_MINIMUM_SIZE", features, probability_up, floor)
     average_ask = principal / shares
@@ -281,6 +341,7 @@ def _quote(
             "reserved_buy_fee": str(reserved_fee),
             "selected_spread": str(book.asks[0].price - book.bids[0].price),
             "terminal_surplus_proxy_units": "USD/share; uncalibrated terminal screen, not stopped-policy return",
+            "terminal_surplus_proxy": str(surplus),
         }
     )
     if strategy.mode != "momentum" and surplus <= strategy.min_terminal_surplus:
@@ -412,6 +473,8 @@ def fair_value(snapshot: Snapshot, config: Config) -> FairValue:
     point = snapshot.spot
     features: dict[str, float | str] = {
         "mode": strategy.mode,
+        "sampling_policy": SAMPLING_POLICY,
+        "required_history_coverage": str(data.min_sample_coverage),
         "config_hash": config.fingerprint,
         "entry_tau_seconds": (market.end_s * 1000 - snapshot.now_ms) / 1000,
         "model_tau_seconds": (market.end_s * 1000 - point.timestamp_ms) / 1000,
@@ -462,6 +525,9 @@ def fair_value(snapshot: Snapshot, config: Config) -> FairValue:
                     f"{label}_requested_sample_count": window.requested_count,
                     f"{label}_sample_coverage": window.coverage,
                     f"{label}_max_sample_gap_ms": window.max_gap_ms,
+                    f"{label}_regular_time_coverage": window.regular_time_coverage,
+                    f"{label}_irregular_seconds": window.irregular_seconds,
+                    f"{label}_effective_increments": window.effective_increments,
                     f"{label}_sampling_status": window.rejection or "VALID",
                 }
             )
@@ -581,7 +647,18 @@ def evaluate(snapshot: Snapshot, config: Config) -> Decision:
         )
     first = decisions[0]
     return (
-        replace(first, features={**first.features, "other_side_reason": decisions[1].reason})
+        replace(
+            first,
+            features={
+                **first.features,
+                "other_side_reason": decisions[1].reason,
+                **{
+                    "other_side_" + key: value
+                    for key, value in decisions[1].features.items()
+                    if key in ("best_bid", "best_ask", "scenario_floor", "terminal_surplus_proxy")
+                },
+            },
+        )
         if len(decisions) > 1
         else first
     )

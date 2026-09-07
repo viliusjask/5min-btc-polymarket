@@ -2,12 +2,12 @@
 
 The September 7 setup runs all six portfolios with **USD100 each**. The collector and dashboard
 are systemd user services, supervised independently from Codex, terminals and browser tabs.
-The collector uses `paper --continuous`; funded trading is not started. Existing loss limits,
-per-entry budgets and daily round limits still apply. Continuous operation does not override them.
+The collector uses `paper --continuous`; funded trading is not started. There is no daily
+entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry budgets still apply.
 
 ## Installed locations and controls
 
-- Code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/paper-service` (`feat/paper-service`).
+- Code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/history-resilience` (`fix/history-resilience`).
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
 - Configuration: `/home/vilius/.config/btc5m/paper.toml` — USD600 allocation, USD5 entry budget,
   USD10 day/session loss allowance per portfolio. Restarting preserves sessions and balances.

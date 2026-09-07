@@ -21,6 +21,7 @@ from btc5m.ledger import Ledger, LedgerError
 from btc5m.market_data import DataUnavailable, MarketData
 from btc5m.paper import PAPER_MATCHING_MODEL, PaperBroker
 from btc5m.service import atomic_json, notify
+from btc5m.strategy import SAMPLING_POLICY
 
 MASTER_WALLET = "0x" + "00" * 20
 
@@ -93,7 +94,7 @@ def paper_report(path: Path, *, records: bool = False) -> dict[str, Any]:
         "limitations": [
             "Simulated fills and PnL, not venue execution or evidence of profitable live trading.",
             "Each portfolio is an independent counterfactual; simultaneous simulated orders do not compete with each other for public depth.",
-            "Resting orders require subsequent aggressive SELL volume at/below the quote after observed same-price queue depth; cancellations ahead are not credited.",
+            "Resting orders require subsequent direct SELL or complementary BUY volume. Same-price volume depletes the queue; trades strictly through the bid clear its obsolete queue. Book cancellations alone never create fills.",
             "Uncertain rounds with stream gaps must be excluded from performance conclusions.",
             "Simulated settlement assumes automatic zero-cost redemption after official labels; live redemption remains manual.",
         ],
@@ -226,6 +227,7 @@ async def run_paper(
                 "received_ms": int(time.time() * 1000),
                 "status": "started",
                 "code": PAPER_MATCHING_MODEL,
+                "source": SAMPLING_POLICY,
             }
         )
         lifecycle_started = True

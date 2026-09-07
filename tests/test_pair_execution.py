@@ -115,4 +115,12 @@ def test_cancelled_unfilled_round_is_an_attempt_not_a_completed_trade(tmp_path):
     result = ledger.portfolio_results()["passive_pairs"]
     assert result["attempted_rounds"] == 1
     assert result["filled_rounds"] == result["completed_rounds"] == 0
+    assert ledger.summary(snap.now_ms).daily_entries == 0
+    # Later quotes have no opening_round key; their pending/filled risk still counts.
+    second = ledger.reserve_entry(
+        pair_decision(snap, config, ()), snap.market, session, snap.now_ms + 1
+    )
+    assert ledger.summary(snap.now_ms + 1).daily_entries == 1
+    fill(ledger, second, quantity=D(1), terminal=True)
+    assert ledger.summary(snap.now_ms + 1).daily_entries == 1
     ledger.close()

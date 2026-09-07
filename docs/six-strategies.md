@@ -37,10 +37,21 @@ This document supersedes the latter's implementation deferrals. It does not esta
    model is unavailable but a verifiably capped completion remains possible. This is a bounded
    experimental urgency rule, not fitted optimal market making.
 
+These are controlled variants: `value`/`model_exit` share entries, and the two pair modes share
+their opening rule. The inventory adjustment can also hit the same hedge cap, producing the
+same quote. Simultaneous identical orders in independent portfolios are therefore possible.
+The [September7 execution and entry audit](research/execution-and-entry-audit.md) distinguishes
+that behavior from the confirmed missed-fill and entry-sizing defects.
+
 The five-second order lifetime is implemented through explicit GTC cancellation. GTC means
 "good till cancelled": an abrupt process failure can leave a venue order active. A cancel
 acknowledgment does not release the journal's reservation; terminal order/fill evidence does.
 See the [venue order lifecycle](https://docs.polymarket.com/trading/place-orders).
+There is no daily entry-count limit by default (`max_entries_per_day = 0`). The former20-entry
+default was an application guard, not a strategy rule, and was removed at the user's request.
+An explicitly configured positive limit counts distinct filled rounds plus unresolved opening
+risk. Confirmed zero-fill cancellations release that slot; they remain recorded order attempts.
+Partial fills and unknown submissions count, including later pair quotes.
 An existing quote is evaluated at its own price: an improved bid or a newly preferred outcome
 does not by itself cancel it and lose priority. Opening quotes must keep their required model
 surplus; hedge prices retain the approved pair-cost reservation. Data/rule changes, lost edge,
@@ -118,6 +129,9 @@ the apparent result. See [backtest selection research](https://escholarship.org/
 - An order waits at least 250ms and needs a subsequently observed fresh book. A protected
   cash BUY must execute its full requested principal and receive the minimum protected shares;
   a protected share SELL can execute partially. Decimal arithmetic preserves cash accounting.
+  Optional entry slippage is capped by the configured price ceiling and affordable minimum
+  shares. If the SDK's upward share rounding would exceed the cash available at that limit,
+  a smaller cent-denominated principal with exactly representable shares is quoted and reserved.
 - Resting orders use the displayed same-price queue at simulated activation. Subsequent
   aggressive SELL trades at or below the limit, or BUY trades in the opposite outcome at a
   complementary price, deplete that queue before filling the order. Transaction/price route
@@ -127,6 +141,10 @@ the apparent result. See [backtest selection research](https://escholarship.org/
   not reproduce actual priority or the market impact of inserting our hypothetical order.
   Trades sharing the activation book's timestamp are excluded because their volume may
   already be reflected in that book.
+  `SOURCE_ORDERED_FLOW_V3` compares venue and receipt clocks separately. A qualifying trade
+  strictly through our bid clears the obsolete same-price queue and credits only observed
+  volume, at our own bid. New state retains original queue depth and both book timestamps;
+  older unknown timestamps are not reconstructed. Prior matching results remain labeled.
 - A cancellation has simulated latency and a five-second late-trade grace period. Stream
   discontinuity invalidates the queue and marks the round uncertain. A new process cannot
   inherit old queue continuity, even if its numerical connection counter happens to match.

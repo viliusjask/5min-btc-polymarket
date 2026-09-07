@@ -23,7 +23,8 @@ allocation_usd = 100
 trade_budget_usd = 5
 daily_loss_usd = 10
 session_loss_usd = 10
-max_entries_per_day = 20
+# Zero means no daily entry-count limit.
+max_entries_per_day = 0
 
 [data]
 max_price_age_ms = 5000

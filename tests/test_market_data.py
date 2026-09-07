@@ -179,6 +179,35 @@ def test_exact_source_boundary_and_full_precision_with_out_of_order_duplicates()
     asyncio.run(scenario())
 
 
+def test_published_stream_book_keeps_original_receipt_and_outcome_identity():
+    from dataclasses import replace
+
+    from btc5m.streams import PublicStreams
+
+    async def run():
+        venue = Venue()
+        async with venue.adapter() as data:
+            await venue.emit()
+            snapshot = await data.snapshot()
+            streams = PublicStreams(Config(), clock=venue.clock.wall)
+            book = replace(snapshot.up_book, received_ms=venue.clock.ms - 100)
+            streams.books[book.token_id] = book
+            data.streams = streams
+            current = data.current_snapshot()
+            assert current is not None and current.up_book.received_ms == book.received_ms
+            record = next(
+                r
+                for r in reversed(venue.records)
+                if r["kind"] == "book" and r["token_id"] == book.token_id
+            )
+            assert record["received_ms"] == book.received_ms
+            assert record["source_ms"] == book.timestamp_ms
+            assert record["side"] == "UP"
+            assert record["slug"] == snapshot.market.slug
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("captured_allowed", [True, False])
 def test_missing_boundary_and_official_only_policy_never_use_neighbor(
     captured_allowed: bool,
@@ -600,7 +629,9 @@ def test_raw_source_gap_remains_visible_in_strategy_warmup() -> None:
             assert len(result.history) == 349
             decision = evaluate(result, Config())
             assert decision.reason == "INSUFFICIENT_HISTORY"
-            assert decision.features["long_sampling_status"] == "EXCESSIVE_GAP"
+            assert decision.features["short_sampling_status"] == "INSUFFICIENT_COVERAGE"
+            assert decision.features["long_sampling_status"] == "VALID"
+            assert decision.features["long_irregular_seconds"] == 65
 
     asyncio.run(scenario())
 
@@ -1104,3 +1135,42 @@ def test_metadata_diagnostic_preserves_first_rejection_before_later_bad_field(fi
         )
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("resume", [True, False])
+def test_stale_prices_pause_entries_without_immediate_transport_reconnect(monkeypatch, resume):
+    async def scenario():
+        venue = Venue()
+        closed = []
+
+        async def close():
+            closed.append(True)
+
+        venue.client.spot.close = close
+        venue.client.twap.close = close
+        original_timeout = asyncio.timeout
+        # Keep the actual cancellation boundary; scale monotonic waits for a fast fixture.
+        monkeypatch.setattr(asyncio, "timeout", lambda delay: original_timeout(delay / 100))
+        async with venue.adapter() as data:
+            await venue.emit()
+            before = await data.snapshot()
+            venue.clock.ms += 6000
+            venue.clock.elapsed += 6
+            for book in venue.books.values():
+                book["timestamp"] = str(venue.clock.ms - 1000)
+            await asyncio.sleep(0.065)
+            with pytest.raises(DataUnavailable, match="STREAM_SILENT"):
+                await data.snapshot()
+            assert not closed
+            if resume:
+                await advance_fixture_feeds(venue, 0)
+                after = await data.snapshot()
+                assert not closed
+                assert len(after.history) == len(before.history) + 1
+                assert after.history[-1].timestamp_ms > before.history[-1].timestamp_ms
+            else:
+                await asyncio.sleep(0.105)
+                assert len(closed) == 2
+                assert any(r["kind"] == "stream_unavailable" for r in venue.records)
+
+    asyncio.run(scenario())

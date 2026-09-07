@@ -1,3 +1,90 @@
+# Progress: repair missing fills, entry sizing and misleading counters
+
+2026-09-07. Work verified on `fix/strategy-execution`, based on `fix/history-resilience`.
+The user requested diagnosis of near-zero fills and inactive strategies, then explicitly
+removed our arbitrary20-entry daily cap. Single-agent implementation and own review;
+no new dependencies or funded operations.
+
+- Corrected passive simulation to compare source and receipt clocks independently and to
+  clear obsolete same-price queue depth when qualifying public trades execute through a bid.
+  Fills remain limited to observed, deduplicated volume. New records use SOURCE_ORDERED_FLOW_V3;
+  prior missing timestamps are not fabricated. Initial queue depth is now retained.
+- Replayed55 originally unfilled orders: the baseline reproduced zero fills; the correction
+  recovered three, including the0.67 hedge whose omission caused a later simulated stop loss.
+  This does not rewrite original cash or establish whole-portfolio returns.
+- Optional slippage and SDK share rounding no longer reject affordable0.92/0.93 entries.
+  Reduced cash amounts preserve theUSD5 budget and fee reserve. Actual pinned SDK signing
+  and controller-to-paper-fill tests cover the corrected boundary for all four directional modes.
+- The default daily entry-count cap is disabled (`max_entries_per_day = 0`). Explicit positive
+  caps remain supported; zero-fill closures do not consume their slots. Tests cover25 completed
+  rounds in one day, restart preservation, partial/unknown orders and a deliberately enabled cap.
+- Dashboard distinguishes traded rounds, buy/sell fill records and order attempts. Book rows
+  show Up/Down prices, round and source time;99/0 is explicitly a count of price levels.
+  Numeric entry-filter reasons and older-simulator warnings explain inactive or historical data.
+- Pair variants intentionally share opening logic; value/model_exit intentionally share entries.
+  Recorded price-band sensitivity found additional candidates below0.60, but that separate
+  strategy change has not been enabled. See [execution and entry audit](research/execution-and-entry-audit.md).
+- **541 tests passed in138.15seconds**. Ruff lint/format, mypy (20 sources), locked dependencies,
+  JavaScript syntax and whitespace checks passed. Headless Edge verified six cards, explicit
+  quote-vs-depth labels (including0.999 precision), separate trade/fill counters, no JavaScript
+  errors and no overflow at390px. Paper-cap migration rehearsed against all seven journal
+  copies, preserving every session ID and all cash/position/fill/accounting rows.
+
+- Applied the explicit20→0 cap migration and reloaded both existing systemd services at
+  04:10:19–04:10:54UTC, retaining all seven session IDs and all original orders, fills and
+  accounting rows. Only the current session's configuration fingerprint was advanced, with
+  a dated CONFIGURATION_CHANGED event preserving both fingerprints and the exact policy change.
+  No loss-session reset or retrospective fill repair occurred. SQLite backup rehearsals,
+  applied migration and before/after evidence live under the ignored strategy-execution
+  `work/entry-cap-migration` and `work/execution-reload-result.json`.
+- Active services confirmed SOURCE_ORDERED_FLOW_V3 and BOUNDED_INTERVALS_V1, zero entry cap,
+  matching config/manifest and no supervisor restarts. Live Edge verified six cards and the
+  corrected counters without JavaScript errors. Public books now show labeled outcomes and
+  actual quotes (at the check, Up0.34/0.35 and Down0.65/0.66). The original four directional
+  portfolios still have no recorded fills; passing mechanical tests is not evidence of an edge.
+- Prospective check at04:17:22UTC: the next opening reference was captured and the short
+  history was valid, but the long history contained92 irregular seconds (22 from an earlier
+  interruption and70 from this maintenance reload), exceeding its90-second allowance.
+  Therefore new entries remained paused. The earlier gap leaves the30-minute window around
+  04:26:15UTC, conditional on no further gaps. This is recorded separately from passing
+  execution tests; a running service does not prove current entry readiness.
+
+## Previous history checkpoint
+
+# Progress: recover from brief history gaps
+
+2026-09-07. Branch `fix/history-resilience`, isolated worktree `.worktrees/history-resilience`,
+based on merged fork main d26e799 (PR4). The user explicitly requested correcting the overly
+strict history rule. Own review, no subagents or new dependencies.
+
+- Replaced the hard largest-gap veto with at least95% point coverage and95% regular-interval
+  time coverage. Intervals over12seconds consume the remaining time budget. Both5minute and
+  30minute histories must pass. Observed moves across gaps remain in the variance estimate;
+  missing endpoints, large outages, stale/future prices and insufficient coverage still reject.
+- Separated the15second feed inactivity deadline from the5second current-price freshness limit.
+  Delayed feeds can resume on the same subscription while entries remain paused. Genuine
+  transport errors and persistent silence still reconnect.
+- Dashboard readiness uses the newest sampling check, rather than all historical failures or
+  an older strategy's successful sample. Shows coverage and time in long intervals. Historical
+  simulator warnings remain visible without overriding current history readiness.
+- Recorded-data replay:392 additional long-window checks and112 additional short-window checks
+  became usable. All1673 previously valid estimates stayed exactly unchanged. The windows
+  overlap; this measures availability, not profit or independent statistical evidence.
+  Policy rationale, fingerprinted capture and limitations: [sampling research](research/volatility-sampling.md).
+- **516 tests passed in112.67seconds**. Ruff lint/format, mypy, lock, JavaScript syntax and diff
+  checks passed. Desktop/mobile browser fixtures verified both current readiness overriding
+  historical failures and a new failure overriding an old valid sample, with no JavaScript
+  errors or page overflow. The reconnect regression fails against the original consumer and
+  passes with the fix.
+- Repointed both systemd user services to this checkout and reloaded at02:52:46–02:52:51UTC.
+  All seven journal sessions, prior orders, fills and events were preserved. Balances remain
+  USD100 each; no retrospective fills were injected and funded execution remains off.
+  At02:54:42UTC all six latest history checks reported VALID under BOUNDED_INTERVALS_V1;
+  pairing portfolios had resumed order submission (62 attempts each, zero fills at that check).
+  Healthy history permits strategy evaluation; it does not guarantee fills or returns.
+
+## Earlier quote and service checkpoints
+
 # Progress: continuous services and corrected quote cancellation
 
 2026-09-07, follow-up to the 0/98 screenshot. The matching fix alone did not repair the

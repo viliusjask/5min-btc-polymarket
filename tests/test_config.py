@@ -18,6 +18,14 @@ def test_complete_configuration_loads_exact_decimal_and_stable_hash():
         config.strategy.mode = "momentum"  # type: ignore[misc]
 
 
+def test_daily_entry_limit_is_disabled_by_default_and_can_be_explicitly_set():
+    assert Config().risk.max_entries_per_day == 0
+    assert load_config(CONFIG_PATH).risk.max_entries_per_day == 0
+    assert replace(Config().risk, max_entries_per_day=1).max_entries_per_day == 1
+    with pytest.raises(ValueError):
+        replace(Config().risk, max_entries_per_day=-1)
+
+
 @pytest.mark.parametrize("extra", ["surprise = true\n", "\n[unknown]\nvalue = 1\n"])
 def test_unknown_configuration_rejected(tmp_path, extra):
     path = tmp_path / "bad.toml"

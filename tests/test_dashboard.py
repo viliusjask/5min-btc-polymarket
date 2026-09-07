@@ -104,6 +104,69 @@ def test_refresh_only_counts_new_events_and_preserves_capture_time(tmp_path, mon
     assert last["collector"]["status"] != "running"
 
 
+def test_outcome_books_keep_labels_prices_and_one_market_during_rollover(tmp_path, monkeypatch):
+    root = runtime(tmp_path, monkeypatch)
+    reader = DashboardReader(root, Config())
+    for token, side in [("up-old", "UP"), ("down-old", "DOWN")]:
+        observation(
+            root,
+            kind="book",
+            token_id=token,
+            condition_id="old",
+            side=side,
+            slug="btc-updown-5m-1800000000",
+            source_ms=STAMP,
+            bids=[{"price": ".99", "size": "10"}],
+            asks=[],
+        )
+    state = reader.snapshot(now_ms=STAMP)
+    assert {r["side"] for r in state["books"]} == {"UP", "DOWN"}
+    assert state["books"][0]["best_bid"] == ".99"
+    assert state["books"][0]["best_ask"] is None
+    assert state["books"][0]["bid_count"] == 1
+    observation(
+        root,
+        kind="book",
+        token_id="up-new",
+        condition_id="new",
+        side="UP",
+        slug="btc-updown-5m-1800000300",
+        source_ms=STAMP + 300000,
+        received_ms=STAMP + 300000,
+        bids=[],
+        asks=[{"price": ".51", "size": "10"}],
+    )
+    state = reader.snapshot(now_ms=STAMP + 300000)
+    assert len(state["books"]) == 1  # Old Down must not become the new Up's counterpart.
+    assert state["books"][0]["condition_id"] == "new"
+    observation(
+        root,
+        kind="book",
+        token_id="up-new",
+        condition_id="new",
+        source_ms=STAMP + 300001,
+        received_ms=STAMP + 300001,
+        bids=[],
+        asks=[{"price": ".52", "size": "10"}],
+    )
+    state = reader.snapshot(now_ms=STAMP + 300001)
+    assert state["books"][0]["side"] == "UP"
+    assert state["books"][0]["slug"] == "btc-updown-5m-1800000300"
+
+
+def test_value_rejections_explain_actual_price_and_cost_margin():
+    from btc5m.dashboard import explain
+
+    assert explain(
+        "PRICE_BAND", {"best_ask": ".43", "minimum_ask": ".60", "maximum_ask": ".92"}
+    ) == ("strategy", "Ask $0.43; configured purchase range $0.60–$0.92.")
+    category, detail = explain(
+        "INSUFFICIENT_TERMINAL_SURPLUS",
+        {"terminal_surplus_proxy": "-.0556", "required_terminal_surplus": ".02"},
+    )
+    assert category == "strategy" and "-5.56¢" in detail and "2.00¢" in detail
+
+
 def test_paper_dashboard_rejects_live_journal_before_exposing_records(tmp_path):
     root = tmp_path
     (root / "paper.json").write_text(
@@ -311,3 +374,20 @@ def test_cancelled_order_shows_execution_outcome_and_old_model_warning(
         ledger.close()
 
     asyncio.run(run())
+
+
+def test_history_budget_explanation_distinguishes_insufficient_coverage_from_warmup():
+    from btc5m.dashboard import explain
+
+    category, message = explain(
+        "INSUFFICIENT_HISTORY",
+        {
+            "short_sampling_status": "VALID",
+            "long_sampling_status": "INSUFFICIENT_INTERVAL_COVERAGE",
+            "long_regular_time_coverage": 0.94,
+            "required_history_coverage": ".95",
+        },
+    )
+    assert category == "data"
+    assert "94.0%" in message and "95.0%" in message
+    assert "Small gaps are allowed" in message

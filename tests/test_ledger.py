@@ -421,7 +421,8 @@ os.kill(os.getpid(),signal.SIGKILL)
     assert summary.risk_reserve == (
         D("3.75") if boundary in ("SUBMITTING", "UNKNOWN", "ACK") else 0
     )
-    assert summary.daily_entries == 1 and summary.cash == 100
+    assert summary.daily_entries == (1 if boundary in ("SUBMITTING", "UNKNOWN", "ACK") else 0)
+    assert summary.cash == 100
     ledger.close()
 
 
@@ -437,7 +438,7 @@ def test_batch_fill_identity_error_rolls_back_every_cash_and_position_change(tmp
     ledger.close()
 
 
-def test_daily_entry_count_and_cash_gate_are_independent_of_realized_profit(tmp_path):
+def test_unposted_abandon_releases_daily_entry_slot_without_relaxing_cash_gate(tmp_path):
     config = replace(Config(), risk=replace(Config().risk, max_entries_per_day=1))
     ledger = Ledger(tmp_path / "ledger.sqlite", WALLET)
     session = ledger.start_or_resume_session(config)
@@ -450,8 +451,84 @@ def test_daily_entry_count_and_cash_gate_are_independent_of_realized_profit(tmp_
     intent = reserve(ledger, session)
     ledger.abandon(intent.intent_id, "SYNTHETIC_LOCAL_ABORT")
     other = replace(intent.market, slug=intent.market.slug + "next")
+    assert ledger.summary(NOW).daily_entries == 0
+    reserve(ledger, session, market=other, dec=replace(decision(), slug=other.slug))
+    assert ledger.summary(NOW).daily_entries == 1
+    ledger.close()
+
+
+def test_filled_round_keeps_daily_slot_after_profitable_close(tmp_path):
+    ledger, session = opened(tmp_path)
+    config = replace(Config(), risk=replace(Config().risk, max_entries_per_day=1))
+    session = ledger.start_or_resume_session(config)
+    buy = submitted(ledger, session)
+    ledger.apply_evidence(buy.intent_id, evidence([fill(buy)]))
+    resolution = ResolutionEvidence(
+        buy.market.condition_id,
+        137,
+        1,
+        "0x" + "ef" * 32,
+        1,
+        (1, 0),
+        ((buy.market.up_token, D(1)), (buy.market.down_token, D(0))),
+        "CTF_FINALIZED",
+        NOW + 300000,
+    )
+    ledger.apply_resolution(buy.market, resolution, NOW + 300000)
+    assert ledger.summary(NOW + 300000).daily_entries == 1
+    other = replace(buy.market, slug=buy.market.slug + "next")
     with pytest.raises(LedgerError, match="DAILY_ENTRY_LIMIT"):
         reserve(ledger, session, market=other, dec=replace(decision(), slug=other.slug))
+    ledger.close()
+
+
+def test_nonterminal_zero_fill_evidence_keeps_daily_slot_until_terminal_read(tmp_path):
+    ledger, session = opened(tmp_path)
+    buy = submitted(ledger, session)
+    # An order that can still fill continues to occupy a slot.
+    assert ledger.summary(NOW).daily_entries == 1
+    ledger.apply_evidence(buy.intent_id, evidence([], terminal=False))
+    assert ledger.summary(NOW).daily_entries == 1
+    ledger.apply_evidence(buy.intent_id, evidence([], terminal=True))
+    assert ledger.summary(NOW).daily_entries == 0
+    ledger.close()
+    ledger = Ledger(tmp_path / "ledger.sqlite", WALLET)
+    ledger.start_or_resume_session(Config())
+    assert ledger.summary(NOW).daily_entries == 0
+    assert len(ledger.round_orders(buy.market.slug)) == 1
+    ledger.close()
+
+
+def test_default_policy_allows_more_than_twenty_filled_rounds_and_retains_history(tmp_path):
+    ledger, session = opened(tmp_path)
+    for index in range(25):
+        market = replace(make_snapshot().market, slug=f"round-{index}")
+        buy = reserve(ledger, session, market=market, dec=replace(decision(), slug=market.slug))
+        ledger.prepare(buy.intent_id, prepared(buy))
+        ledger.mark_submitting(buy.intent_id)
+        ledger.apply_evidence(buy.intent_id, evidence([fill(buy, log=index)]))
+        ledger.apply_resolution(
+            market,
+            ResolutionEvidence(
+                market.condition_id,
+                137,
+                index + 1,
+                "0x" + "ef" * 32,
+                1,
+                (1, 0),
+                ((market.up_token, D(1)), (market.down_token, D(0))),
+                "CTF_FINALIZED",
+                NOW + index,
+            ),
+            NOW + index,
+        )
+    assert ledger.summary(NOW).daily_entries == 25
+    cash = ledger.summary(NOW).cash
+    ledger.close()
+    ledger = Ledger(tmp_path / "ledger.sqlite", WALLET)
+    assert ledger.start_or_resume_session(Config()) == session
+    assert ledger.summary(NOW).daily_entries == 25
+    assert ledger.summary(NOW).cash == cash
     ledger.close()
 
 

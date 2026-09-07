@@ -6,16 +6,16 @@ study. New work runs on `feat/order-flow-experiments`; no funded transactions.
 
 ## Delivery
 
-- [ ] Capture Binance executed volume/direction, full top-20 book snapshots and
+- [x] Capture Binance executed volume/direction, full top-20 book snapshots and
   Polymarket public trade events with receipt times, continuity and durable replay.
-- [ ] Register absorption, pressure-directed pairing and early-pressure/later-price
+- [x] Register absorption, pressure-directed pairing and early-pressure/later-price
   confirmation, with matched controls and small prespecified parameter comparisons.
-- [ ] Scan compatible 5m/15m contracts, checking exact rules, anchors, depth and fees.
+- [x] Scan compatible 5m/15m contracts, checking exact rules, anchors, depth and fees.
   Report quote candidates, never claim these are executed arbitrage profits.
-- [ ] Simulate split, passive sales and merge with conservation of collateral,
+- [x] Simulate split, passive sales and merge with conservation of collateral,
   partial fills, expiry, cancellation and crash recovery. Rebates remain excluded
   until attributable receipts exist; no invented rebate income.
-- [ ] Show the new study and scanner in the existing dashboard; test all paths,
+- [x] Show the new study and scanner in the existing dashboard; test all paths,
   run public integration probes, install continuous collection/replay and open PR.
 
 ## Decisions fixed before observing returns

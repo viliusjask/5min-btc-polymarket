@@ -7,7 +7,7 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/entry-filters` (`fix/entry-filters`).
+- Code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/limit-sizing` (`fix/limit-sizing`).
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
 - Configuration: `/home/vilius/.config/btc5m/paper.toml` — USD600 allocation, USD5 entry budget,
   USD10 day/session loss allowance per portfolio. The Value-family price floor is disabled and

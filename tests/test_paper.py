@@ -7,7 +7,7 @@ from test_experiments import mode
 from test_pair_execution import WALLET
 from test_strategy import make_snapshot
 
-from btc5m.domain import PricePoint
+from btc5m.domain import Level, PricePoint
 from btc5m.engine import Engine
 from btc5m.ledger import Ledger
 from btc5m.pairing import pair_decision
@@ -299,10 +299,78 @@ def test_broadened_entries_confirm_and_fill_through_each_directional_engine(
         clock[0] += 1000
         await engine.step(snapshot(), None, clock[0])
         position = ledger.open_position()
-        assert position is not None and position.gross_entry_price == ask
+        assert position is not None and position.gross_entry_price.quantize(D(".000001")) == ask
         assert position.quantity > 5 and position.cost_basis <= 5
         assert ledger.summary(clock[0]).cash == 100 - position.cost_basis
         assert not ledger.unresolved_orders()
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "name,ask,limit",
+    [
+        (name, ask, ask + D(".01"))
+        for name in ("value", "fast_value", "model_exit")
+        for ask in (D(".31"), D(".33"))
+    ]
+    + [("momentum", D(".70"), D(".71"))],
+)
+def test_entry_can_fill_when_ask_rises_to_its_allowed_limit(tmp_path, name, ask, limit):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path, name)
+        engine = Engine(broker, ledger, config, session, read_exit_book=broker.book)
+        assert (
+            await engine.step(publish(broker, clock, ask=ask), None, clock[0])
+        ).reason == "ENTRY_CONFIRMATION_WAITING"
+        clock[0] += 1000
+        assert (
+            await engine.step(publish(broker, clock, ask=ask), None, clock[0])
+        ).action == "SUBMITTED"
+        order = ledger.unresolved_orders()[0]
+        assert order.price_limit == limit
+        clock[0] += 1000
+        await engine.step(publish(broker, clock, ask=limit), None, clock[0])
+        position = ledger.open_position()
+        assert position is not None, "An affordable quote at the allowed limit must execute"
+        assert position.gross_entry_price == limit
+        assert position.quantity >= order.quantity
+        assert position.cost_basis <= order.reserved_cash <= 5
+        assert ledger.summary(clock[0]).cash == 100 - position.cost_basis
+        assert not ledger.unresolved_orders()
+        check = broker._load(order.intent_id)["execution_check"]
+        assert check["best_ask"] == str(limit)
+        assert D(check["unfilled_amount"]) == 0
+        assert D(check["executable_quantity"]) >= D(check["minimum_receive_shares"])
+        assert check["book_source_ms"] == check["book_received_ms"] == clock[0]
+        ledger.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cause", ["price", "depth", "minimum_shares"])
+def test_failed_immediate_buy_keeps_protections_and_explains_execution_inputs(tmp_path, cause):
+    async def run():
+        clock, config, ledger, session, streams, broker = setup(tmp_path)
+        snap = publish(broker, clock, ask=D(".31"))
+        order = await submit(ledger, broker, evaluate(snap, config), session, clock[0])
+        clock[0] += 1000
+        snap = publish(broker, clock, ask=D(".33") if cause == "price" else D(".32"))
+        if cause == "depth":
+            snap = replace(snap, up_book=replace(snap.up_book, asks=(Level(D(".32"), D(1)),)))
+        if cause == "minimum_shares":
+            # A malformed or legacy protected amount must still be rejected.
+            order = replace(order, quantity=order.quantity + D(".0001"))
+        state = {"activation_ms": clock[0] - 500, "fills": []}
+        broker._immediate(order, state, snap.up_book, clock[0])
+        assert not state["fills"] and state["terminal_reason"] == "PAPER_NO_PROTECTED_DEPTH"
+        check = state["execution_check"]
+        if cause == "minimum_shares":
+            assert D(check["unfilled_amount"]) == 0
+            assert D(check["executable_quantity"]) < D(check["minimum_receive_shares"])
+        else:
+            assert D(check["unfilled_amount"]) > 0
         ledger.close()
 
     asyncio.run(run())

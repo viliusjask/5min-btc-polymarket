@@ -302,11 +302,11 @@ def _quote(
     # Protected SDK BUY ceilings the requested shares, never worsening the signed cash/share cap.
     quantum = Decimal(10) ** -_AMOUNT_DECIMALS[market.tick_size]
     minimum_receive = (principal / limit).quantize(quantum, rounding=ROUND_CEILING)
-    if shares < minimum_receive:
-        # A protected SDK BUY rounds shares UP. At an exact-price ceiling that
-        # can demand a fraction more than the cash can buy. Reduce cents to the
-        # nearest amount whose shares are exact on the SDK grid, then reprice
-        # the smaller cash order. Never round required shares down or spend more.
+    if minimum_receive * limit > principal:
+        # A protected SDK BUY rounds shares UP. Cash must cover those shares
+        # even if the ask rises to our allowed limit before execution. Better
+        # current asks must not conceal an unaffordable signed boundary.
+        # Reduce cents to an exact SDK share amount; keep the same price cap.
         numerator, denominator = limit.as_integer_ratio()
         cash_step = (
             100

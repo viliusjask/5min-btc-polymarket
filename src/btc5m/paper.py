@@ -260,9 +260,21 @@ class PaperBroker:
                 remaining -= principal if order.side == "BUY" else quantity
             if not remaining:
                 break
-        if order.side == "BUY" and (
-            remaining or sum((q for q, _, _ in fills), D(0)) < order.quantity
-        ):
+        executable_quantity = sum((q for q, _, _ in fills), D(0))
+        state["execution_check"] = {
+            "checked_ms": now,
+            "book_source_ms": book.timestamp_ms,
+            "book_received_ms": book.received_ms,
+            "best_bid": str(book.bids[0].price) if book.bids else None,
+            "best_ask": str(book.asks[0].price) if book.asks else None,
+            "price_limit": str(order.price_limit),
+            "requested_amount": str(order.principal if order.side == "BUY" else order.quantity),
+            "amount_units": "USD" if order.side == "BUY" else "shares",
+            "unfilled_amount": str(remaining),
+            "executable_quantity": str(executable_quantity),
+            "minimum_receive_shares": str(order.quantity) if order.side == "BUY" else None,
+        }
+        if order.side == "BUY" and (remaining or executable_quantity < order.quantity):
             fills = []  # FOK is all-or-none at the protected price
         for quantity, price, principal in fills:
             self._fill(order, state, quantity, price, now, principal)

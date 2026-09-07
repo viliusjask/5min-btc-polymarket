@@ -136,6 +136,9 @@ the apparent result. See [backtest selection research](https://escholarship.org/
   Optional entry slippage is capped by the configured price ceiling and affordable minimum
   shares. If the SDK's upward share rounding would exceed the cash available at that limit,
   a smaller cent-denominated principal with exactly representable shares is quoted and reserved.
+  This must hold at the allowed limit even when the current ask is better; actual cash can vary
+  below the spending target by price. The [limit-sizing audit](research/limit-price-sizing.md)
+  reproduces the first three directional failures and documents the correction.
 - Resting orders use the displayed same-price queue at simulated activation. Subsequent
   aggressive SELL trades at or below the limit, or BUY trades in the opposite outcome at a
   complementary price, deplete that queue before filling the order. Transaction/price route

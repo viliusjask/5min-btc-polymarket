@@ -1,3 +1,40 @@
+# Progress: fix unfillable protected cash/share amounts
+
+2026-09-07. `fix/limit-sizing`, isolated `.worktrees/limit-sizing`, based on merged PR6
+(`11f80d1`). Single-agent diagnosis/implementation. No new dependencies or funded operations.
+
+- Traced the first Fast value, Value and Model exit orders in the05:10UTC round. At their
+  allowed0.32/0.34 execution prices, rounded required shares cost slightly more thanUSD4.67.
+  The earlier repair tested the better current ask and missed this later execution boundary.
+- Reused the exact cash/share-grid calculation for every BUY whose minimum shares are
+  unaffordable at its limit. Reduce cash and recompute costs without relaxing price, fee,
+  share-receipt or spending protections. All four directional modes use the correction.
+- Original captured-book reconstruction reproduced three unfilled orders; corrected cash
+  amounts4.66/4.59/4.59 produced three counterfactual fills. Historical orders/results remain
+  untouched. Evidence and reconstruction limits are in [the sizing audit](research/limit-price-sizing.md).
+- Ten new regression cases failed on the original source: actual pinned-SDK signing and
+  all four directional engines with asks rising to the permitted limit. Corrected cases pass.
+  Additional tests retain rejection of worse prices, insufficient depth and malformed minimum
+  shares; final pre-post authorization still rejects resized decisions.
+- Immediate paper orders now retain execution-time book timestamps, quotes, price limit,
+  requested cash/shares, available shares and remaining amount in existing journal measurements.
+  TheUSD100 portfolios andUSD5 order budgets are unchanged.
+- **562 tests passed in127.11seconds**. Ruff lint/format, mypy20sources, locked dependencies
+  and whitespace checks passed. The before-fix ten-case failure log, complete final test log,
+  three-order reconstruction and prepared preservation/reload scripts remain in ignored `work/`.
+- Applied code commit7a1ae14 to the continuous services at05:46:06–05:46:13UTC. Seven journal
+  sessions and all prior orders/fills/accounting rows were retained. No configuration fingerprints
+  changed; a dated IMPLEMENTATION_CHANGED event records old/new source commits in each journal.
+  Services now run from `.worktrees/limit-sizing`, with zero supervisor restarts. The dashboard
+  responds with matching configuration and a caught-up collector. Preservation evidence is in
+  `work/sizing-cutover.json` and `work/sizing-reload-result.json`.
+- At05:48:41UTC the latest sampling records for all six strategies were from after the reload,
+  with valid short/long histories and a largest sampled gap of10seconds. No fresh30-minute
+  warm-up was needed. A previously recorded Fast value fill at05:28:13UTC predates this fix and
+  is not evidence of corrected prospective execution. The three replay fills remain counterfactual.
+
+## Previous entry-filter checkpoint
+
 # Progress: broaden entry filters and explain one-sided books
 
 2026-09-07. `fix/entry-filters`, isolated `.worktrees/entry-filters`, based on merged PR5

@@ -462,7 +462,7 @@ def test_bounded_run_shutdown_retains_unknown_order_and_releases_owner(
         reopened = Ledger(path, WALLET)
         assert reopened.stop_requested()
         assert reopened.unresolved_orders()[0].state == "UNKNOWN"
-        assert reopened.summary().risk_reserve == D("4.9969")
+        assert reopened.summary().risk_reserve == D("4.5582")
         assert venue.posts == 1
         reopened.close()
 

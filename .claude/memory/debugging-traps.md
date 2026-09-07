@@ -1,5 +1,18 @@
 # Debugging traps (this project)
 
+## 2026-09-07: A better current ask concealed an unaffordable signed limit
+
+First Value/Fast value/Model exit orders closed with PAPER_NO_PROTECTED_DEPTH despite enough
+captured depth. Cash4.67 bought enough shares at the initial ask, but the SDK rounded minimum
+shares upward:14.5938 at the allowed0.32 costs4.670016. The earlier fix only tested affordability
+against current asks. Require exact cash/share compatibility at the final signed limit even
+when the initial ask is better; reuse the cash-grid sizing calculation and reduce cash.
+Test current ask → allowed limit → actual protected fill across all directional modes and
+inspect actual SDK integer amounts. Keep minimum-receipt checks. Preserve old failures and
+record execution-time quotes/quantities so the next ambiguous failure does not need guesswork.
+Account allocation changes do not repair an order-budget/share mismatch. Freshly resized
+decisions still fail final pre-post authorization rather than mutating a prepared order.
+
 ## 2026-09-07: Correct raw quotes still made a misleading dashboard
 
 Near expiry, the UI repeatedly showed99/0 levels and Missing book side, with Up/Down swapping

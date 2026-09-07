@@ -84,8 +84,8 @@ def test_real_core_entry_persists_before_one_unknown_post(tmp_path, monkeypatch)
         result = await engine.step(confirmation_snapshot(venue.now), None, venue.now)
         assert result.action == "SUBMITTED" and venue.posts == 1, result
         order = ledger.unresolved_orders()[0]
-        assert order.state == "UNKNOWN" and order.remaining_reserve == D("4.9969")
-        assert order.decision.buy_principal == D("4.67")
+        assert order.state == "UNKNOWN" and order.remaining_reserve == D("4.5582")
+        assert order.decision.buy_principal == D("4.26")
         second = await engine.step(snapshot(), None, NOW)
         assert second.reason == "ORDER_UNRESOLVED" and venue.posts == 1
         await broker.close()
@@ -865,6 +865,7 @@ def test_input_generation_cancels_pending_after_account_even_if_valid_overwrites
         "fee_reserve",
         "normal",
         "looser_limit",
+        "resized_limit",
     ],
 )
 def test_buy_provider_revalidates_current_authorization_after_preparation(
@@ -874,9 +875,13 @@ def test_buy_provider_revalidates_current_authorization_after_preparation(
 
     async def run():
         venue = Venue()
-        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue)
+        config = Config()
+        if change == "looser_limit":
+            # Both71c and72c limits permit exactlyUSD6.39 on the SDK share grid.
+            config = replace(config, risk=replace(config.risk, trade_budget_usd=D("6.85")))
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue, config=config)
         latest = SnapshotInput(confirmation_snapshot(), 0)
-        engine = Engine(broker, ledger, Config(), session, read_snapshot=lambda: latest)
+        engine = Engine(broker, ledger, config, session, read_snapshot=lambda: latest)
         await engine.step(None, None, NOW)
         venue.now += 1000
         latest = SnapshotInput(confirmation_snapshot(venue.now), 0)
@@ -895,7 +900,7 @@ def test_buy_provider_revalidates_current_authorization_after_preparation(
                 snap = replace(snap, up_book=replace(snap.up_book, asks=(Level(D(".60"), D("8")),)))
             elif change == "fee_reserve":
                 snap = replace(snap, market=replace(snap.market, fee_rate=D(".0701")))
-            elif change == "looser_limit":
+            elif change in ("looser_limit", "resized_limit"):
                 snap = confirmation_snapshot(venue.now, ask=".71")
             latest = SnapshotInput(
                 None if change == "missing" else snap, 1 if change == "generation" else 0

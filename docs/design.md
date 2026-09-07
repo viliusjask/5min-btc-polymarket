@@ -114,8 +114,9 @@ maximum price/book age is 5 seconds, future tolerance 1 second. Each decision re
 
 ## Position size and exit policy
 
-Use fixed small exposure; one position and at most one opening intent per round. Default allocation
-USD100, target all-in trade spending USD5, daily loss USD10, session loss USD10 and 20 entries/day.
+Directional modes allow one position and at most one opening intent per round. Default allocation
+USD100, target all-in trade spending USD5, daily loss USD10 and session loss USD10. The default
+daily entry-count limit is disabled; explicitly configured positive limits remain supported.
 Reserve maximum signed principal plus conservative fee allowance before posting, not just expected
 VWAP. Exchange match-time fees can differ; spending is a configured target with a checked fee reserve,
 not an impossible promise that an operator-set fee cannot change. Any actual breach halts new entries.
@@ -124,7 +125,10 @@ expected_shares is the ask-depth estimate, minimum_receive_shares is the conserv
 signed minimum at price_limit, and max_total_reserved includes principal and worst-case buy fee.
 Consume the same principal across available asks, never convert expected shares using a higher
 limit. Round principal down to supported precision; validate minimum shares after signed integer
-rounding too. Better execution may deliver more shares; confirmed receipts determine inventory.
+rounding too. Cash must buy the signed minimum shares at the allowed limit even if current asks
+are better. Reduce principal to an exact supported cash/share combination and recompute costs;
+actual cash may vary below the target. See [limit sizing](research/limit-price-sizing.md).
+Better execution may deliver more shares; confirmed receipts determine inventory.
 Daily (UTC midnight) and persisted session allowances each require:
 max(0, -finalized_net_pnl) + remaining_position_cost_at_risk + unresolved_opening_reserves +
 new_reservation <= loss_budget. Each exposure is counted once; confirmed opening cost replaces

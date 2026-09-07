@@ -315,6 +315,37 @@ def test_capped_cash_entry_signs_exact_affordable_shares_with_actual_sdk(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("ask", [D(".31"), D(".33"), D(".70")])
+def test_slippage_limit_is_fully_executable_at_the_signed_cash_share_ratio(
+    tmp_path, monkeypatch, ask
+):
+    from btc5m.strategy import evaluate
+
+    async def run():
+        venue = Venue()
+        config = Config()
+        broker, ledger, session = await broker_fixture(tmp_path, monkeypatch, venue, config=config)
+        snap = make_snapshot(ask=ask)
+        snap = replace(
+            snap,
+            market=market(),
+            up_book=replace(snap.up_book, token_id=TOKEN),
+            down_book=replace(snap.down_book, token_id=TOKEN2),
+        )
+        decision = evaluate(snap, config)
+        intent = ledger.reserve_entry(decision, snap.market, session, NOW)
+        prepared = await broker.prepare(intent, snap.market)
+        signed = json.loads(prepared.signed_payload)
+        cash, shares = D(signed["maker_amount"]) / 1000000, D(signed["taker_amount"]) / 1000000
+        assert cash == shares * decision.price_limit
+        assert cash == decision.buy_principal and shares == decision.minimum_receive_shares
+        assert prepared.reserved_cash <= 5 and venue.posts == 0
+        await broker.close()
+        ledger.close()
+
+    asyncio.run(run())
+
+
 def test_no_network_actual_synthetic_eoa_constructor(monkeypatch):
     async def run():
         async def forbidden(*args, **kwargs):

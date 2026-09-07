@@ -148,7 +148,7 @@ def test_unknown_restart_retains_reserve_until_receipt_and_stop_never_replays_bu
         stopped = await engine.shutdown(None, venue.now)
         assert stopped.reason == "ORDER_UNRESOLVED"
         before = report(ledger)["summary"]
-        assert before["risk_reserve"] == D("4.9969") and before["cash_movement"] == 0
+        assert before["risk_reserve"] == D("4.5582") and before["cash_movement"] == 0
         settle_venue(
             venue,
             order,

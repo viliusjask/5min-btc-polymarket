@@ -96,16 +96,16 @@ def test_terminal_probability_rejects_invalid_model(sigma, tau):
         terminal_probability_up(D("80090"), D("80000"), sigma, tau)
 
 
-def test_value_candidate_reserves_fixed_cash_and_records_cost_components():
+def test_value_candidate_reserves_affordable_cash_and_records_cost_components():
     decision = evaluate(make_snapshot(), Config())
     assert decision.reason == "ENTRY"
     assert decision.side is Side.UP
-    assert decision.buy_principal == D("4.67")
-    assert decision.max_total_reserved == D("4.9969")
+    assert decision.buy_principal == D("4.26")
+    assert decision.max_total_reserved == D("4.5582")
     assert decision.price_limit == D(".71")
-    assert decision.minimum_receive_shares == D("6.5775")
-    assert decision.expected_shares == D("4.67") / D(".70")
-    assert decision.estimated_buy_fee == D(".09807")
+    assert decision.minimum_receive_shares == D("6")
+    assert decision.expected_shares == D("4.26") / D(".70")
+    assert decision.estimated_buy_fee == D(".08946")
     assert decision.terminal_surplus_proxy is not None
     assert decision.terminal_surplus_proxy > D(".02")
     assert D(decision.features["sell_fee_reserve_per_share"]) == D(".0175")
@@ -129,13 +129,14 @@ def test_slippage_cap_does_not_authorize_an_unaffordable_current_ask():
     assert evaluate(make_snapshot(ask=D(".94")), config).reason == "BELOW_MINIMUM_SIZE"
 
 
-def test_improved_asks_increase_estimate_without_increasing_spending():
+def test_improved_asks_increase_estimate_within_the_same_spending_budget():
     before = evaluate(make_snapshot(ask=D(".70")), Config())
     after = evaluate(make_snapshot(ask=D(".65")), Config())
     assert after.side is Side.UP
     assert after.expected_shares > before.expected_shares
-    assert after.buy_principal == before.buy_principal
-    assert after.max_total_reserved == before.max_total_reserved
+    # Cash can differ because each allowed limit has a different exact share grid.
+    assert before.max_total_reserved <= 5 and after.max_total_reserved <= 5
+    assert after.terminal_surplus_proxy > before.terminal_surplus_proxy
 
 
 def test_disabled_value_floor_accepts_low_prices_with_depth_and_fixed_cash():
@@ -168,10 +169,10 @@ def test_cash_depth_consumption_and_tick_rounding():
     )
     decision = evaluate(replace(snap, up_book=book), Config())
     assert decision.side is Side.UP
-    assert decision.buy_principal == D("4.67")
-    assert decision.expected_shares == D("2") + D("3.27") / D(".705")
+    assert decision.buy_principal == D("4.59")
+    assert decision.expected_shares == D("2") + D("3.19") / D(".705")
     assert decision.price_limit == D(".72")
-    assert decision.minimum_receive_shares == D("6.4862")
+    assert decision.minimum_receive_shares == D("6.375")
 
 
 def test_small_trade_cannot_round_up_to_exchange_minimum():
@@ -407,9 +408,9 @@ def test_pinned_sdk_protected_buy_minimum_vector():
     config = replace(config, risk=replace(config.risk, trade_budget_usd=D("5.25")))
     decision = evaluate(make_snapshot(ask=D(".91")), config)
     assert decision.side is Side.UP
-    assert decision.buy_principal == D("4.90")
+    assert decision.buy_principal == D("4.83")
     assert decision.price_limit == D(".92")
-    assert decision.minimum_receive_shares == D("5.3261")
+    assert decision.minimum_receive_shares == D("5.25")
 
 
 def test_nondecimal_tick_rounds_to_actual_multiple():
@@ -418,7 +419,7 @@ def test_nondecimal_tick_rounds_to_actual_multiple():
     decision = evaluate(snap, Config())
     assert decision.side is Side.UP
     assert decision.price_limit == D(".7125")
-    assert decision.minimum_receive_shares == D("6.554386")
+    assert decision.minimum_receive_shares == D("6.4")
 
 
 def test_depth_fee_uses_each_consumed_price():
@@ -426,7 +427,7 @@ def test_depth_fee_uses_each_consumed_price():
     book = replace(snap.up_book, asks=(Level(D(".70"), D("2")), Level(D(".705"), D("100"))))
     decision = evaluate(replace(snap, up_book=book), Config())
     assert decision.side is Side.UP
-    assert decision.estimated_buy_fee == D(".0969255")
+    assert decision.estimated_buy_fee == D(".0952735")
 
 
 def test_both_variance_windows_and_larger_sigma_stress_are_used():

@@ -128,6 +128,8 @@ class Broker:
         http: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        if ledger.environment != "live":
+            raise BrokerError("LIVE_BROKER_REQUIRES_LIVE_JOURNAL")
         self.client, self.rpc, self.ledger, self.config = client, rpc, ledger, config
         self.http = http or httpx.AsyncClient(timeout=5)
         self.clock = clock
@@ -259,7 +261,11 @@ class Broker:
                     if D(token_cache.balance) / SCALE != balances[token]:
                         discrepancies.append("CLOB_TOKEN_CACHE_DISCREPANCY")
                 for token, indexed_size in candidates.items():
-                    if indexed_size != balances[token]:
+                    # Public index sizes can be rounded to four decimal places;
+                    # token balances on chain retain six. Only this index cross-
+                    # check permits sub-quantum rounding. Journal reconciliation
+                    # and detection of foreign onchain holdings remain exact.
+                    if abs(indexed_size - balances[token]) >= D(".0001"):
                         discrepancies.append("INDEX_BALANCE_DISCREPANCY")
         except (BrokerError, RPCError) as exc:
             discrepancies.append(str(exc))
@@ -350,7 +356,19 @@ class Broker:
                     ):
                         raise BrokerError("STALE_BOOK")
                     quantity = intent.quantity.quantize(D(".01"), rounding=ROUND_DOWN)
-                    if intent.side == "BUY":
+                    if intent.passive:
+                        if intent.side != "BUY" or quantity < book.min_order_size:
+                            raise BrokerError("INVALID_PASSIVE_ORDER")
+                        if not book.asks or intent.price_limit >= min(x.price for x in book.asks):
+                            raise BrokerError("PASSIVE_QUOTE_WOULD_CROSS")
+                        signed = await self.client.create_limit_order(
+                            asset_id=intent.token_id,
+                            side="BUY",
+                            price=intent.price_limit,
+                            size=quantity,
+                            post_only=True,
+                        )
+                    elif intent.side == "BUY":
                         signed = await self.client.create_market_order(
                             asset_id=intent.token_id,
                             side="BUY",
@@ -442,8 +460,8 @@ class Broker:
             or signed.token_id != intent.token_id
             or signed.side != intent.side
             or signed.expiration != 0
-            or signed.post_only
-            or signed.order_type != ("FOK" if intent.side == "BUY" else "FAK")
+            or signed.post_only != intent.passive
+            or signed.order_type != intent.order_type
             or signed.maker_amount <= 0
             or signed.taker_amount <= 0
         ):
@@ -490,11 +508,17 @@ class Broker:
                 self.config.strategy.entry_min_seconds,
                 self.config.strategy.entry_max_seconds,
             )
-            if self.config.strategy.mode == "momentum":
+            if intent.decision and intent.decision.features.get("mode") == "momentum":
                 low, high = (
                     self.config.strategy.momentum_min_seconds,
                     self.config.strategy.momentum_max_seconds,
                 )
+            if (
+                intent.passive
+                and intent.decision
+                and intent.decision.features.get("pair_role") == "HEDGE"
+            ):
+                low = self.config.execution.exit_seconds + 1
             if not low <= tau <= high or self.ledger.stop_requested():
                 return OrderAck("rejected", prepared.order_hash, reason="ENTRY_WINDOW_CLOSED")
         try:
@@ -540,6 +564,24 @@ class Broker:
                     raise BrokerError("TRADE_IDENTITY_MISMATCH")
                 return maker.matched_amount
         return None
+
+    async def cancel(self, order: Intent) -> bool:
+        """Cancel only a durable owned order; reconciliation remains the authority."""
+        stored = self.ledger.order(order.intent_id)
+        if (
+            not stored.passive
+            or stored.order_hash is None
+            or stored.order_hash != order.order_hash
+            or stored.cancel_requested_ms is None
+            or stored.wallet != self.ledger.wallet
+        ):
+            raise BrokerError("CANCEL_NOT_AUTHORIZED")
+        try:
+            async with asyncio.timeout(10):
+                response = await self.client.cancel_order(order_id=stored.order_hash)
+            return stored.order_hash in response.canceled
+        except Exception:
+            return False
 
     async def reconcile(self, order: Intent) -> OrderEvidence:
         fills: dict[tuple[int, str, int], ConfirmedFill] = {}
@@ -632,7 +674,7 @@ class Broker:
                 confirmed_principal = sum((f.principal for f in fills.values()), D(0))
                 full = (
                     confirmed_principal >= order.principal
-                    if order.side == "BUY"
+                    if order.side == "BUY" and not order.passive
                     else confirmed_qty >= order.quantity
                 )
                 terminal = (

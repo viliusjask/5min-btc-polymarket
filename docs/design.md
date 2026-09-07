@@ -1,5 +1,10 @@
 # Standalone BTC five-minute experiment design
 
+The implemented [six-strategy extension](six-strategies.md) governs the current version.
+It supersedes this original design's deferral of strategies 3–6, single-active-token restriction
+for completed binary pairs, and absence of simulated execution. The review workflow below is
+historical; the user requested single-agent development for the extension.
+
 Date: 2026-09-06. Upstream inspected: 1c9aa81ec64cdf62895b155ed64dc8e88c013102.
 The user authorizes research, design, implementation, branch/worktree setup and independent
 review. Routine decisions are delegated for this run. Funded orders, wallet approvals and

@@ -1,14 +1,15 @@
 # Standalone BTC five-minute experiment
 
-This repaired version observes Polymarket BTC Up/Down markets, screens two explicit strategies,
-and can submit small protected orders only through `run --execute`. It runs independently of
+This repaired version observes Polymarket BTC Up/Down markets, implements six explicit strategies,
+compares independent simulated portfolios, and submits funded orders only through `run --execute`. It runs independently of
 OpenClaw, Alpha-Sentry, and other trading repositories. SQLite preserves actual orders, receipts,
 fees, inventory, risk budgets, and uncertain submissions across restarts.
 
 **Development-verified; funded trading remains unverified.** Tests exercise the real strategy,
 pinned SDK signing, receipt adapter, and SQLite using synthetic venue responses. Anonymous public
-feeds and read-only endpoint probes were exercised. No funded order, account setup, approval,
-transfer, credential creation, or claim was performed during this repair. Neither the research
+feeds and read-only account checks were exercised. No funded order, approval,
+transfer, or claim was performed during development. Credential provisioning is an explicit
+operator command. Neither the research
 nor the checks establish profitability or production trading readiness.
 
 ## Native setup and anonymous checks
@@ -38,6 +39,48 @@ it never supplies `--execute` for you. The package uses its checkout's `config/b
 independent of the shell's current directory. `--config` explicitly selects another complete TOML
 file; unknown or missing keys fail validation. This setup uses an editable checkout, not a
 standalone wheel with bundled configuration.
+
+## Run the six simulated portfolios
+
+No API credentials or wallet are used by this command:
+
+```bash
+uv run --locked btc5m paper --strategies all --duration 3600 --runtime work/paper-six
+uv run --locked btc5m report --runtime work/paper-six
+uv run --locked btc5m stop --runtime work/paper-six
+```
+
+The configured USD100 total is split into six independent USD16.66 simulated portfolios,
+leaving USD0.04 unused. Each has its own orders, positions, fees, cash and risk checks.
+`--strategies value,model_exit` compares a subset, splitting the same total between them.
+The first run needs about 30 minutes of Chainlink history. Restarting the **same** paper runtime
+restores recent recorded price history but still requires fresh feeds; a real gap stays a gap.
+The same directory resumes balances and daily limits. Changed configuration requires a new directory.
+
+| # | CLI strategy | What changes |
+| --- | --- | --- |
+| 1 | `momentum` | Late directional baseline using the BTC move, entry band and hard exits. |
+| 2 | `value` | Settlement-aware probability, executable depth, fees and conservative sensitivity scenarios. |
+| 3 | `fast_value` | Strategy 2 with a Binance BTCUSDT return aligned to the latest Chainlink point. |
+| 4 | `model_exit` | Strategy 2 entries, plus a fresh sale-versus-hold decision, including the final averaging minute. |
+| 5 | `passive_pairs` | Sequential post-only Up/Down quotes with a capped completed-pair cost and unmatched-inventory timeout. |
+| 6 | `inventory_pairs` | Strategy 5 with more aggressive hedge quotes as inventory imbalance and binary uncertainty increase. |
+
+All six have executable code and use the same execution coordinator. Paper substitutes a
+simulated broker; funded `run --strategy NAME --execute` uses Polymarket's official SDK.
+`run --strategy compare --execute` preassigns one policy per UTC round using round index modulo six,
+with **one shared actual wallet, ledger and total budget**. It is not six independently funded accounts.
+Open inventory can block subsequent assigned rounds. External account trading remains unsupported.
+
+Paper orders wait at least 250ms and require a subsequent fresh book. Immediate buys consume the
+requested cash amount through available asks; protected sells can fill partially. Resting quotes
+require subsequent aggressive sell volume at or below our quote to consume observed same-price
+queue depth before simulated fills.
+A touched bid is never itself a fill. Queue position is approximate; stream gaps/restarts make an
+active queue uncertain. The report identifies those rounds. Portfolios do not compete with each
+other for depth, and simulated settlement assumes free automatic redemption after official labels.
+No maker rebates are credited. These are measured simulation outcomes, not venue fills or verified ROI.
+See [six-strategy mechanics and limits](docs/six-strategies.md).
 
 ## What is being tested
 
@@ -71,7 +114,9 @@ The complete source registers are [scientific research](docs/research/scientific
 [Design](docs/design.md) specifies the operating contract and
 [public integration evidence](docs/research/adapter-integration-probe.md) records availability limits.
 
-Both candidates are recorded on the same snapshots. Only the configured candidate can execute.
+`observe` defaults to recording the two original baselines. `observe --strategy compare` and
+`paper --strategies all` record all six on the same public snapshots. Only the selected policy can
+execute in an individual funded round.
 An eligible raw screen first arms an unreserved pending candidate. A subsequent fresh underlying
 point must be newer than the original point and reach the original candidate book timestamp;
 the current screen must still qualify. Missing data, an intervening rejection, an identity
@@ -80,9 +125,10 @@ change, stop, or account uncertainty cancels it. Restart drops pending candidate
 current feed alignment or improved returns.
 
 Observation records preserve the first eligible raw screen for each candidate/round, and the
-first snapshot received0–2 seconds after end-minus120 seconds for calibration. An absent sample
+first snapshot received 0–2 seconds after end-minus120 seconds for calibration. An absent sample
 is marked missing after that interval. Official eventual final references are recorded per round;
-repeated snapshots do not become independent winning trades. No fill rates or paper PnL are invented.
+repeated snapshots do not become independent winning trades. `observe` produces no simulated fills;
+only the explicit `paper` broker produces labelled simulated execution and PnL.
 
 ## Existing account setup and one small funded experiment
 
@@ -94,15 +140,16 @@ will report deficiencies and will not repair them. Follow the official
 [account/authentication instructions](https://docs.polymarket.com/trading/wallets-auth) and
 [trading setup](https://docs.polymarket.com/trading/quickstart) manually before using these commands.
 
-The five inputs are an existing owner private key, explicit account/funder address, and existing
+The five inputs are an existing owner private key, explicit account/funder address, and
 **CLOB L2** key, secret, and passphrase. CLOB credentials are distinct from Relayer and Builder
 credentials. The website Settings → API Keys → Relayer API Keys route is not a CLOB tuple export;
-the official account page documents CLOB provisioning separately. This application never creates
-or derives credentials, deploys a deposit wallet, sets allowances, transfers funds, or redeems
+the official account page documents CLOB provisioning separately. The explicit `credentials`
+command creates or derives the trading tuple. Trading/account commands never provision keys,
+deploy a deposit wallet, set allowances, transfer funds, or redeem
 positions. Scoped/session signers are unsupported. These distinctions and the pinned SDK's
 no-deployment construction path are documented in the [dossier](docs/research/sdk-contract.md).
 
-Store already provisioned values in a private file outside the checkout with mode0600, or supply
+Store values in a private file with mode0600, or supply
 the same names through the process environment. Never put actual secrets into shell arguments,
 Git, or a shared task. An explicit file accepts only these keys, one `KEY=value` per line;
 optional matching quotes are literal, and neither shell expansion nor `source`/`eval` is used:
@@ -114,6 +161,28 @@ POLYMARKET_API_KEY=<existing CLOB L2 key>
 POLYMARKET_API_SECRET=<existing CLOB L2 secret>
 POLYMARKET_API_PASSPHRASE=<existing CLOB L2 passphrase>
 ```
+
+For Gmail/email accounts, follow Polymarket's [official key-export guide](https://help.polymarket.com/en/articles/13364258-how-do-i-export-my-key).
+The exported private key signs authentication and orders. The account wallet copied from the
+**Polymarket profile menu** supplies `POLYMARKET_FUNDER`; the address on the export page identifies
+the signer and can be different. Gmail does not by itself determine legacy Proxy versus newer
+Deposit Wallet type; the adapter checks the signer/wallet relationship.
+
+After setting the private key and funder, generate the three trading API fields locally:
+
+```bash
+uv run --locked btc5m credentials --env-file /absolute/path/to/.env --create
+uv run --locked btc5m doctor --account --env-file /absolute/path/to/.env
+```
+
+The first command signs the official CLOB authentication message, obtains the tuple, and atomically
+replaces only the three API fields in the explicit file, preserving comments and the other values.
+It never prints credentials or sends an order. Omit `--create` to derive an existing tuple only;
+after an uncertain creation response, use that derive-only form before attempting another creation.
+Builder credentials do not belong in these fields. Relayer credentials authorize gasless wallet
+operations such as approvals, merging and redemption; the current order path does not use them.
+An ignored `.env` in the canonical checkout is supported through an explicit absolute path; it is
+not copied or symlinked into worktrees. Git ignore rules prevent accidental tracking, not file reads.
 
 Prepare a complete experiment config by copying `config/btc5m.toml` to `work/experiment.toml`
 and changing only `risk.max_entries_per_day` to1. Keep the USD5 trade spending target and the

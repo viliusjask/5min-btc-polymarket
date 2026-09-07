@@ -38,6 +38,12 @@ class Intent:
     pending_fill_ids: tuple[str, ...] = ()
     submission_reason: str = ""
     discrepancies: tuple[str, ...] = ()
+    passive: bool = False
+    cancel_requested_ms: int | None = None
+
+    @property
+    def order_type(self) -> Literal["GTC", "FOK", "FAK"]:
+        return "GTC" if self.passive else "FOK" if self.side == "BUY" else "FAK"
 
 
 @dataclass(frozen=True)

@@ -23,7 +23,8 @@ from typing import Any
 from polymarket.models.clob import ApiKeyCreds
 
 from btc5m.broker import Broker, BrokerError, create_secure_client
-from btc5m.config import Config, load_config
+from btc5m.config import STRATEGIES, Config, load_config
+from btc5m.credentials import CredentialError
 from btc5m.domain import Snapshot
 from btc5m.engine import Engine
 from btc5m.execution_types import SnapshotInput
@@ -63,28 +64,36 @@ def default_config() -> Path:
     return repository() / "config" / "btc5m.toml"
 
 
+def parse_env(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not separator or key not in ENV_KEYS:
+            raise CLIError("ENV_FILE_UNSUPPORTED_KEY")
+        if key in values:
+            raise CLIError("ENV_FILE_DUPLICATE_KEY")
+        if value.startswith(("'", '"')):
+            if len(value) < 2 or value[-1] != value[0]:
+                raise CLIError("ENV_FILE_INVALID_QUOTE")
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def read_env(env_file: Path) -> str:
+    if env_file.stat().st_size > 16384:
+        raise CLIError("ENV_FILE_TOO_LARGE")
+    return env_file.read_text()
+
+
 def load_credentials(env_file: Path | None, wallet: str | None) -> Credentials:
     values = {key: os.environ[key] for key in ENV_KEYS if key in os.environ}
     if env_file is not None:
-        if env_file.stat().st_size > 16384:
-            raise CLIError("ENV_FILE_TOO_LARGE")
-        seen = set()
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            key, separator, value = line.partition("=")
-            key, value = key.strip(), value.strip()
-            if not separator or key not in ENV_KEYS:
-                raise CLIError("ENV_FILE_UNSUPPORTED_KEY")
-            if key in seen:
-                raise CLIError("ENV_FILE_DUPLICATE_KEY")
-            seen.add(key)
-            if value.startswith(("'", '"')):
-                if len(value) < 2 or value[-1] != value[0]:
-                    raise CLIError("ENV_FILE_INVALID_QUOTE")
-                value = value[1:-1]
-            values[key] = value
+        values.update(parse_env(read_env(env_file)))
     if wallet is not None:
         values["POLYMARKET_FUNDER"] = wallet
     if any(not values.get(key) for key in ENV_KEYS):
@@ -100,8 +109,54 @@ def load_credentials(env_file: Path | None, wallet: str | None) -> Credentials:
     )
 
 
+async def configure_credentials(args: argparse.Namespace) -> int:
+    from btc5m.credentials import trading_credentials
+
+    path = args.env_file.resolve(strict=True)
+    original = read_env(path)
+    values = parse_env(original)
+    if not values.get("POLYMARKET_PRIVATE_KEY") or not values.get("POLYMARKET_FUNDER"):
+        raise CLIError("PRIVATE_KEY_AND_FUNDER_REQUIRED_IN_ENV_FILE")
+    normalize_wallet(values["POLYMARKET_FUNDER"])
+    credentials = await trading_credentials(values["POLYMARKET_PRIVATE_KEY"], create=args.create)
+    updates = {
+        "POLYMARKET_API_KEY": credentials.key,
+        "POLYMARKET_API_SECRET": credentials.secret,
+        "POLYMARKET_API_PASSPHRASE": credentials.passphrase,
+    }
+    lines = []
+    for line in original.splitlines():
+        key = line.partition("=")[0].strip()
+        if key in updates:
+            lines.append(f"{key}={updates.pop(key)}")
+        else:
+            lines.append(line)
+    lines.extend(f"{key}={value}" for key, value in updates.items())
+    if read_env(path) != original:
+        raise CLIError("ENV_CHANGED_DURING_AUTH_DERIVE_AGAIN")
+    temporary: str | None = None
+    try:
+        fd, temporary = tempfile.mkstemp(
+            prefix=".btc5m-credentials-", suffix=".tmp", dir=path.parent
+        )
+        with os.fdopen(fd, "w") as output:
+            os.fchmod(output.fileno(), 0o600)
+            output.write("\n".join(lines) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        emit({"kind": "trading_credentials_saved", "env_file": str(path), "trades_placed": False})
+        return 0
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+
+
 def safe_reason(exc: BaseException) -> str:
-    if isinstance(exc, CLIError | BrokerError | LedgerError | RPCError | DataUnavailable):
+    if isinstance(
+        exc, CLIError | CredentialError | BrokerError | LedgerError | RPCError | DataUnavailable
+    ):
         code = str(exc)
         if re.fullmatch(r"[A-Z][A-Z0-9_]{0,100}", code):
             return code
@@ -129,15 +184,38 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Development-verified BTC5m experiment; funded execution remains unverified.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("observe", "doctor", "run", "stop", "status", "report", "reconcile"):
+    credentials = commands.add_parser(
+        "credentials",
+        allow_abbrev=False,
+        help="derive CLOB trading credentials and replace the three API fields in an explicit env file",
+    )
+    credentials.add_argument("--env-file", type=Path, required=True)
+    credentials.add_argument(
+        "--create",
+        action="store_true",
+        help="explicitly create trading credentials if needed; no wallet or order actions",
+    )
+    for name in ("observe", "doctor", "run", "paper", "stop", "status", "report", "reconcile"):
         command = commands.add_parser(name, allow_abbrev=False)
-        if name in ("observe", "doctor", "run", "reconcile"):
+        if name in ("observe", "doctor", "run", "paper", "reconcile"):
             command.add_argument("--config", type=Path, default=default_config())
-        if name in ("observe", "doctor", "run"):
+        if name in ("observe", "doctor", "run", "reconcile"):
+            command.add_argument(
+                "--strategy",
+                choices=(*STRATEGIES, "compare"),
+                help="override the recorded strategy mode; compare preassigns one live policy per UTC round",
+            )
+        if name in ("observe", "doctor", "run", "paper"):
             command.add_argument(
                 "--duration",
                 type=_seconds,
-                default=2100 if name == "observe" else 15 if name == "doctor" else None,
+                default=2100
+                if name == "observe"
+                else 15
+                if name == "doctor"
+                else 3600
+                if name == "paper"
+                else None,
                 required=name == "run",
                 help="finite seconds; entry history needs 1800 seconds by default",
             )
@@ -147,12 +225,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             command.add_argument(
                 "--env-file", type=Path, help="explicit existing credentials; parsed as data"
             )
-        if name in ("observe", "stop", "status", "report"):
+        if name in ("observe", "stop", "status", "report", "paper"):
             command.add_argument(
                 "--runtime",
                 type=Path,
-                required=name != "observe",
-                help="SQLite ledger file; no credential loading",
+                required=name not in ("observe", "paper"),
+                default=repository() / "work" / "paper" if name == "paper" else None,
+                help="SQLite journal, or paper runtime directory for paper/status/report/stop; no credential loading",
             )
         if name == "doctor":
             command.add_argument(
@@ -165,11 +244,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 required=True,
                 help="explicitly authorize funded order submission",
             )
+        if name in ("run", "paper"):
             command.add_argument(
                 "--shutdown-seconds",
                 type=_seconds,
                 default=60,
-                help="shared shutdown budget for reconciliation, cancellation and transport close",
+                help=(
+                    "seconds to monitor open exposure during shutdown; transport cleanup follows"
+                    if name == "paper"
+                    else "shared shutdown budget for reconciliation, cancellation and transport close"
+                ),
+            )
+        if name == "paper":
+            command.add_argument(
+                "--strategies",
+                default="all",
+                help="all or comma-separated strategy names; total allocation is split equally",
             )
         if name == "report":
             command.add_argument(
@@ -270,17 +360,24 @@ class LatestInput:
 
     def publish(self, snapshot: Snapshot, started_generation: int) -> None:
         current = replace(snapshot, now_ms=int(self.clock() * 1000))
-        decisions = self.ledger.record_snapshot(current, self.config)
-        selected = decisions[0 if self.config.strategy.mode == "value" else 1]
-        screen = (current.market.slug, decisions[0].reason, decisions[1].reason)
+        modes = (
+            ("value", "momentum")
+            if self.config.strategy.mode in ("value", "momentum")
+            else STRATEGIES
+        )
+        decisions = self.ledger.record_snapshot(current, self.config, modes=modes)
+        selected = evaluate(current, self.config)
+        screen = (current.market.slug, *(d.reason for d in decisions))
         if screen != self._last_screen:
             self.emit(
                 {
                     "kind": "raw_screens",
                     "received_ms": current.now_ms,
                     "slug": current.market.slug,
-                    "value": decisions[0].reason,
-                    "momentum": decisions[1].reason,
+                    **{
+                        mode: decision.reason
+                        for mode, decision in zip(modes, decisions, strict=True)
+                    },
                 }
             )
             self._last_screen = screen
@@ -342,6 +439,14 @@ def _wallet_for_path(path: Path, wallet: str | None) -> str:
 
 
 def report(ledger: Ledger, *, records: bool = False) -> dict[str, Any]:
+    ledger.db.execute("SAVEPOINT report_read")
+    try:
+        return _report_snapshot(ledger, records=records)
+    finally:
+        ledger.db.execute("RELEASE SAVEPOINT report_read")
+
+
+def _report_snapshot(ledger: Ledger, *, records: bool = False) -> dict[str, Any]:
     summary = asdict(ledger.summary())
     observations, measurements, decisions = (
         ledger.observations(),
@@ -373,7 +478,9 @@ def report(ledger: Ledger, *, records: bool = False) -> dict[str, Any]:
                     evidence = row if row.get("status") == "conflict" else prior
                     final[slug] = {**evidence, "status": "conflict"}
     result = {
+        "environment": ledger.environment,
         "summary": summary,
+        "portfolios": ledger.portfolio_results(),
         "screen_unit": "raw core screen; repeated snapshots are not independent trades",
         "raw_screen_counts": dict(
             Counter(f"{r['mode']}:{r['decision']['reason']}" for r in decisions)
@@ -431,7 +538,11 @@ async def observe(args: argparse.Namespace, config: Config, *, doctor: bool = Fa
     ledger = Ledger(path, ANONYMOUS_WALLET)
     ledger.config = config  # Public observation identity, without account/session initialization.
     cell = LatestInput(ledger, config)
-    data = MarketData(config, observer=cell.observe)
+    data = (
+        MarketData(config, observer=cell.observe)
+        if config.strategy.mode in ("value", "momentum")
+        else MarketData(config, observer=cell.observe, enhanced=True)
+    )
     polling: asyncio.Task[None] | None = None
     interrupted = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -544,7 +655,11 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
         ledger.close()
         raise
     cell = LatestInput(ledger, config)
-    data = MarketData(config, observer=cell.observe)
+    data = (
+        MarketData(config, observer=cell.observe)
+        if config.strategy.mode in ("value", "momentum")
+        else MarketData(config, observer=cell.observe, enhanced=True)
+    )
     broker: Broker | None = None
     rpc = ReadOnlyRPC()
     signal_stop = asyncio.Event()
@@ -607,7 +722,13 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
                 return None
 
         engine = Engine(
-            broker, ledger, config, session, read_exit_book=held_book, read_snapshot=cell.read
+            broker,
+            ledger,
+            config,
+            session,
+            read_exit_book=held_book,
+            read_snapshot=cell.read,
+            read_model_snapshot=data.current_snapshot,
         )
         prior = None
         while True:
@@ -714,7 +835,20 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
 
 
 async def async_main(args: argparse.Namespace) -> int:
+    if args.command == "credentials":
+        return await configure_credentials(args)
     if args.command in ("stop", "status", "report"):
+        if args.runtime.is_dir():
+            from btc5m.comparison import paper_report, stop_paper
+
+            if not (args.runtime / "paper.json").is_file():
+                raise CLIError("RUNTIME_MISSING")
+            if args.command == "stop":
+                stop_paper(args.runtime)
+                emit({"kind": "paper_stop_requested", "runtime": str(args.runtime.resolve())})
+            else:
+                emit(paper_report(args.runtime, records=getattr(args, "records", False)))
+            return 0
         if not args.runtime.is_file():
             raise CLIError("RUNTIME_MISSING")
         wallet = _wallet_for_path(args.runtime, args.wallet)
@@ -737,6 +871,12 @@ async def async_main(args: argparse.Namespace) -> int:
         finally:
             ledger.close()
     config = load_config(args.config)
+    if getattr(args, "strategy", None) is not None:
+        config = replace(config, strategy=replace(config.strategy, mode=args.strategy))
+    if args.command == "paper":
+        from btc5m.comparison import run_paper
+
+        return await run_paper(args, config, emit)
     if args.command == "observe":
         return await observe(args, config)
     if args.command == "doctor" and not args.account:

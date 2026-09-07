@@ -1,0 +1,93 @@
+"""Public-only CLI lifecycle using real independent ledgers and execution engines."""
+
+import json
+
+import pytest
+
+from btc5m import cli, comparison
+from btc5m.config import STRATEGIES
+from btc5m.ledger import Ledger
+from btc5m.market_data import DataUnavailable
+
+
+class AnonymousData:
+    streams = None
+
+    def __init__(self, config, *, enhanced, observer):
+        assert enhanced
+
+    async def __aenter__(self):
+        return self
+
+    async def close(self):
+        pass
+
+    def restore_history(self, records):
+        return 0
+
+    def retain_markets(self, markets):
+        pass
+
+    def current_snapshot(self):
+        return None
+
+    def final_reference(self, market):
+        return None
+
+    async def snapshot(self):
+        raise DataUnavailable("STREAM_WARMUP")
+
+
+def forbid_credentials(*args, **kwargs):
+    pytest.fail("paper attempted account access")
+
+
+def test_paper_cli_six_ledgers_no_credentials_resume_and_safe_report(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "load_credentials", forbid_credentials)
+    monkeypatch.setattr(cli, "create_secure_client", forbid_credentials)
+    monkeypatch.setattr(comparison, "MarketData", AnonymousData)
+    args = ["paper", "--duration", ".01", "--shutdown-seconds", ".1", "--runtime", str(tmp_path)]
+    assert cli.main(args) == 0
+    assert cli.main(args) == 0
+    report = comparison.paper_report(tmp_path, records=True)
+    assert set(report["portfolios"]) == set(STRATEGIES)
+    assert report["environment"] == "paper"
+    assert report["manifest"]["allocation_per_portfolio"] == "16.66"
+    assert report["manifest"]["unused_allocation"] == "0.04"
+    assert report["observations"] == report["raw_decisions"] == ()
+    assert all(
+        row["simulated_cash"] == 16.66 or str(row["simulated_cash"]) == "16.66"
+        for row in report["portfolios"].values()
+    )
+    assert all(row["orders"] == 0 for row in report["portfolios"].values())
+    capsys.readouterr()
+    assert cli.main(["report", "--runtime", str(tmp_path), "--records"]) == 0
+    assert "observations" in json.loads(capsys.readouterr().out)
+    assert cli.main(["stop", "--runtime", str(tmp_path)]) == 0
+
+
+def test_paper_cleanup_failure_releases_every_journal_owner(tmp_path, monkeypatch, capsys):
+    class BrokenClose(AnonymousData):
+        async def close(self):
+            raise RuntimeError("PRIVATE_DIAGNOSTIC_NOT_FOR_LOG")
+
+    monkeypatch.setattr(comparison, "MarketData", BrokenClose)
+    assert cli.main(["paper", "--duration", ".01", "--runtime", str(tmp_path)]) == 2
+    assert "PRIVATE_DIAGNOSTIC" not in capsys.readouterr().err
+    master = Ledger(tmp_path / "observations.sqlite", comparison.MASTER_WALLET, environment="paper")
+    master.close()
+    for i, name in enumerate(STRATEGIES):
+        ledger = Ledger(
+            tmp_path / name / "ledger.sqlite", "0x" + str(i + 1).zfill(40), environment="paper"
+        )
+        ledger.close()
+
+
+@pytest.mark.parametrize("selection", ["value,value", "not-a-strategy", ""])
+def test_paper_rejects_invalid_selection_before_account_or_storage(
+    tmp_path, monkeypatch, selection
+):
+    monkeypatch.setattr(cli, "load_credentials", forbid_credentials)
+    directory = tmp_path / "unused"
+    assert cli.main(["paper", "--strategies", selection, "--runtime", str(directory)]) == 2
+    assert not directory.exists()

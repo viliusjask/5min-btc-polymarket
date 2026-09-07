@@ -1,5 +1,9 @@
 # Ruling on the additional inventory strategies
 
+**Historical implementation scope:** the later user-authorized
+[six-strategy extension](../six-strategies.md) implements the four experiments deferred below.
+The scientific cautions and limits on attribution still apply.
+
 2026-09-06. The user supplied Daniro's full August 19 article and nine relevant screenshots,
 and delegated the decision about adding strategies. This ruling supplements the original repair.
 

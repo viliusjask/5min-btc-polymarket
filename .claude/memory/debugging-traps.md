@@ -119,3 +119,23 @@ finalization ownership boundary against repeated caller cancellation. An interru
 order becomes UNKNOWN before cancellation propagates. Do not release ownership while execution
 can survive. Prompt cancellation acknowledgement and local scheduling/I/O remain explicit limits;
 noncooperative code requires external termination followed by journal inspection/reconciliation.
+# 2026-09-07 extension findings
+
+- Repeated WS book reconnects: an empty ask is reported with best_ask=1, and a single match can
+  send a new crossed level before the zero-removal message at the same source timestamp. Keep
+  incomplete working depth private; publish only after consistency returns, reconnect after a
+  one-second unresolved sequence. Do not reconnect just because an older full snapshot arrives.
+- False account discrepancy: Data API returned a four-decimal position size while the ERC1155
+  balance kept six decimals. The index is a discovery aid; allow only sub-0.0001-share rounding
+  there and retain exact blockchain-versus-journal and foreign-inventory checks.
+- Paper BUY under-spent: requested minimum shares are a signed price protection, not the cash
+  order's target size. Consume the requested cash principal through subsequent depth, allowing
+  more shares at improved prices; test the actual cash amount as well as a nonzero fill.
+- Queue recovery: a connection generation counter can repeat after process restart. Persist
+  a stream-session identity too; a new session cannot inherit the old simulated queue position.
+- Price-history restart: restore original public timestamps and conflicts without setting fresh
+  feed receipt state. New spot and TWAP receipts remain mandatory before trading resumes.
+<!-- 2026-09-07: additional paper regression during final verification. -->
+- Simulated maker volume must be strictly later than the activation book timestamp. A trade
+  sharing that timestamp may already be removed from the displayed queue; consuming it again
+  invents a fill. Equal-timestamp ordering is unknown, so exclude it conservatively.

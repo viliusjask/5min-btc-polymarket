@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
 from statistics import NormalDist
 
-from btc5m.config import Config
+from btc5m.config import PAIR_STRATEGIES, Config, strategy_for_round
 from btc5m.domain import (
     Book,
     Decision,
@@ -224,7 +224,7 @@ def _quote(
         return _skip(snapshot, "SPREAD_TOO_WIDE", features, probability_up, floor)
     minimum_ask, maximum_ask = (
         (strategy.value_min_ask, strategy.value_max_ask)
-        if strategy.mode == "value"
+        if strategy.mode != "momentum"
         else (strategy.momentum_min_ask, strategy.momentum_max_ask)
     )
     if not minimum_ask <= book.asks[0].price <= maximum_ask:
@@ -283,7 +283,7 @@ def _quote(
             "terminal_surplus_proxy_units": "USD/share; uncalibrated terminal screen, not stopped-policy return",
         }
     )
-    if strategy.mode == "value" and surplus <= strategy.min_terminal_surplus:
+    if strategy.mode != "momentum" and surplus <= strategy.min_terminal_surplus:
         return _skip(
             snapshot, "INSUFFICIENT_TERMINAL_SURPLUS", features, probability_up, floor, surplus
         )
@@ -304,57 +304,157 @@ def _quote(
     )
 
 
-def evaluate(snapshot: Snapshot, config: Config) -> Decision:
-    """Return one deterministic candidate or a visible non-entry reason; perform no I/O."""
+class FastReferenceError(ValueError):
+    pass
+
+
+def fast_reference(snapshot: Snapshot, config: Config) -> tuple[PricePoint, dict[str, float | str]]:
+    """Bridge the observed Chainlink value using a timestamp-aligned exchange return."""
+    points = snapshot.exchange_history
+    if not points:
+        raise FastReferenceError("FAST_MISSING")
+    now, limits = snapshot.now_ms, config.experiments
+    if any(
+        max(p.timestamp_ms, p.received_ms) > now + config.data.future_tolerance_ms for p in points
+    ):
+        raise FastReferenceError("FAST_FUTURE")
+    points = tuple(sorted(points, key=lambda p: p.timestamp_ms))
+    latest = points[-1]
+    if any(
+        now - stamp > limits.fast_max_age_ms for stamp in (latest.timestamp_ms, latest.received_ms)
+    ):
+        raise FastReferenceError("FAST_STALE")
+    aligned = [p for p in points if p.timestamp_ms <= snapshot.spot.timestamp_ms]
+    if (
+        not aligned
+        or snapshot.spot.timestamp_ms - aligned[-1].timestamp_ms > limits.fast_alignment_ms
+    ):
+        raise FastReferenceError("FAST_UNALIGNED")
+    if latest.timestamp_ms <= snapshot.spot.timestamp_ms:
+        raise FastReferenceError("FAST_NOT_AHEAD")
+    base = aligned[-1]
+    change = latest.price / base.price - 1
+    if abs(change) * 10000 > limits.fast_max_move_bps:
+        raise FastReferenceError("FAST_MOVE_GUARD")
+    return PricePoint(
+        "spot",
+        latest.timestamp_ms,
+        max(latest.received_ms, snapshot.spot.received_ms),
+        snapshot.spot.price * (1 + change),
+    ), {
+        "exchange_source": "binance:BTCUSDT:aggTrade",
+        "exchange_source_ms": str(latest.timestamp_ms),
+        "exchange_received_ms": str(latest.received_ms),
+        "exchange_anchor_ms": str(base.timestamp_ms),
+        "exchange_return": str(change),
+        "chainlink_source_ms": str(snapshot.spot.timestamp_ms),
+        "fast_reference_price": str(snapshot.spot.price * (1 + change)),
+    }
+
+
+def conditional_probability_up(
+    spot: Decimal, reference: Decimal, sigma: float, tau: float, realized_integral: Decimal = _ZERO
+) -> float:
+    """Conditional final-60s average under the same arithmetic Brownian approximation.
+
+    The realized integral has USD-second units. Inside the average, only the future
+    part is random: variance = sigma**2 * tau**3 / (3 * 60**2).
+    """
+    if tau >= 60:
+        return terminal_probability_up(spot, reference, sigma, tau)
+    require_decimal(spot, "spot", positive=True)
+    require_decimal(reference, "reference", positive=True)
+    require_decimal(realized_integral, "realized_integral")
+    if not math.isfinite(tau) or tau <= 0 or not math.isfinite(sigma) or sigma <= 0:
+        raise ValueError("invalid conditional horizon or volatility")
+    mean = (realized_integral + spot * Decimal(str(tau))) / 60
+    deviation = sigma * math.sqrt(tau**3 / 3) / 60
+    return NormalDist().cdf(float(mean - reference) / deviation)
+
+
+def _realized_integral(snapshot: Snapshot, end_ms: int, config: Config) -> Decimal:
+    start = (snapshot.market.end_s - 60) * 1000
+    if end_ms <= start:
+        return _ZERO
+    # This numerical integration is a model approximation, never a settlement price.
+    points = sorted(
+        (p for p in snapshot.history if p.timestamp_ms <= end_ms), key=lambda p: p.timestamp_ms
+    )
+    previous = next((p for p in reversed(points) if p.timestamp_ms <= start), None)
+    gap = config.experiments.averaging_max_gap_ms
+    if previous is None or start - previous.timestamp_ms > gap:
+        raise ValueError("AVERAGING_HISTORY_GAP")
+    total, cursor = _ZERO, start
+    for point in points:
+        if point.timestamp_ms <= start:
+            continue
+        if point.timestamp_ms - previous.timestamp_ms > gap:
+            raise ValueError("AVERAGING_HISTORY_GAP")
+        total += previous.price * Decimal(point.timestamp_ms - cursor) / 1000
+        cursor, previous = point.timestamp_ms, point
+    if end_ms - previous.timestamp_ms > gap:
+        raise ValueError("AVERAGING_HISTORY_GAP")
+    return total + previous.price * Decimal(end_ms - cursor) / 1000
+
+
+@dataclass(frozen=True)
+class FairValue:
+    reason: str
+    probability_up: float | None
+    floors: dict[Side, float]
+    features: dict[str, float | str]
+    ceilings: dict[Side, float]
+
+
+def fair_value(snapshot: Snapshot, config: Config) -> FairValue:
+    """Shared probability and sensitivity scenarios, usable during the ending average."""
     strategy, data, market = config.strategy, config.data, snapshot.market
-    entry_tau = (market.end_s * 1000 - snapshot.now_ms) / 1000
-    model_tau = (market.end_s * 1000 - snapshot.spot.timestamp_ms) / 1000
+    point = snapshot.spot
     features: dict[str, float | str] = {
         "mode": strategy.mode,
         "config_hash": config.fingerprint,
-        "entry_tau_seconds": entry_tau,
-        "model_tau_seconds": model_tau,
+        "entry_tau_seconds": (market.end_s * 1000 - snapshot.now_ms) / 1000,
+        "model_tau_seconds": (market.end_s * 1000 - point.timestamp_ms) / 1000,
         "reference_status": market.reference_status,
         "reference_source": market.reference_source or "missing",
-        "spot_source_ms": str(snapshot.spot.timestamp_ms),
-        "spot_received_ms": str(snapshot.spot.received_ms),
+        "spot_source_ms": str(point.timestamp_ms),
+        "spot_received_ms": str(point.received_ms),
     }
+
+    def fail(reason: str) -> FairValue:
+        return FairValue(reason, None, {}, dict(features), {})
+
     safety = _safety_reason(snapshot, config)
     if safety:
-        return _skip(snapshot, safety, features)
-    entry_min, entry_max = (
-        (strategy.entry_min_seconds, strategy.entry_max_seconds)
-        if strategy.mode == "value"
-        else (strategy.momentum_min_seconds, strategy.momentum_max_seconds)
-    )
-    if not entry_min <= entry_tau <= entry_max:
-        return _skip(snapshot, "ENTRY_WINDOW", features)
-    if model_tau < 60:
-        return _skip(snapshot, "MODEL_HORIZON", features)
+        return fail(safety)
+    if strategy.mode == "fast_value":
+        try:
+            point, extra = fast_reference(snapshot, config)
+            features.update(extra)
+        except FastReferenceError as exc:
+            return fail(str(exc))
+    tau = (market.end_s * 1000 - point.timestamp_ms) / 1000
+    features["model_tau_seconds"] = tau
+    if tau <= 0:
+        return fail("MODEL_HORIZON")
     if any(
         max(p.timestamp_ms, p.received_ms) > snapshot.now_ms + data.future_tolerance_ms
         for p in snapshot.history
     ):
-        return _skip(snapshot, "FUTURE_DATA", features)
-    history = tuple(sorted(snapshot.history, key=lambda point: point.timestamp_ms))
+        return fail("FUTURE_DATA")
+    history = tuple(sorted(snapshot.history, key=lambda p: p.timestamp_ms))
     if any(p.kind != "spot" for p in history) or len({p.timestamp_ms for p in history}) != len(
         history
     ):
-        return _skip(snapshot, "INVALID_HISTORY", features)
+        return fail("INVALID_HISTORY")
     try:
-        short = _sample_window(
-            history,
-            min(snapshot.spot.timestamp_ms, snapshot.now_ms),
-            strategy.volatility_short_seconds,
-            config,
-        )
-        long = _sample_window(
-            history,
-            min(snapshot.spot.timestamp_ms, snapshot.now_ms),
-            strategy.volatility_long_seconds,
-            config,
-        )
-        for label, window in (("short", short), ("long", long)):
+        windows = [
+            _sample_window(
+                history, min(snapshot.spot.timestamp_ms, snapshot.now_ms), seconds, config
+            )
+            for seconds in (strategy.volatility_short_seconds, strategy.volatility_long_seconds)
+        ]
+        for label, window in zip(("short", "long"), windows, strict=True):
             features.update(
                 {
                     f"{label}_span_seconds": window.span_seconds,
@@ -367,49 +467,96 @@ def evaluate(snapshot: Snapshot, config: Config) -> Decision:
             )
             if window.sigma is not None:
                 features[f"{label}_sigma"] = window.sigma
-        if short.rejection or long.rejection:
-            reason = (
+        if any(w.rejection for w in windows):
+            return fail(
                 "INVALID_MODEL"
-                if "INVALID_VARIANCE" in (short.rejection, long.rejection)
+                if any(w.rejection == "INVALID_VARIANCE" for w in windows)
                 else "INSUFFICIENT_HISTORY"
             )
-            return _skip(snapshot, reason, features)
-        assert short.sigma is not None and long.sigma is not None
-        if short.sigma == 0 or long.sigma == 0:
-            return _skip(snapshot, "ZERO_VARIANCE", features)
-        stress = max(short.sigma, long.sigma) * float(strategy.volatility_stress_multiplier)
+        short, long = windows[0].sigma, windows[1].sigma
+        assert short is not None and long is not None
+        if short == 0 or long == 0:
+            return fail("ZERO_VARIANCE")
+        stress = max(short, long) * float(strategy.volatility_stress_multiplier)
         if not math.isfinite(stress):
-            raise ValueError("nonfinite stressed volatility")
-        sigmas = (short.sigma, long.sigma, stress)
+            return fail("INVALID_MODEL")
         reference = market.reference_price
-        assert reference is not None  # The common safety gate already rejects missing references.
-        probability_up = terminal_probability_up(
-            snapshot.spot.price, reference, short.sigma, model_tau
+        assert reference is not None
+        integral = _realized_integral(snapshot, point.timestamp_ms, config) if tau < 60 else _ZERO
+        p = conditional_probability_up(point.price, reference, short, tau, integral)
+        features.update(
+            central_probability_down=1 - p,
+            stress_sigma=stress,
+            adverse_reference_usd=str(strategy.adverse_reference_usd),
+            spot_reference_move_usd=str(point.price - reference),
         )
-        features["central_probability_down"] = 1 - probability_up
-        features["stress_sigma"] = stress
-        features["adverse_reference_usd"] = str(strategy.adverse_reference_usd)
-        floors: dict[Side, float] = {}
-        for side in Side:
-            adverse_reference = reference + strategy.adverse_reference_usd * (
-                1 if side is Side.UP else -1
+        if tau < 60:
+            features.update(
+                realized_integral_usd_seconds=str(integral),
+                averaging_method="left-step integration of observed Chainlink points; not settlement evidence",
             )
-            scenarios = [
-                terminal_probability_up(snapshot.spot.price, anchor, sigma, model_tau)
-                for sigma in sigmas
-                for anchor in (reference, adverse_reference)
-            ]
-            floors[side] = min(scenarios if side is Side.UP else [1 - p for p in scenarios])
-    except (ValueError, OverflowError):
-        return _skip(snapshot, "INVALID_MODEL", features)
-    move = snapshot.spot.price - reference
-    features["spot_reference_move_usd"] = str(move)
+        scenarios = [
+            conditional_probability_up(point.price, reference + offset, sigma, tau, integral)
+            for sigma in (short, long, stress)
+            for offset in (-strategy.adverse_reference_usd, _ZERO, strategy.adverse_reference_usd)
+        ]
+        return FairValue(
+            "VALID",
+            p,
+            {Side.UP: min(scenarios), Side.DOWN: 1 - max(scenarios)},
+            dict(features),
+            {Side.UP: max(scenarios), Side.DOWN: 1 - min(scenarios)},
+        )
+    except (ValueError, OverflowError) as exc:
+        return fail(
+            "AVERAGING_HISTORY_GAP" if str(exc) == "AVERAGING_HISTORY_GAP" else "INVALID_MODEL"
+        )
+
+
+def evaluate(snapshot: Snapshot, config: Config) -> Decision:
+    """Return a real executable policy candidate or a visible rejection."""
+    selected = strategy_for_round(config, snapshot.market.start_s)
+    if selected != config.strategy.mode:
+        config = replace(config, strategy=replace(config.strategy, mode=selected))
+    if selected in PAIR_STRATEGIES:
+        from btc5m.pairing import pair_decision
+
+        return pair_decision(snapshot, config, ())
+    strategy, market = config.strategy, snapshot.market
+    # Preserve baseline rejection ordering and entry windows.
+    features: dict[str, float | str] = {
+        "mode": selected,
+        "config_hash": config.fingerprint,
+        "entry_tau_seconds": (market.end_s * 1000 - snapshot.now_ms) / 1000,
+        "model_tau_seconds": (market.end_s * 1000 - snapshot.spot.timestamp_ms) / 1000,
+        "reference_status": market.reference_status,
+        "reference_source": market.reference_source or "missing",
+        "spot_source_ms": str(snapshot.spot.timestamp_ms),
+        "spot_received_ms": str(snapshot.spot.received_ms),
+    }
+    safety = _safety_reason(snapshot, config)
+    if safety:
+        return _skip(snapshot, safety, features)
+    low, high = (
+        (strategy.momentum_min_seconds, strategy.momentum_max_seconds)
+        if selected == "momentum"
+        else (strategy.entry_min_seconds, strategy.entry_max_seconds)
+    )
+    if not low <= float(features["entry_tau_seconds"]) <= high:
+        return _skip(snapshot, "ENTRY_WINDOW", features)
+    if float(features["model_tau_seconds"]) < 60:
+        return _skip(snapshot, "MODEL_HORIZON", features)
+    value = fair_value(snapshot, config)
+    if value.reason != "VALID":
+        return _skip(snapshot, value.reason, value.features)
+    assert value.probability_up is not None and market.reference_price is not None
+    move = Decimal(str(value.features["spot_reference_move_usd"]))
     preferred = Side.UP if move >= 0 else Side.DOWN
-    if strategy.mode == "momentum" and abs(move) < strategy.momentum_min_move_usd:
-        return _skip(snapshot, "MOMENTUM_MOVE", features, probability_up)
+    if selected == "momentum" and abs(move) < strategy.momentum_min_move_usd:
+        return _skip(snapshot, "MOMENTUM_MOVE", value.features, value.probability_up)
     sides = (
         (preferred,)
-        if strategy.mode == "momentum"
+        if selected == "momentum"
         else (preferred, Side.DOWN if preferred is Side.UP else Side.UP)
     )
     decisions = [
@@ -418,23 +565,23 @@ def evaluate(snapshot: Snapshot, config: Config) -> Decision:
             config,
             side,
             snapshot.up_book if side is Side.UP else snapshot.down_book,
-            probability_up,
-            floors[side],
-            features,
+            value.probability_up,
+            value.floors[side],
+            value.features,
         )
         for side in sides
     ]
-    eligible = [decision for decision in decisions if decision.side is not None]
+    eligible = [d for d in decisions if d.side is not None]
     if eligible:
         return max(
             eligible,
-            key=lambda decision: decision.terminal_surplus_proxy
-            if decision.terminal_surplus_proxy is not None
+            key=lambda d: d.terminal_surplus_proxy
+            if d.terminal_surplus_proxy is not None
             else Decimal("-Infinity"),
         )
     first = decisions[0]
-    if len(decisions) > 1:
-        first = replace(
-            first, features={**first.features, "other_side_reason": decisions[1].reason}
-        )
-    return first
+    return (
+        replace(first, features={**first.features, "other_side_reason": decisions[1].reason})
+        if len(decisions) > 1
+        else first
+    )

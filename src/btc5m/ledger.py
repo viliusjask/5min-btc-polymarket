@@ -21,7 +21,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
-from btc5m.config import Config
+from btc5m.config import PAIR_STRATEGIES, STRATEGIES, Config, strategy_for_round
 from btc5m.domain import Decision, Market, Side, Snapshot, require_decimal
 from btc5m.execution_types import (
     ConfirmedFill,
@@ -125,7 +125,12 @@ def _day(now_ms: int) -> str:
 
 
 class Ledger:
-    def __init__(self, path: Path, wallet: str, *, readonly: bool = False) -> None:
+    def __init__(
+        self, path: Path, wallet: str, *, readonly: bool = False, environment: str = "live"
+    ) -> None:
+        if environment not in ("live", "paper"):
+            raise LedgerError("INVALID_ENVIRONMENT")
+        self.environment = environment
         self.path, self.wallet, self.readonly = path.resolve(), normalize_wallet(wallet), readonly
         self.config: Config | None = None
         self._lock: int | None = None
@@ -157,12 +162,18 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, at_ms INTEGER NOT NULL, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS measurements (key TEXT PRIMARY KEY, data TEXT NOT NULL);
             """)
+            prior = self._meta("wallet")
+            if prior and prior != self.wallet:
+                self.close()
+                raise LedgerError("WALLET_MISMATCH")
+            prior_environment = self._meta("environment") or "live"
+            has_data = self.db.execute("SELECT 1 FROM sessions LIMIT 1").fetchone()
+            if (has_data or self._meta("environment")) and prior_environment != environment:
+                self.close()
+                raise LedgerError("EXECUTION_ENVIRONMENT_MISMATCH")
             with self.db:
-                prior = self._meta("wallet")
-                if prior and prior != self.wallet:
-                    self.close()
-                    raise LedgerError("WALLET_MISMATCH")
                 self._set("wallet", self.wallet)
+                self._set("environment", environment)
             for suffix in ("", "-wal", "-shm", ".lock"):
                 file = Path(str(self.path) + suffix)
                 if file.exists():
@@ -170,6 +181,8 @@ class Ledger:
         if self._meta("wallet") != self.wallet:
             self.close()
             raise LedgerError("WALLET_MISMATCH")
+        if readonly:
+            self.environment = self._meta("environment") or "live"
 
     def close(self) -> None:
         self.db.close()
@@ -278,10 +291,30 @@ class Ledger:
         )
 
     def open_position(self) -> Position | None:
-        active = [p for p in self.positions() if p.status == "ACTIVE" and p.quantity > 0]
+        active = self.active_positions()
         if len(active) > 1:
-            raise LedgerError("MULTIPLE_ACTIVE_POSITIONS")
+            modes = {p.decision.features.get("mode") for p in active}
+            if (
+                len(active) != 2
+                or len(modes) != 1
+                or next(iter(modes)) not in PAIR_STRATEGIES
+                or len({p.market.condition_id for p in active}) != 1
+                or len({p.token_id for p in active}) != 2
+            ):
+                raise LedgerError("MULTIPLE_ACTIVE_POSITIONS")
         return active[0] if active else None
+
+    def active_positions(self) -> tuple[Position, ...]:
+        return tuple(p for p in self.positions() if p.status == "ACTIVE" and p.quantity > 0)
+
+    def round_orders(self, slug: str) -> tuple[Intent, ...]:
+        return tuple(
+            _intent(row[0])
+            for row in self.db.execute(
+                "SELECT data FROM intents WHERE json_extract(data,'$.market.slug')=? ORDER BY rowid",
+                (slug,),
+            )
+        )
 
     def known_inventory(self) -> dict[str, Decimal]:
         result: dict[str, Decimal] = {}
@@ -383,8 +416,20 @@ class Ledger:
         summary = self.summary(now_ms)
         if self.stop_requested() or summary.halts:
             raise LedgerError("ENTRIES_HALTED")
-        if summary.unresolved_orders or self.open_position():
+        mode = decision.features.get("mode", self.config.strategy.mode)
+        pair = mode in PAIR_STRATEGIES
+        active = self.active_positions()
+        if summary.unresolved_orders or (active and not pair):
             raise LedgerError("EXPOSURE_UNRESOLVED")
+        if pair and (
+            mode != strategy_for_round(self.config, market.start_s)
+            or any(
+                p.market.condition_id != market.condition_id
+                or p.decision.features.get("mode") != mode
+                for p in active
+            )
+        ):
+            raise LedgerError("PAIR_EXPOSURE_MISMATCH")
         if (
             decision.side is None
             or decision.reason != "ENTRY"
@@ -397,6 +442,8 @@ class Ledger:
         risk = self.config.risk
         if reserve > risk.trade_budget_usd or reserve > risk.allocation_usd:
             raise LedgerError("ALLOCATION_LIMIT")
+        if pair and summary.position_risk + reserve > risk.trade_budget_usd:
+            raise LedgerError("PAIR_BUDGET_LIMIT")
         if summary.cash is None or reserve > summary.cash - summary.risk_reserve:
             raise LedgerError("INSUFFICIENT_CASH")
         exposure = summary.position_risk + summary.risk_reserve + reserve
@@ -405,12 +452,31 @@ class Ledger:
             or max(D(0), -summary.session_realized_net_pnl) + exposure > risk.session_loss_usd
         ):
             raise LedgerError("LOSS_LIMIT")
-        if summary.daily_entries >= risk.max_entries_per_day:
+        prior = self.round_orders(market.slug)
+        if summary.daily_entries >= risk.max_entries_per_day and not (pair and prior):
             raise LedgerError("DAILY_ENTRY_LIMIT")
-        if self.db.execute(
-            "SELECT 1 FROM intents WHERE opening_round=?", (market.slug,)
-        ).fetchone():
+        if prior and not pair:
             raise LedgerError("ROUND_ALREADY_ATTEMPTED")
+        if pair:
+            if len(prior) >= self.config.experiments.pair_max_orders_per_round:
+                raise LedgerError("PAIR_ORDER_LIMIT")
+            if prior and (
+                prior[0].decision is None or prior[0].decision.features.get("mode") != mode
+            ):
+                raise LedgerError("ROUND_STRATEGY_MISMATCH")
+            if any(
+                p.exit_reason
+                for p in self.positions()
+                if p.market.condition_id == market.condition_id
+            ):
+                raise LedgerError("PAIR_EXIT_LATCHED")
+            if any(o.side == "SELL" for o in prior):
+                raise LedgerError("PAIR_ROUND_CLOSED")
+            if (
+                decision.features.get("order_type") != "GTC"
+                or decision.minimum_receive_shares * decision.price_limit != decision.buy_principal
+            ):
+                raise LedgerError("INVALID_PAIR_QUOTE")
 
     def reserve_entry(
         self, decision: Decision, market: Market, session_id: str, now_ms: int
@@ -424,6 +490,12 @@ class Ledger:
             assert decision.side is not None and decision.price_limit is not None
             reserve = decision.max_total_reserved
             ident = uuid.uuid4().hex
+            pair = decision.features.get("mode") in PAIR_STRATEGIES
+            prior = self.round_orders(market.slug)
+            existing = next(
+                (p for p in self.active_positions() if p.token_id == market.token(decision.side)),
+                None,
+            )
             intent = Intent(
                 ident,
                 session_id,
@@ -438,14 +510,20 @@ class Ledger:
                 now_ms,
                 "ENTRY",
                 decision,
-                ident,
+                existing.position_id if pair and existing else ident,
                 outstanding_quantity=decision.minimum_receive_shares,
                 remaining_reserve=reserve,
+                passive=pair,
             )
             try:
                 self.db.execute(
                     "INSERT INTO intents VALUES (?,?,?,?,NULL)",
-                    (ident, market.slug, "RESERVED", _json(asdict(intent))),
+                    (
+                        ident,
+                        None if pair and prior else market.slug,
+                        "RESERVED",
+                        _json(asdict(intent)),
+                    ),
                 )
             except sqlite3.IntegrityError:
                 raise LedgerError("ROUND_ALREADY_ATTEMPTED") from None
@@ -467,7 +545,9 @@ class Ledger:
         require_decimal(quantity, "quantity", positive=True)
         require_decimal(price_limit, "price_limit", positive=True)
         with self.db:
-            actual = self.open_position()
+            actual = next(
+                (p for p in self.active_positions() if p.position_id == position.position_id), None
+            )
             if (
                 actual is None
                 or actual.position_id != position.position_id
@@ -491,7 +571,7 @@ class Ledger:
                 D(0),
                 now_ms,
                 reason,
-                None,
+                actual.decision,
                 actual.position_id,
                 outstanding_quantity=quantity,
             )
@@ -512,7 +592,12 @@ class Ledger:
                 or prepared.reserved_cash > order.reserved_cash
                 or prepared.reserved_quantity > order.quantity
                 or prepared.reserved_quantity <= 0
-                or prepared.signing_domain != SigningDomain()
+                or prepared.signing_domain
+                != (
+                    SigningDomain("BTC5m PAPER", "1", 0, "0x" + "00" * 20)
+                    if self.environment == "paper"
+                    else SigningDomain()
+                )
             ):
                 raise LedgerError("INVALID_PREPARATION")
             self.db.execute(
@@ -565,6 +650,25 @@ class Ledger:
                 raise LedgerError("NOT_PREPARED")
             self._save(replace(order, state="SUBMITTING"))
             self._event("SUBMITTING", int(time.time() * 1000), {"intent_id": intent_id})
+
+    def request_cancel(self, intent_id: str, now_ms: int) -> Intent:
+        """A cancellation request never releases reserves or asserts no late fills."""
+        self._write()
+        with self.db:
+            order = self.order(intent_id)
+            if not order.passive or order.state in TERMINAL or order.order_hash is None:
+                raise LedgerError("CANCEL_NOT_OWNED_ACTIVE_ORDER")
+            order = replace(
+                order,
+                cancel_requested_ms=order.cancel_requested_ms
+                if order.cancel_requested_ms is not None
+                else now_ms,
+            )
+            self._save(order)
+            self._event(
+                "CANCEL_REQUESTED", now_ms, {"intent_id": intent_id, "order_hash": order.order_hash}
+            )
+            return order
 
     def record_ack(self, intent_id: str, ack: OrderAck) -> None:
         self._write()
@@ -629,7 +733,7 @@ class Ledger:
 
     def _apply_fill(self, order: Intent, fill: ConfirmedFill) -> Intent:
         if (
-            fill.chain_id != 137
+            fill.chain_id != (0 if self.environment == "paper" else 137)
             or fill.wallet.lower() != self.wallet
             or fill.token_id != order.token_id
             or fill.order_hash.lower() != order.order_hash
@@ -656,9 +760,9 @@ class Ledger:
                 raise LedgerError("MISSING_SOURCE_DECISION")
             q = (prior.quantity if prior else D(0)) + fill.quantity
             basis = (prior.cost_basis if prior else D(0)) + fill.principal + fill.fee
-            gross = (order.confirmed_principal + fill.principal) / (
-                order.confirmed_quantity + fill.quantity
-            )
+            gross = (
+                (prior.gross_entry_price * prior.quantity if prior else D(0)) + fill.principal
+            ) / q
             pos = Position(
                 order.position_id,
                 order.market,
@@ -669,6 +773,8 @@ class Ledger:
                 basis,
                 gross,
                 "ACTIVE",
+                prior.exit_reason if prior else None,
+                prior.exit_problem if prior else None,
             )
         else:
             if prior is None or fill.quantity > prior.quantity or fill.fee > fill.principal:
@@ -732,9 +838,10 @@ class Ledger:
                 raise LedgerError("RESOLUTION_ACCOUNT_UNCERTAINTY")
             payouts = dict(evidence.token_payouts)
             if (
-                evidence.chain_id != 137
+                evidence.chain_id != (0 if self.environment == "paper" else 137)
                 or evidence.condition_id != market.condition_id
-                or evidence.source != "CTF_FINALIZED"
+                or evidence.source
+                != ("PAPER_OFFICIAL_FINAL" if self.environment == "paper" else "CTF_FINALIZED")
                 or evidence.denominator <= 0
                 or evidence.numerators not in ((evidence.denominator, 0), (0, evidence.denominator))
                 or set(payouts) != {market.up_token, market.down_token}
@@ -767,6 +874,39 @@ class Ledger:
                     )
                     self._save_position(replace(pos, status="WORTHLESS", cost_basis=D(0)))
                 self._event("RESOLUTION", now_ms, asdict(evidence))
+
+    def settle_paper_claims(self, now_ms: int) -> None:
+        """Simulated automatic payout; never enabled for a funded journal."""
+        if self.environment != "paper":
+            raise LedgerError("PAPER_ONLY_OPERATION")
+        self._write()
+        with self.db:
+            for position in self.positions():
+                if position.status != "CLAIMABLE" or position.claimable_value <= 0:
+                    continue
+                self.db.execute(
+                    "INSERT INTO accounting VALUES (?,?,?,?,?,?)",
+                    (
+                        "paper_claim:" + position.position_id,
+                        self.order(position.position_id).session_id,
+                        _day(now_ms),
+                        str(position.claimable_value),
+                        str(position.claimable_value - position.cost_basis),
+                        "0",
+                    ),
+                )
+                self._save_position(
+                    replace(position, quantity=D(0), cost_basis=D(0), claimable_value=D(0))
+                )
+                self._event(
+                    "PAPER_PAYOUT",
+                    now_ms,
+                    {
+                        "position_id": position.position_id,
+                        "cash": str(position.claimable_value),
+                        "assumption": "automatic zero-cost simulated redemption",
+                    },
+                )
 
     def request_stop(self) -> None:
         self._write()
@@ -834,6 +974,11 @@ class Ledger:
             "gross_proceeds",
             "estimated_sell_fee",
             "estimated_net_proceeds",
+            "identity",
+            "quantity",
+            "timestamp_ms",
+            "generation",
+            "mode",
         }
         safe = {key: value for key, value in record.items() if key in allowed}
         if record.get("kind") == "metadata_rejected":
@@ -919,13 +1064,15 @@ class Ledger:
                         "UPDATE measurements SET data=? WHERE key=?", (_json(data), key)
                     )
 
-    def record_snapshot(self, snapshot: Snapshot, config: Config) -> tuple[Decision, Decision]:
+    def record_snapshot(
+        self, snapshot: Snapshot, config: Config, *, modes: tuple[str, ...] = ("value", "momentum")
+    ) -> tuple[Decision, ...]:
         from btc5m.strategy import evaluate
 
         self._write()
         decisions = tuple(
             evaluate(snapshot, replace(config, strategy=replace(config.strategy, mode=mode)))
-            for mode in ("value", "momentum")
+            for mode in modes
         )
         with self.db:
             market = snapshot.market
@@ -941,7 +1088,7 @@ class Ledger:
             self.db.execute(
                 "INSERT OR IGNORE INTO measurements VALUES (?,?)", (key, _json(pending))
             )
-            for mode, decision in zip(("value", "momentum"), decisions, strict=True):
+            for mode, decision in zip(modes, decisions, strict=True):
                 data = {
                     "kind": "candidate",
                     "slug": market.slug,
@@ -979,7 +1126,85 @@ class Ledger:
                 )
                 self.db.execute("UPDATE measurements SET data=? WHERE key=?", (_json(current), key))
         self.record_clock(snapshot.now_ms)
-        return decisions[0], decisions[1]
+        return decisions
+
+    def portfolio_results(self) -> dict[str, Any]:
+        """Attribute actual journal cash/PnL to the policy that created each order."""
+        self.db.execute("SAVEPOINT portfolio_read")
+        try:
+            return self._portfolio_results()
+        finally:
+            self.db.execute("RELEASE SAVEPOINT portfolio_read")
+
+    def _portfolio_results(self) -> dict[str, Any]:
+        orders = {row[0]: _intent(row[1]) for row in self.db.execute("SELECT id,data FROM intents")}
+        mapping = {
+            f"{chain}:{tx}:{log}": orders[intent_id]
+            for chain, tx, log, intent_id in self.db.execute(
+                "SELECT chain,tx,log,intent_id FROM fills"
+            )
+        }
+        by_mode: dict[str, Any] = {
+            mode: {
+                "cash_movement": D(0),
+                "realized_net_pnl": D(0),
+                "fees": D(0),
+                "orders": 0,
+                "fills": 0,
+                "rounds": {},
+                "open_cost_basis": D(0),
+                "claimable_value": D(0),
+            }
+            for mode in STRATEGIES
+        }
+        for saved_order in orders.values():
+            mode = (
+                str(saved_order.decision.features.get("mode", "value"))
+                if saved_order.decision
+                else "value"
+            )
+            if mode not in by_mode:
+                continue
+            by_mode[mode]["orders"] += 1
+            by_mode[mode]["rounds"].setdefault(
+                saved_order.market.slug,
+                {"realized_net_pnl": D(0), "fees": D(0), "unresolved": False, "filled": False},
+            )
+            if saved_order.state not in TERMINAL:
+                by_mode[mode]["rounds"][saved_order.market.slug]["unresolved"] = True
+        for ident, cash, pnl, fee in self.db.execute("SELECT id,cash,pnl,fee FROM accounting"):
+            order = mapping.get(ident)
+            if order is None and ident.startswith(("resolution:", "paper_claim:")):
+                order = orders.get(ident.split(":", 1)[1])
+            if order is None:
+                continue
+            mode = str(order.decision.features.get("mode", "value")) if order.decision else "value"
+            if mode not in by_mode:
+                continue
+            data = by_mode[mode]
+            data["cash_movement"] += D(cash)
+            data["realized_net_pnl"] += D(pnl)
+            data["fees"] += D(fee)
+            data["fills"] += int(ident in mapping)
+            data["rounds"][order.market.slug]["realized_net_pnl"] += D(pnl)
+            data["rounds"][order.market.slug]["fees"] += D(fee)
+            if ident in mapping:
+                data["rounds"][order.market.slug]["filled"] = True
+        for position in self.positions():
+            mode = str(position.decision.features.get("mode", "value"))
+            if mode in by_mode:
+                data = by_mode[mode]
+                data["open_cost_basis"] += position.cost_basis
+                data["claimable_value"] += position.claimable_value
+                if position.quantity > 0 and position.status != "WORTHLESS":
+                    data["rounds"][position.market.slug]["unresolved"] = True
+        for data in by_mode.values():
+            data["attempted_rounds"] = len(data["rounds"])
+            data["filled_rounds"] = sum(r["filled"] for r in data["rounds"].values())
+            data["completed_rounds"] = sum(
+                r["filled"] and not r["unresolved"] for r in data["rounds"].values()
+            )
+        return by_mode
 
     def clear_stop_request(self) -> None:
         """Only explicit run startup calls this once, before awaited account setup."""

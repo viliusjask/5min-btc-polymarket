@@ -26,7 +26,12 @@ comparisons/export, corrected Momentum sampling and the policy notice, desktop/m
 layout, no JavaScript errors and no Real-account requests. Service unit verification used
 an isolated XDG_RUNTIME_DIR. A seven-journal metadata migration passed on backed-up copies,
 preserving sessions/accounting; its final bounded path took 0.699 seconds on those copies.
-Deployment confirmation is recorded after the service cutover.
+Deployed paper-only at approximately 18:44 UTC. Seven sessions, six balances and all existing
+financial rows were preserved; both pinned study PIDs/configuration/registrations remained
+unchanged. The source tape retained its prefix and resumed advancing after a recorded
+73.950-second shutdown/startup gap. Saved history was restored without refreshing timestamps.
+[PR12](https://github.com/viliusjask/5min-btc-polymarket/pull/12), code `93e91b2`; both CI runs passed.
+[Current service locations and cutover notes](paper-service.md).
 
 ---
 

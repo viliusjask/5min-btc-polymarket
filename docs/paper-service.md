@@ -7,16 +7,17 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Collector code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/evidence-audit`
-  (`fix/research-evidence`, PR10).
-- Dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/research-comparisons`
-  (`feat/research-comparisons`, PR11). The original registered lab remains on
-  `.worktrees/experiment-lab`; the17-variant order-flow study remains on `.worktrees/order-flow`.
-  Keep all four checkouts until their respective services have been repointed.
+- Collector and dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/strategy-policy-audit`
+  (`fix/strategy-policy-audit`, [PR12](https://github.com/viliusjask/5min-btc-polymarket/pull/12)).
+- The original registered lab remains on `.worktrees/experiment-lab`; the 17-variant
+  order-flow study remains on `.worktrees/order-flow`. Keep these three active checkouts.
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
-- Configuration: `/home/vilius/.config/btc5m/paper.toml` — USD600 allocation, USD5 entry budget,
-  USD10 day/session loss allowance per portfolio. The Value-family price floor is disabled and
-  Momentum requires aUSD50 lead. Restarting preserves sessions and balances.
+- Collector/dashboard configuration: `/home/vilius/.config/btc5m/paper-strategy-policy.toml` —
+  USD600 allocation, USD5 entry budget, USD10 day/session loss allowance per portfolio.
+  Momentum follows the 30-second recent move relative to five-minute price variation;
+  the Value-family price floor remains disabled. Sessions and balances persist across restarts.
+- Both pinned lab workers still use `/home/vilius/.config/btc5m/paper.toml`, byte-for-byte
+  unchanged. Do not give these old workers the new configuration schema.
 - Units: `~/.config/systemd/user/btc5m-paper.service` and `btc5m-dashboard.service`.
 - Dashboard: [localhost:8765](http://127.0.0.1:8765/). Real view remains read-only and explicitly
   references the canonical ignored `.env`; the collector has no account credentials.
@@ -139,3 +140,20 @@ The [research guide](research/strategy-comparisons.md) explains the calculations
 For the Windows task, copy `scripts/windows/*.ps1` to a local Windows directory, then run
 `install-wsl-task.ps1 -Distribution Ubuntu -LinuxUser vilius` in PowerShell. The installer copies
 the launcher into LocalAppData and registers/starts a current-user task. It needs no API keys.
+
+## Strategy-policy cutover, September 7
+
+The corrected collector/dashboard started at approximately 18:44 UTC. All seven session IDs
+(master plus six portfolios), six balances, historical orders/fills/accounting, and accumulated
+session/day losses were verified preserved. Full backups were verified online before stopping
+owners; the bounded metadata-only migration used fresh financial-state checks and appended
+`CONFIGURATION_CHANGED` records with baselines. It did not restore stale financial rows.
+The largest captured interruption was 73.950 seconds, including graceful shutdown/reporting
+and startup. Restored history retained its original timestamps; five-minute sampling must
+recover its coverage instead of inventing observations during that gap.
+
+The original tape prefix/checksum was verified unchanged and new frames advanced. Both lab
+PIDs, unit files, configuration and registration hashes were preserved. Code validation passed
+681 tests; PR12 CI passed. The dashboard marks the cutover and explains that lifetime totals
+include the earlier policies. Further deployment details and backups remain in the active
+checkout's ignored `work/deployment/` and `work/value-audit/policy-migration/` directories.

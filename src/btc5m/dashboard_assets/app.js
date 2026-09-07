@@ -227,7 +227,7 @@ function topSummary() {
 }
 function entrySchedule(name, latest, portfolio) {
   const window = state.thresholds?.entry_windows?.[name];
-  if (!window || latest?.reason !== "MISSING_BOOK_SIDE" ||
+  if (!window || !["MISSING_BOOK_SIDE", "ENTRY_WINDOW", "PAIR_WINDOW"].includes(latest?.reason) ||
       number(portfolio.open_cost_basis) > 0 || portfolio.unresolved_orders || portfolio.halts.length ||
       !state.collector.caught_up || state.collector.status !== "running") return null;
   const at = state.collector.last_ms, start = Number(latest.slug?.split("-").at(-1)) * 1000;
@@ -236,7 +236,7 @@ function entrySchedule(name, latest, portfolio) {
   const remaining = (start + 300000 - at) / 1000;
   if (remaining > window[1]) return {
     title: "Waiting for entry window",
-    detail: `Opens in ${Math.ceil(remaining - window[1])}s. Current book also has no buyers or sellers on one side.`,
+    detail: `Opens in ${Math.ceil(remaining - window[1])}s.` + (latest.reason === "MISSING_BOOK_SIDE" ? " Current book also has no buyers or sellers on one side." : ""),
   };
   if (remaining < window[0]) return {
     title: "Entry window closed",

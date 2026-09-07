@@ -20,9 +20,25 @@
   desktop/mobile output, all six cards, schedule cases, preserved warnings and depth expansion
   through refreshes. The paper-only migration was rehearsed on seven SQLite backup copies.
 
+- Reloaded the existing services from the entry-filters worktree at05:03:25–05:03:57UTC.
+  All seven session IDs and all prior orders, fills and accounting rows survived. Only the two
+  requested strategy settings changed, with old/new configuration hashes in dated journal events.
+  The manifest, loaded config and latest decision hashes agree. The collector still reports
+  SOURCE_ORDERED_FLOW_V3 and BOUNDED_INTERVALS_V1; both services are active with no restarts.
+- The cutover's largest raw spot gap was10seconds (05:03:47–05:03:57UTC), measured from captured
+  observations rather than the full service-stop interval. Live Edge verified all six cards,
+  Buy/Sell quotes, stable ordering and retained depth expansion without JavaScript errors or
+  mobile overflow. The paper/dashboard remain unfunded/read-only, respectively. Rehearsal and
+  preservation evidence are under ignored `work/entry-filter-migration` and `work/filter-reload-result.json`.
+- At05:08:07UTC all six strategies produced fresh, valid short/long sampling checks under the
+  new configuration. The sampled15-second interval remained within the coverage allowance.
+  Momentum rejected an8.68-dollar lead; the three value variants rejected insufficient modeled
+  surplus with `minimum_ask = 0`; both pair engines had new pending orders. The four directional
+  portfolios still had no public-data fills. This confirms resumed evaluation, not profitability.
+
 Evidence, limitations and the unchanged absolute-stop behavior at cheap entries are documented
-in [entry filters and dashboard](research/entry-filters-and-dashboard.md). Live reload evidence
-will be recorded separately below; passing fixtures do not establish profitable public fills.
+in [entry filters and dashboard](research/entry-filters-and-dashboard.md). Passing fixtures do
+not establish profitable public fills; entry readiness still depends on current source history.
 
 ## Previous execution checkpoint
 

@@ -1,5 +1,11 @@
 # Decisions
 
+- 2026-09-07: User clarified that better monitoring means research tools for conclusions,
+  not more operational observability. The previous response narrowed that request too far.
+  Add performance distributions, outlier/cost sensitivity, entry-condition breakdowns,
+  matched strategy comparisons and chronological consistency to the existing records.
+  Keep diagnostic health separate and do not require a new trading run for these analyses.
+
 - 2026-09-07: User explicitly authorized strategies 3–6 and six-portfolio comparison, with a
   single-agent coding workflow and no conductor/cross-model review/human development checkpoints.
   This supersedes the earlier implementation deferral, not the scientific uncertainty about ROI.

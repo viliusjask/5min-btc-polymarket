@@ -222,6 +222,25 @@ main {
 #lab-flow-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+#research-hours {
+  max-height: 240px;
+  overflow: auto;
+}
+#strategy-research .metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+#strategy-research .metric-value {
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+#strategy-research .lab-filters {
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 24px;
+}
+#strategy-research select {
+  max-width: min(310px, 100%);
+}
 .metric {
   padding: 20px;
   background: var(--panel);
@@ -703,6 +722,9 @@ footer p:first-child {
   }
 }
 @media (max-width: 1000px) {
+  #strategy-research .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   #lab-metrics,
   #lab-quality-metrics,
   #lab-flow-metrics {
@@ -783,6 +805,9 @@ footer p:first-child {
   }
   .panel-heading {
     align-items: flex-start;
+  }
+  #strategy-research .panel-heading {
+    flex-direction: column;
   }
   .panel-heading .unit {
     max-width: 100px;

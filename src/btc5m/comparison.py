@@ -240,42 +240,15 @@ async def run_paper(
         async def produce() -> None:
             last_code = None
             while True:
-                snapshot = None
-                capture_code = "CAPTURED"
                 try:
                     snapshot = await data.snapshot()
                     # One public record per variant, independent of its portfolio state.
                     master.record_snapshot(snapshot, config, modes=selected)
                     last_code = None
                 except DataUnavailable as exc:
-                    capture_code = exc.code
                     if exc.code != last_code:
                         emit({"kind": "paper_data_skip", "code": exc.code})
                         last_code = exc.code
-                # Exact shared inputs for the independent experiment worker. Tick histories
-                # are deduplicated on disk; no variant evaluation runs in this collector.
-                assert tape is not None
-                markets = dict(tape.known_markets)
-                if snapshot:
-                    markets[snapshot.market.slug] = snapshot.market
-                labels: dict[str, Any] = {}
-                for slug, market in markets.items():
-                    final = data.final_reference(market)
-                    if final is not None:
-                        labels[slug] = {
-                            "condition_id": market.condition_id,
-                            "opening": str(final[0]),
-                            "final": str(final[1]),
-                        }
-                    elif slug in tape.label_cache:
-                        labels[slug] = None
-                capture_ms = int(time.time() * 1000)
-                tape.append(
-                    capture_ms,
-                    replace(snapshot, now_ms=capture_ms) if snapshot else None,
-                    labels=labels,
-                    code=capture_code,
-                )
                 await asyncio.sleep(0.5)
 
         producer = asyncio.create_task(produce())
@@ -284,6 +257,7 @@ async def run_paper(
         shutdown_deadline = None
         last_results: dict[str, tuple[str, str]] = {}
         last_heartbeat = 0.0
+        last_capture = 0.0
         last_disk_check = loop.time()
         last_loop_ms = int(time.time() * 1000)
         while True:
@@ -306,7 +280,10 @@ async def run_paper(
                 if shutil.disk_usage(path).free < 256 * 1024 * 1024:
                     raise LedgerError("PAPER_DISK_RESERVE_REQUIRED")
             data.retain_markets(
-                tuple(p.market for ledger in ledgers for p in ledger.active_positions())
+                tape.retained_markets(
+                    tuple(p.market for ledger in ledgers for p in ledger.active_positions()),
+                    now,
+                )
             )
             if producer.done():
                 await producer
@@ -337,6 +314,32 @@ async def run_paper(
                     )
                 )
             snapshot = None if interrupted else data.current_snapshot()
+            if loop.time() - last_capture >= 0.5:
+                # Capture the same current stream inputs used by the engines. Slow HTTP
+                # discovery/label polling in produce() must not stall this recorder.
+                assert tape is not None
+                markets = dict(tape.known_markets)
+                if snapshot:
+                    markets[snapshot.market.slug] = snapshot.market
+                labels: dict[str, Any] = {}
+                for slug, market in markets.items():
+                    final = data.final_reference(market)
+                    if final is not None:
+                        labels[slug] = {
+                            "condition_id": market.condition_id,
+                            "opening": str(final[0]),
+                            "final": str(final[1]),
+                        }
+                    elif slug in tape.label_cache and data.final_reference_conflicted(market):
+                        labels[slug] = None
+                capture_ms = int(time.time() * 1000)
+                tape.append(
+                    capture_ms,
+                    replace(snapshot, now_ms=capture_ms) if snapshot else None,
+                    labels=labels,
+                    code="CAPTURED" if snapshot else "NO_CURRENT_SNAPSHOT",
+                )
+                last_capture = loop.time()
             for name, broker, engine, ledger in zip(
                 selected, brokers, engines, ledgers, strict=True
             ):

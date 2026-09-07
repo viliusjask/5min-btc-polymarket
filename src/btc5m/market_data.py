@@ -286,6 +286,18 @@ class MarketData:
             return None
         return state.official, state.final
 
+    def final_reference_conflicted(self, market: Market) -> bool:
+        """An observed contradiction, distinct from metadata not yet recovered."""
+        state = self._rounds.get(market.slug)
+        return state is not None and (
+            state.condition_id != market.condition_id
+            or state.conflict
+            or state.final_conflict
+            or state.official is not None
+            and market.reference_price is not None
+            and abs(state.official - market.reference_price) > ANCHOR_TOLERANCE
+        )
+
     def retain_markets(self, markets: tuple[Market, ...]) -> None:
         """Resume official label polling for simulated holdings after restart.
 

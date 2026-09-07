@@ -90,7 +90,12 @@ class Replay:
             # replay connection uses nested contexts; baseline/live ledgers are unchanged.
             self.ledger.db.close()
             self.ledger.db = sqlite3.connect(path, timeout=5, factory=NestedConnection)
-            self.ledger.db.execute("PRAGMA synchronous=FULL")
+            # This journal is a reproducible cache of a FULL-synchronized input tape.
+            # NORMAL preserves transaction atomicity; a power loss may discard a suffix
+            # of cache frames, whose surviving cursor then replays them from the tape.
+            # It avoids 84 independent disk synchronizations at every capture. Live and
+            # baseline paper journals retain FULL; this connection never posts externally.
+            self.ledger.db.execute("PRAGMA synchronous=NORMAL")
             self.ledger.db.executescript("""
                 CREATE TABLE IF NOT EXISTS lab_rounds(slug TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS lab_equity(bucket INTEGER PRIMARY KEY, at_ms INTEGER NOT NULL, equity TEXT, cash TEXT, basis TEXT NOT NULL);
@@ -201,13 +206,18 @@ class Replay:
                 gap = bool(
                     prior_ms and frame.now_ms - prior_ms > self.variant.config.data.max_price_age_ms
                 )
-                affected = {p.market.slug for p in self.ledger.active_positions()}
+                affected = {
+                    p.market.slug
+                    for p in self.ledger.active_positions()
+                    if self.variant.exit_policy != "settlement"
+                    and p.market.end_s * 1000 > (prior_ms or frame.now_ms)
+                }
+                affected.update(o.market.slug for o in self.ledger.unresolved_orders())
                 if self.engine.pending_candidate:
                     affected.add(self.engine.pending_candidate.slug)
-                if snap:
-                    affected.add(snap.market.slug)
                 if gap or snap is None:
-                    self.broker.observation_gap(frame.now_ms, "LAB_CAPTURE_GAP")
+                    if affected:
+                        self.broker.observation_gap(frame.now_ms, "LAB_CAPTURE_GAP")
                     self.engine._cancel_pending("LAB_CAPTURE_GAP", None, frame.now_ms)
                     # Before any market data, there is no claim about the missing round.
                     for slug in affected:

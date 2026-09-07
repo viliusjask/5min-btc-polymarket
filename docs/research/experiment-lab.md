@@ -9,7 +9,7 @@ parameters for current BTC five-minute contracts. The existing source register i
 
 | Source | Supported finding | Consequence in this implementation |
 |---|---|---|
-| [Gneiting & Raftery, JASA 2007](https://sites.stat.washington.edu/people/raftery/Research/PDF/Gneiting2007jasa.pdf) | Proper scores evaluate probability forecasts; calibration and sharpness are distinct. | Brier loss (squared probability error), logarithmic loss and reliability bins for the **central** forecast. Compare the same rounds with contemporaneous Up midpoint. Separately report pessimistic scenario coverage; never call the floor a confidence bound. |
+| [Gneiting & Raftery, JASA 2007](https://sites.stat.washington.edu/people/raftery/Research/PDF/Gneiting2007jasa.pdf) | Proper scores evaluate probability forecasts; calibration and sharpness are distinct. | Brier loss (squared probability error), logarithmic loss and reliability bins for the **central** forecast. Compare the same rounds with contemporaneous Up midpoint. Test pessimistic scenario settings separately; never call the floor a confidence bound. |
 | [Bailey et al., Probability of Backtest Overfitting](https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf) | Searching many configurations selects noise; repeated tuning can contaminate nominal holdouts. | Register all trials, freeze a shortlist before its next full round, use later time blocks, and retain failures. Exploratory rankings have no claim of statistical significance. A newly inspected test becomes development evidence for the next study. |
 | [Bailey & López de Prado, Deflated Sharpe Ratio](https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf) | Selection and non-normal returns distort apparent performance. | Show trial count, distinct rounds and days. Do not annualize a few hours of binary outcomes or manufacture a precise Sharpe/significance estimate from correlated variants. The initial lab does not claim to implement DSR or PBO. |
 | [Politis & Romano, Stationary Bootstrap](https://www.stat.purdue.edu/docs/research/tech-reports/1991/tr91-03.pdf) | Dependent time series require dependence-aware resampling assumptions. | Treat a round as the elementary outcome and display calendar-day blocks. Descriptive bin intervals assume independent rounds and are explicitly labeled; overlapping evaluations are never counted as new outcomes. No unsupported iid trade-level profit interval. |
@@ -44,6 +44,17 @@ The lab must report all registered variants, raw and quality-filtered results, o
 completed and unresolved rounds, costs, exposure and drawdown. A drawdown based on realized
 cash alone misses held losses: show inventory at executable bid depth where observable and
 make missing marks explicit. Do not select a winner from an incomplete or uncertain sample.
+
+The first 84-variant disk benchmark took 2.53 seconds per frame when each derived journal
+forced a disk synchronization. The shared input tape and study registry retain FULL
+durability. Replay journals use WAL/NORMAL: a power loss can discard a committed suffix
+of this **derived cache**, but its cursor and accounting roll back together and replay
+from the durable tape. No externally submitted order can be duplicated because the lab
+only uses PaperBroker. This choice does not apply to baseline or live account journals.
+The subsequent active synthetic benchmark took 0.085 seconds per frame across 84 variants,
+including 55 simulated opening fills. That establishes local processing capacity, not returns
+or the ability to obtain those fills at the venue. SIGKILL and deliberately lost-cache-suffix
+tests verify atomic recovery independently of normal graceful shutdown.
 
 ## Residual evidence gaps
 

@@ -35,6 +35,9 @@ class AnonymousData:
     def final_reference(self, market):
         return None
 
+    def final_reference_conflicted(self, market):
+        return False
+
     async def snapshot(self):
         raise DataUnavailable("STREAM_WARMUP")
 
@@ -106,6 +109,34 @@ def test_paper_cleanup_failure_releases_every_journal_owner(tmp_path, monkeypatc
             tmp_path / name / "ledger.sqlite", "0x" + str(i + 1).zfill(40), environment="paper"
         )
         ledger.close()
+
+
+def test_exact_tape_keeps_recording_while_http_producer_waits(tmp_path, monkeypatch):
+    import time
+
+    from test_strategy import make_snapshot
+
+    from btc5m.lab_tape import Tape
+
+    class SlowHTTP(AnonymousData):
+        async def snapshot(self):
+            await asyncio.sleep(30)
+            raise DataUnavailable("HTTP_UNAVAILABLE")
+
+        def current_snapshot(self):
+            return make_snapshot(now_ms=int(time.time() * 1000))
+
+    monkeypatch.setattr(comparison, "MarketData", SlowHTTP)
+    args = cli.parse_args(
+        ["paper", "--duration", "1.8", "--shutdown-seconds", ".1", "--runtime", str(tmp_path)]
+    )
+    assert (
+        asyncio.run(comparison.run_paper(args, cli.load_config(args.config), lambda r: None)) == 0
+    )
+    with Tape(tmp_path / "capture.sqlite", readonly=True) as tape:
+        frames = list(tape.read_after(0))
+        assert len(frames) >= 2
+        assert all(f.snapshot is not None for f in frames)
 
 
 @pytest.mark.parametrize("selection", ["value,value", "not-a-strategy", ""])

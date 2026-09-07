@@ -71,6 +71,13 @@ grow by several GB/day, so check disk usage and keep independent backups for lon
 
 ## Reinstall after a checkout change
 
+When the [experiment lab](experiment-lab.md) is enabled, also manage `btc5m-lab.service`.
+Pass `--lab` to the installer below and include that service in the restart command. Its input
+tape and study registry retain FULL durability; its derived replay journals use recoverable
+WAL/NORMAL caches. The original portfolio journals retain the durability described above.
+An unchanged semantic code identity can resume a registered study after a merge. A code change
+requires a preserved, separate study rather than silently mixing implementations.
+
 From the intended feature checkout, run `uv sync --locked`, then:
 
 ```bash

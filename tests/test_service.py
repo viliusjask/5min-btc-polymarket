@@ -14,6 +14,24 @@ from btc5m.paper import PaperBroker
 from btc5m.service import atomic_json, notify
 
 
+def test_lab_service_is_continuous_public_only_and_separate_from_collector(tmp_path):
+    import runpy
+
+    installer = Path(__file__).resolve().parents[1] / "scripts/install_paper_service.py"
+    unit = runpy.run_path(str(installer))["unit"]
+    content = unit(
+        tmp_path,
+        tmp_path / "paper",
+        tmp_path / "config.toml",
+        lab=True,
+        env_file=tmp_path / "never-read.env",
+    )
+    assert '"lab" "run"' in content and '"--continuous"' in content
+    assert "paper/capture.sqlite" in content and "paper/lab" in content
+    assert "WatchdogSec=120" in content and "Type=notify" in content
+    assert "--env-file" not in content and "--execute" not in content
+
+
 def test_service_notification_and_atomic_file_preserve_previous_on_failed_write(
     tmp_path, monkeypatch
 ):

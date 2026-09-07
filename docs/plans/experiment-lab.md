@@ -24,14 +24,14 @@ instead of inventing historical inputs or fills. No new runtime dependency is pl
 
 ## Implementation sequence
 
-- [ ] Research scoring, chronological evaluation, correlated trials and execution realism;
+- [x] Research scoring, chronological evaluation, correlated trials and execution realism;
       record a source/claim/limitation register and concrete implementation decisions.
-- [ ] Inspect and reuse existing recording, strategy, simulation and dashboard machinery.
+- [x] Inspect and reuse existing recording, strategy, simulation and dashboard machinery.
       Define durable experiment identities and restart-safe shared input consumption.
-- [ ] Implement forecast evaluation and registered variants, with causal execution tests.
-- [ ] Implement chronological selection/freeze and later-data evaluation, including
+- [x] Implement forecast evaluation and registered variants, with causal execution tests.
+- [x] Implement chronological selection/freeze and later-data evaluation, including
       coverage, sample sizes, costs and all attempted variants.
-- [ ] Add the dashboard views and operator commands, test integration and restart behavior.
+- [x] Add the dashboard views and operator commands, test integration and restart behavior.
 - [ ] Verify against recorded public data, deploy alongside preserved portfolios, and
       publish a feature PR with honest evidence and remaining limitations.
 

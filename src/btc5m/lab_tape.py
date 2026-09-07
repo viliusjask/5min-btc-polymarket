@@ -81,6 +81,8 @@ class Tape:
                     CREATE TABLE IF NOT EXISTS frames(id INTEGER PRIMARY KEY, now_ms INTEGER NOT NULL,
                         slug TEXT, payload BLOB NOT NULL, checksum TEXT NOT NULL);
                     CREATE INDEX IF NOT EXISTS frames_time ON frames(now_ms);
+                    CREATE INDEX IF NOT EXISTS frames_slug ON frames(slug,id);
+                    CREATE TABLE IF NOT EXISTS markets(slug TEXT PRIMARY KEY, data TEXT NOT NULL);
                     CREATE TABLE IF NOT EXISTS labels(frame_id INTEGER NOT NULL, slug TEXT NOT NULL,
                         data TEXT NOT NULL, PRIMARY KEY(frame_id,slug));
                 """)
@@ -99,6 +101,22 @@ class Tape:
             ]
             self.label_cache = self.labels_at(self.highwater())
             self.known_markets: dict[str, Market] = {}
+            if not readonly:
+                # Backfill the initial tape format without changing any captured frame.
+                if not self.db.execute("SELECT 1 FROM markets LIMIT 1").fetchone():
+                    with self.db:
+                        for slug, payload in self.db.execute(
+                            "SELECT slug,payload FROM frames WHERE id IN (SELECT MAX(id) FROM frames WHERE slug IS NOT NULL GROUP BY slug)"
+                        ).fetchall():
+                            market = json.loads(zlib.decompress(payload))["snapshot"]["market"]
+                            self.db.execute(
+                                "INSERT INTO markets VALUES (?,?)", (slug, encode(market))
+                            )
+                self.known_markets = {
+                    slug: _market(json.loads(raw))
+                    for slug, raw in self.db.execute("SELECT slug,data FROM markets")
+                }
+                self._prune_markets(self.last_ms)
         except BaseException:
             self.close()
             raise
@@ -138,6 +156,31 @@ class Tape:
                 "SELECT id FROM ticks WHERE data=?", (raw,)
             ).fetchone()[0]
         return self.tick_ids[point]
+
+    def _prune_markets(self, now_ms: int) -> None:
+        # Missing official labels survive long outages. Resolved markets keep the
+        # adapter's existing one-hour verification period.
+        self.known_markets = {
+            k: m
+            for k, m in self.known_markets.items()
+            if m.end_s * 1000 >= now_ms - 3600000 or self.label_cache.get(k) is None
+        }
+
+    def retained_markets(self, held: tuple[Market, ...], now_ms: int) -> tuple[Market, ...]:
+        """Share the adapter's six recovery slots without an unbounded polling backlog.
+
+        Original holdings keep priority. Rotate other captured markets every 30 seconds;
+        their durable identities remain queued until an official label is available.
+        """
+        selected = {m.slug: m for m in held}
+        available = max(0, 6 - len(selected))
+        waiting = [m for slug, m in sorted(self.known_markets.items()) if slug not in selected]
+        if available and waiting:
+            offset = (now_ms // 30000 * available) % len(waiting)
+            for i in range(min(available, len(waiting))):
+                market = waiting[(offset + i) % len(waiting)]
+                selected[market.slug] = market
+        return tuple(selected.values())
 
     def append(
         self,
@@ -180,6 +223,10 @@ class Tape:
                         "history": [self._tick(p) for p in snapshot.history],
                         "exchange_history": [self._tick(p) for p in snapshot.exchange_history],
                     }
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO markets VALUES (?,?)",
+                        (snapshot.market.slug, encode(raw["market"])),
+                    )
                 payload = zlib.compress(encode({"snapshot": raw, "code": code}).encode(), 1)
                 cursor = self.db.execute(
                     "INSERT INTO frames(now_ms,slug,payload,checksum) VALUES (?,?,?,?)",
@@ -205,9 +252,7 @@ class Tape:
             self.label_cache.update(updates)
             if snapshot:
                 self.known_markets[snapshot.market.slug] = snapshot.market
-            self.known_markets = {
-                k: m for k, m in self.known_markets.items() if m.end_s * 1000 >= now_ms - 3600000
-            }
+            self._prune_markets(now_ms)
             if len(self.tick_ids) > 20000:
                 self.tick_ids.clear()
             return ident

@@ -251,6 +251,8 @@ def evaluate_variant(
     tau = (snapshot.market.end_s * 1000 - snapshot.now_ms) / 1000
     if not cfg.strategy.momentum_min_seconds <= tau <= cfg.strategy.momentum_max_seconds:
         return _skip(snapshot, "ENTRY_WINDOW", value.features)
+    if float(value.features["model_tau_seconds"]) < 60:
+        return _skip(snapshot, "MODEL_HORIZON", value.features)
     if value.reason != "VALID":
         return _skip(snapshot, value.reason, value.features)
     assert value.probability_up is not None

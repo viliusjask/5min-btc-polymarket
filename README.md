@@ -67,6 +67,12 @@ independently from Codex. See [service controls, Windows startup and recovery li
 
 ## Paper and real account dashboard
 
+The **Experiments** view adds an independent research lab: 84 registered parameter/signal/exit
+variants, central-probability scoring against the market, and frozen tests on later rounds.
+It shares the public recording while preserving the six original portfolios. See
+[lab setup, dashboard interpretation and recovery](docs/experiment-lab.md) and the
+[primary research register](docs/research/experiment-lab.md). No funded orders are enabled.
+
 In another terminal, point the dashboard at the paper run's directory:
 
 ```bash

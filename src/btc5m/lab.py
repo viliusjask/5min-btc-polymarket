@@ -33,6 +33,8 @@ SEMANTIC_FILES = (
     "execution_types.py",
     "ledger.py",
     "paper.py",
+    "market_data.py",
+    "streams.py",
     "strategy.py",
     "lab.py",
     "lab_tape.py",
@@ -117,9 +119,9 @@ class Study:
         runtime: Path,
         config: Config,
         *,
-        dense: bool = False,
+        dense: bool | None = None,
         variants: tuple[Variant, ...] | None = None,
-        explore_rounds: int = 288,
+        explore_rounds: int | None = None,
     ) -> None:
         self.path = runtime.resolve()
         self.path.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -135,15 +137,32 @@ class Study:
             manifest_path = self.path / "study.json"
             if manifest_path.exists():
                 self.manifest = json.loads(manifest_path.read_text())
+                if (
+                    dense is not None
+                    and dense != self.manifest["dense"]
+                    or explore_rounds is not None
+                    and explore_rounds * 300000
+                    != self.manifest["explore_end_ms"] - self.manifest["start_ms"]
+                    or variants is not None
+                    and json.loads(encode([v.record() for v in variants]))
+                    != self.manifest["variants"]
+                ):
+                    raise ValueError("LAB_TRIALS_CHANGED_USE_NEW_STUDY")
             else:
-                if not 12 <= explore_rounds <= 2016:
+                explore_rounds = 288 if explore_rounds is None else explore_rounds
+                dense = bool(dense)
+                if type(explore_rounds) is not int or not 12 <= explore_rounds <= 2016:
                     raise ValueError("EXPLORE_ROUNDS_MUST_BE_12_TO_2016")
                 first = self.tape.db.execute(
                     "SELECT now_ms FROM frames ORDER BY id LIMIT 1"
                 ).fetchone()
                 stamp = first[0] if first else int(time.time() * 1000)
                 start = (stamp // 300000 + 1) * 300000
-                selected = variants or default_variants(config, dense=dense)
+                selected = (
+                    variants if variants is not None else default_variants(config, dense=dense)
+                )
+                if not selected or len({v.ident for v in selected}) != len(selected):
+                    raise ValueError("LAB_REQUIRES_UNIQUE_REGISTERED_VARIANTS")
                 self.manifest = json.loads(
                     encode(
                         {

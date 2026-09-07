@@ -22,6 +22,16 @@
 - **562 tests passed in127.11seconds**. Ruff lint/format, mypy20sources, locked dependencies
   and whitespace checks passed. The before-fix ten-case failure log, complete final test log,
   three-order reconstruction and prepared preservation/reload scripts remain in ignored `work/`.
+- Applied code commit7a1ae14 to the continuous services at05:46:06–05:46:13UTC. Seven journal
+  sessions and all prior orders/fills/accounting rows were retained. No configuration fingerprints
+  changed; a dated IMPLEMENTATION_CHANGED event records old/new source commits in each journal.
+  Services now run from `.worktrees/limit-sizing`, with zero supervisor restarts. The dashboard
+  responds with matching configuration and a caught-up collector. Preservation evidence is in
+  `work/sizing-cutover.json` and `work/sizing-reload-result.json`.
+- At05:48:41UTC the latest sampling records for all six strategies were from after the reload,
+  with valid short/long histories and a largest sampled gap of10seconds. No fresh30-minute
+  warm-up was needed. A previously recorded Fast value fill at05:28:13UTC predates this fix and
+  is not evidence of corrected prospective execution. The three replay fills remain counterfactual.
 
 ## Previous entry-filter checkpoint
 

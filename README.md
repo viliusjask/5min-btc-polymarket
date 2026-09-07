@@ -61,6 +61,10 @@ For **USD100 per strategy**, copy `config/btc5m.toml` to a local file under `wor
 `risk.allocation_usd` to `600`, and pass it with `--config`. That is USD600 simulated total;
 the per-entry budget and loss limits remain separate settings. Use a fresh runtime directory.
 
+For continuous operation, use `paper --continuous` instead of `--duration`. The installed
+WSL services preserve the existing six USD100 portfolios outside the worktrees and run
+independently from Codex. See [service controls, Windows startup and recovery limits](docs/paper-service.md).
+
 ## Paper and real account dashboard
 
 In another terminal, point the dashboard at the paper run's directory:
@@ -125,13 +129,18 @@ Open inventory can block subsequent assigned rounds. External account trading re
 
 Paper orders wait at least 250ms and require a subsequent fresh book. Immediate buys consume the
 requested cash amount through available asks; protected sells can fill partially. Resting quotes
-require subsequent aggressive sell volume at or below our quote to consume observed same-price
-queue depth before simulated fills.
+require subsequent matching sell volume or complementary opposite-outcome buying to consume
+observed same-price queue depth before simulated fills.
 A touched bid is never itself a fill. Queue position is approximate; stream gaps/restarts make an
 active queue uncertain. The report identifies those rounds. Portfolios do not compete with each
 other for depth, and simulated settlement assumes free automatic redemption after official labels.
 No maker rebates are credited. These are measured simulation outcomes, not venue fills or verified ROI.
 See [six-strategy mechanics and limits](docs/six-strategies.md).
+
+The corrected passive model also matches buying of the **opposite outcome** at the complementary
+price. Transaction identity prevents mirrored reports from counting the same flow twice. Earlier
+paper orders omitted this path and remain flagged as historical results of the old model; their
+cash and trades are not rewritten. [Recorded zero-fill diagnosis and replay](docs/research/paper-fill-diagnosis.md).
 
 ## What is being tested
 

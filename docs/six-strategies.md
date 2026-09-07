@@ -41,6 +41,10 @@ The five-second order lifetime is implemented through explicit GTC cancellation.
 "good till cancelled": an abrupt process failure can leave a venue order active. A cancel
 acknowledgment does not release the journal's reservation; terminal order/fill evidence does.
 See the [venue order lifecycle](https://docs.polymarket.com/trading/place-orders).
+An existing quote is evaluated at its own price: an improved bid or a newly preferred outcome
+does not by itself cancel it and lose priority. Opening quotes must keep their required model
+surplus; hedge prices retain the approved pair-cost reservation. Data/rule changes, lost edge,
+stops and time limits still cancel. The dashboard records the specific trigger for new orders.
 The bot does not use SDK convenience methods that can automatically approve token spending.
 
 ## Probability during the final averaging minute
@@ -115,7 +119,10 @@ the apparent result. See [backtest selection research](https://escholarship.org/
   cash BUY must execute its full requested principal and receive the minimum protected shares;
   a protected share SELL can execute partially. Decimal arithmetic preserves cash accounting.
 - Resting orders use the displayed same-price queue at simulated activation. Subsequent
-  aggressive SELL trades at or below the limit deplete that queue before filling the order.
+  aggressive SELL trades at or below the limit, or BUY trades in the opposite outcome at a
+  complementary price, deplete that queue before filling the order. Transaction/price route
+  totals avoid counting mirrored reports twice; opposite flow without an identifier is skipped
+  and marks the round uncertain. Older direct-only simulation orders remain flagged in reports.
   Quote touches and cancellations ahead are not credited as executions. Queue estimates do
   not reproduce actual priority or the market impact of inserting our hypothetical order.
   Trades sharing the activation book's timestamp are excluded because their volume may
@@ -131,6 +138,9 @@ the apparent result. See [backtest selection research](https://escholarship.org/
 - Feed timestamps and quantity availability can change before an actual order reaches the
   venue. The 250ms setting is a simulation assumption, not a measured live round-trip guarantee.
   Live preparation performs additional account/metadata/RPC checks and can be much slower.
+
+The zero-fill repair includes a [recorded-order replay](research/paper-fill-diagnosis.md).
+It fixes execution coverage; it does not validate entry thresholds or establish returns.
 
 ## Verification record
 

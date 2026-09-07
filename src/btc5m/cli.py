@@ -216,7 +216,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 help="override the recorded strategy mode; compare preassigns one live policy per UTC round",
             )
         if name in ("observe", "doctor", "run", "paper"):
-            command.add_argument(
+            timing = command.add_mutually_exclusive_group() if name == "paper" else command
+            if name == "paper":
+                timing.add_argument(
+                    "--continuous",
+                    action="store_true",
+                    help="paper only: run until explicitly stopped; preserve this runtime on restart",
+                )
+            timing.add_argument(
                 "--duration",
                 type=_seconds,
                 default=2100

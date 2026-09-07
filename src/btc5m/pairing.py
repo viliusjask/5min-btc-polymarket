@@ -17,6 +17,7 @@ def pair_decision(snapshot: Snapshot, config: Config, positions: tuple[Position,
         "config_hash": config.fingerprint,
         "order_type": "GTC",
         "post_only": "true",
+        "quote_policy": "KEEP_VALID_V1",
     }
     safety = _safety_reason(snapshot, config)
     if safety:
@@ -104,6 +105,9 @@ def pair_decision(snapshot: Snapshot, config: Config, positions: tuple[Position,
             else D(str(value.floors[side])) - price
         )
         side_features.update(
+            best_bid=str(book.bids[0].price),
+            best_ask=str(book.asks[0].price),
+            quote_below_bid=str(max(D(0), book.bids[0].price - price)),
             inventory_adjustment=str(adjustment),
             pair_max_cost=str(policy.pair_max_cost),
             reserved_buy_fee=str(reserve - principal),

@@ -1,4 +1,81 @@
-# Progress: paper and real account monitoring
+# Progress: continuous services and corrected quote cancellation
+
+2026-09-07, follow-up to the 0/98 screenshot. The matching fix alone did not repair the
+quote controller. It cancelled an owned quote whenever the next preferred quote changed,
+including favorable repricing and switching the preferred outcome while the old quote was
+still within its limits.
+
+- Existing quotes now keep priority while their own constraints hold, up to the original
+  five-second lifetime. Remaining opening quantity still needs its model surplus after a
+  partial fill. Hedge reservations, risk limits, model thresholds and fill evidence are unchanged.
+- New decisions carry `KEEP_VALID_V1`, best bid/ask and distance below the bid. Cancellation
+  triggers are durable and correlated to order identity. Dashboard outcomes distinguish
+  Resting, Cancelling and Cancelled unfilled and display the trigger when it was recorded.
+- Replayed 25 original V2 orders independently with recorded public prices/books/trades and
+  original queue estimates. Seventeen stayed active longer; one filled five shares at 0.70
+  versus its original zero. The other 24 remained unfilled. This is a bounded controller
+  replay, not a portfolio backtest. Details and limitations: [diagnosis](research/paper-fill-diagnosis.md).
+- Full suite: **509 passed in 177.41 seconds**. A subsequent nine-test targeted run also passed,
+  including an added partial-fill risk regression. Ruff lint/format, mypy, locked dependency,
+  JavaScript syntax and diff checks passed. Own review; no subagents or new dependencies.
+- Services reloaded at **02:26:47–02:26:52 UTC**. All seven journals retained their sessions,
+  prior order IDs, fill counts and event history. Collector/dashboard are active with no
+  automatic restarts. New public decisions report `KEEP_VALID_V1`.
+- Live state after reload: USD100 each, 116 historical order attempts, zero fills. New entries
+  are currently paused by a 15-second sampled history gap; raw spot records contain separate
+  nine- and ten-second gaps around 02:16 and 02:22 UTC, accompanied by stream timeouts. This
+  reload does not repair missing observations or certify the six-strategy experiment healthy.
+  No retrospective fills were credited and no real orders were sent.
+
+## Earlier service and matching checkpoint
+
+2026-09-07. Branch `feat/paper-service`, worktree `.worktrees/paper-service`, based on fork main
+`ab54847` after PR #3. Single-agent implementation, own review, no new runtime dependencies.
+
+- Replaced the two-hour deadline with explicit `paper --continuous`. Installed systemd user
+  collector/dashboard services, readiness/heartbeat supervision, retry after failure, bounded
+  shutdown and Windows task `BTC5m-WSL`. The task keeps Ubuntu available while Windows is logged
+  in and restarts its client after exit. No sleep-policy changes, funded orders or account setup.
+- Preserved all seven original databases byte-identically during migration to
+  `~/.local/share/btc5m/paper-six-100-each`. Original capture remains untouched in the dashboard
+  worktree. Six USD100 balances, sessions, configuration, orders and risk limits were retained.
+  Report/manifest publishing is atomic and synced. Low-disk checks do not delete evidence.
+- Tested real child-process SIGKILL both before and after accounting application: committed
+  fills recover exactly once and uncommitted writes roll back. A supervised synthetic collector
+  restarted after SIGKILL, retained seven sessions/journals, recorded a seven-second process pause,
+  and stopped gracefully. A separate test terminated only the Windows launcher's keepalive child;
+  it was recreated without changing either application service PID. WSL itself was never killed.
+- Fixed incomplete-order recovery before queue activation and rejection of an immediate order
+  that would otherwise fill from a fresh book after a long observation gap. Exposed rounds are
+  marked uncertain; price history retains actual timestamps and gaps after restoration.
+- The user's 0/64 screenshot exposed a simulator omission: BUY Up can match BUY Down at the
+  complementary price. Added this matching path, transaction-aware mirror deduplication and
+  uncertainty for missing opposite-flow identity. An exact recorded-order replay recovered and
+  hash-verified 18 public messages and filled five shares at 0.48 versus the old zero. This is
+  execution evidence, not a full backtest or profit claim.
+- Dashboard now shows filled/cancelled/rejected execution outcomes instead of calling every
+  reconciled order "Settled / Entry". The 66 historical passive orders remain labelled as results
+  from the old matching model. No counterfactual fills or cash were injected into live collection.
+  New starts/orders record `COMPLEMENTARY_FLOW_V2`. Entry/cancellation strategy thresholds remain
+  unchanged; rapid quote replacement is still a research concern.
+
+Verification: **501 tests passed in 118.61 seconds**. Ruff lint/format (40 files including the
+installer), mypy (20 source files), locked dependencies, JavaScript syntax and diff checks passed.
+Public feed disconnect/reconnect, cancellation races on both matching routes, mirror suppression,
+missing trade identity, service socket isolation and dashboard outcomes have regression coverage.
+Browser verification on desktop and 390-pixel mobile widths showed all six cards, corrected
+order outcomes and the historical-model warning, with no JavaScript errors or page overflow.
+The installed units are active with no supervisor restarts; paper collection uses public data only.
+
+During installation, systemd 249's user verifier replaced the manager control socket. The installer
+now verifies inside a temporary runtime, with regression coverage. A temporary session bus restored
+control without restarting other user work; recovery units were then removed. The cutover gap is
+recorded and can delay the next valid 30-minute source window. [Operating guide](paper-service.md),
+[matching diagnosis](research/paper-fill-diagnosis.md).
+
+---
+
+# Historical record: paper and real account monitoring
 
 2026-09-07. Branch `feat/paper-dashboard`, worktree `.worktrees/dashboard`, based on the user's
 fork main `c4d4b9b` after the operator merged PRs #2 then #1. Original upstream and feature

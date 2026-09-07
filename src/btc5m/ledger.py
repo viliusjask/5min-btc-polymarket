@@ -975,6 +975,7 @@ class Ledger:
             "estimated_sell_fee",
             "estimated_net_proceeds",
             "identity",
+            "transaction_hash",
             "quantity",
             "timestamp_ms",
             "generation",

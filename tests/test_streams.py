@@ -66,12 +66,13 @@ def test_trade_is_distinct_from_quote_and_duplicate_delivery_is_not_new_volume()
         "price": ".40",
         "size": "3",
         "side": "SELL",
-        "transaction_hash": "0x123",
+        "transaction_hash": "0x" + "1" * 64,
     }
     feed.ingest_market(event)
     feed.ingest_market(event)
     assert len(feed.trades) == 1
     assert feed.trades[0].quantity == D(3)
+    assert feed.trades[0].transaction_hash == event["transaction_hash"]
 
 
 def test_exchange_uses_trade_time_and_rejects_other_symbol():

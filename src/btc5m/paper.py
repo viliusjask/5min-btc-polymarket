@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict
 from decimal import ROUND_CEILING, Decimal
@@ -34,6 +35,7 @@ from btc5m.streams import PublicStreams
 
 D = Decimal
 PAPER_DOMAIN = SigningDomain("BTC5m PAPER", "1", 0, "0x" + "00" * 20)
+PAPER_MATCHING_MODEL = "COMPLEMENTARY_FLOW_V2"
 
 
 class PaperBroker:
@@ -52,6 +54,7 @@ class PaperBroker:
         self.final_reference = final_reference
         self.snapshot: Snapshot | None = None
         self.books: dict[str, Book] = {}
+        self.submission_session = streams.session_id if streams else uuid.uuid4().hex
 
     def update(self, snapshot: Snapshot | None) -> None:
         self.snapshot = snapshot
@@ -168,6 +171,8 @@ class PaperBroker:
                 "kind": "paper_order",
                 "intent_id": order.intent_id,
                 "activation_ms": now + self.config.experiments.paper_latency_ms,
+                "submission_session": self.submission_session,
+                "matching_model": PAPER_MATCHING_MODEL,
                 "queue_ahead": None,
                 "queue_start_ms": None,
                 "generation": None,
@@ -226,9 +231,11 @@ class PaperBroker:
         state["fills"].append(json.loads(json.dumps(asdict(fill), default=str)))
 
     def _immediate(self, order: Intent, state: dict[str, Any], book: Book | None, now: int) -> None:
+        if now - state["activation_ms"] > self.config.data.max_book_age_ms:
+            self._uncertain(order, now, "PAPER_EXECUTION_GAP")
+            state.update(terminal=True, terminal_reason="PAPER_EXECUTION_GAP")
+            return
         if book is None or min(book.timestamp_ms, book.received_ms) < state["activation_ms"]:
-            if now - state["activation_ms"] > self.config.data.max_book_age_ms:
-                state.update(terminal=True, terminal_reason="PAPER_NO_SUBSEQUENT_BOOK")
             return
         remaining = order.principal if order.side == "BUY" else order.quantity
         fills: list[tuple[Decimal, Decimal, Decimal]] = []
@@ -260,6 +267,36 @@ class PaperBroker:
             terminal=True,
             terminal_reason="PAPER_IMMEDIATE_EXECUTED" if fills else "PAPER_NO_PROTECTED_DEPTH",
         )
+
+    def _uncertain(self, order: Intent, now: int, code: str) -> None:
+        self.ledger.record_observation(
+            {
+                "kind": "paper_uncertainty",
+                "received_ms": now,
+                "slug": order.market.slug,
+                "code": code,
+                "mode": order.decision.features.get("mode") if order.decision else "unknown",
+            }
+        )
+
+    def observation_gap(self, now: int, code: str) -> None:
+        """Keep committed fills; invalidate execution that would require unseen market activity."""
+        for order in self.ledger.unresolved_orders():
+            state = self._load(order.intent_id)
+            if state is not None and not state["terminal"]:
+                self._uncertain(order, now, code)
+                state.update(terminal=True, terminal_reason=code)
+                self._save(order.intent_id, state)
+        for position in self.ledger.active_positions():
+            self.ledger.record_observation(
+                {
+                    "kind": "paper_uncertainty",
+                    "received_ms": now,
+                    "slug": position.market.slug,
+                    "code": code,
+                    "mode": position.decision.features.get("mode", "unknown"),
+                }
+            )
 
     def _passive(self, order: Intent, state: dict[str, Any], book: Book | None, now: int) -> None:
         streams = self.streams
@@ -307,15 +344,27 @@ class PaperBroker:
                 )
         if state["queue_ahead"] is not None:
             ahead, seen = D(state["queue_ahead"]), set(state["seen"])
+            flows = state.setdefault("flow_totals", {})
             filled = sum((D(f["quantity"]) for f in state["fills"]), D(0))
+            opposite = (
+                order.market.down_token
+                if order.token_id == order.market.up_token
+                else order.market.up_token
+            )
             for trade in streams.trades:
+                if trade.token_id == order.token_id and trade.side == "SELL":
+                    route, price = "direct", trade.price
+                elif trade.token_id == opposite and trade.side == "BUY":
+                    # A BUY Up bid also matches BUY Down when their prices sum
+                    # to at least $1 (the exchange mints a complete binary pair).
+                    route, price = "complement", 1 - trade.price
+                else:
+                    continue
                 if (
                     trade.identity in seen
                     or trade.generation != state["generation"]
-                    or trade.token_id != order.token_id
                     or trade.condition_id != order.market.condition_id
-                    or trade.side != "SELL"
-                    or trade.price > order.price_limit
+                    or price > order.price_limit
                     # Same-timestamp trades may already be reflected in the
                     # activation book. Require demonstrably subsequent volume.
                     or min(trade.timestamp_ms, trade.received_ms) <= state["queue_start_ms"]
@@ -324,9 +373,26 @@ class PaperBroker:
                 ):
                     continue
                 seen.add(trade.identity)
-                consumed = min(ahead, trade.quantity)
+                if route == "complement" and trade.transaction_hash is None:
+                    if not state.get("missing_trade_identity"):
+                        self._uncertain(order, now, "PAPER_TRADE_ID_MISSING")
+                        state["missing_trade_identity"] = True
+                    continue  # Cannot distinguish an opposite-feed mirror without its identity.
+                # Outcome feeds can mirror the same economic trade. Per transaction
+                # and normalized price, count the larger route total, not their sum.
+                # Older direct-only records retain their timestamp grouping.
+                key = (
+                    (trade.transaction_hash or f"time:{trade.timestamp_ms}")
+                    + ":"
+                    + format(price.normalize(), "f")
+                )
+                flow = flows.setdefault(key, {"direct": "0", "complement": "0"})
+                prior = max(D(value) for value in flow.values())
+                flow[route] = str(D(flow[route]) + trade.quantity)
+                volume = max(D(value) for value in flow.values()) - prior
+                consumed = min(ahead, volume)
                 ahead -= consumed
-                quantity = min(order.quantity - filled, trade.quantity - consumed)
+                quantity = min(order.quantity - filled, volume - consumed)
                 if quantity > 0:
                     self._fill(order, state, quantity, order.price_limit, trade.received_ms)
                     filled += quantity
@@ -344,6 +410,11 @@ class PaperBroker:
             # Absence can be proven here; a live timeout never takes this path.
             return OrderEvidence((), (), True, None, {})
         now = int(self.clock() * 1000)
+        if not state["terminal"] and state.get("submission_session") != self.submission_session:
+            code = "PAPER_QUEUE_GAP" if order.passive else "PAPER_EXECUTION_GAP"
+            self._uncertain(order, now, code)
+            state.update(terminal=True, terminal_reason=code)
+            self._save(order.intent_id, state)
         if not state["terminal"] and now >= state["activation_ms"]:
             book = self._book(order.token_id, now)
             if order.passive:

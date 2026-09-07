@@ -6,9 +6,9 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import signal
 import time
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
 from decimal import ROUND_DOWN, Decimal
@@ -19,7 +19,8 @@ from btc5m.config import STRATEGIES, Config
 from btc5m.engine import Engine
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.market_data import DataUnavailable, MarketData
-from btc5m.paper import PaperBroker
+from btc5m.paper import PAPER_MATCHING_MODEL, PaperBroker
+from btc5m.service import atomic_json, notify
 
 MASTER_WALLET = "0x" + "00" * 20
 
@@ -39,21 +40,25 @@ def paper_report(path: Path, *, records: bool = False) -> dict[str, Any]:
             if ledger.environment != "paper":
                 raise LedgerError("EXECUTION_ENVIRONMENT_MISMATCH")
             summary = ledger.summary()
-            observations = ledger.observations()
             results[name] = {
                 **ledger.portfolio_results()[name],
                 "simulated_cash": summary.cash,
                 "risk_reserved": summary.risk_reserve,
                 "unresolved_orders": len(summary.unresolved_orders),
+                "legacy_matching_orders": ledger.db.execute(
+                    "SELECT COUNT(*) FROM intents i LEFT JOIN measurements m ON m.key='paper_order:'||i.id WHERE json_extract(i.data,'$.passive')=1 AND COALESCE(json_extract(m.data,'$.matching_model'),'')<>?",
+                    (PAPER_MATCHING_MODEL,),
+                ).fetchone()[0],
                 "halts": summary.halts,
-                "uncertain_rounds": sorted(
-                    {r.get("slug") for r in observations if r.get("kind") == "paper_uncertainty"}
-                ),
+                "uncertain_rounds": [
+                    r[0]
+                    for r in ledger.db.execute(
+                        "SELECT DISTINCT json_extract(data,'$.slug') FROM events WHERE kind='PUBLIC_OBSERVATION' AND json_extract(data,'$.kind')='paper_uncertainty' ORDER BY 1"
+                    )
+                ],
                 "execution_reasons": dict(
-                    Counter(
-                        str(r.get("code"))
-                        for r in observations
-                        if r.get("kind") == "execution_result"
+                    ledger.db.execute(
+                        "SELECT json_extract(data,'$.code'),COUNT(*) FROM events WHERE kind='PUBLIC_OBSERVATION' AND json_extract(data,'$.kind')='execution_result' GROUP BY 1"
                     )
                 ),
             }
@@ -125,7 +130,10 @@ async def run_paper(
     path = args.runtime.resolve()
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path, 0o700)
+    if shutil.disk_usage(path).free < 256 * 1024 * 1024:
+        raise LedgerError("PAPER_DISK_RESERVE_REQUIRED")
     master = Ledger(path / "observations.sqlite", MASTER_WALLET, environment="paper")
+    previous_ms = master.db.execute("SELECT at_ms FROM events ORDER BY id DESC LIMIT 1").fetchone()
     ledgers: list[Ledger] = []
     tasks: list[asyncio.Task[Any]] = []
     stop = asyncio.Event()
@@ -152,9 +160,7 @@ async def run_paper(
             raise LedgerError("PAPER_CONFIGURATION_CHANGED_USE_NEW_RUNTIME")
         master.start_or_resume_session(config)
         master.clear_stop_request()
-        manifest_temporary = manifest_path.with_suffix(".tmp")
-        manifest_temporary.write_text(json.dumps(manifest, indent=2) + "\n")
-        os.replace(manifest_temporary, manifest_path)
+        atomic_json(manifest_path, manifest)
         cutoff = int(time.time() * 1000) - (config.strategy.volatility_long_seconds + 60) * 1000
         restored = data.restore_history(
             json.loads(row[0])
@@ -202,10 +208,28 @@ async def run_paper(
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
         await data.__aenter__()
+        now = int(time.time() * 1000)
+        if previous_ms is not None and now - previous_ms[0] > config.data.max_price_age_ms:
+            for broker in brokers:
+                broker.observation_gap(now, "PAPER_RESTART_GAP")
+            master.record_observation(
+                {
+                    "kind": "paper_recovery",
+                    "received_ms": now,
+                    "source_ms": previous_ms[0],
+                    "code": "PAPER_RESTART_GAP",
+                }
+            )
         master.record_observation(
-            {"kind": "paper_run", "received_ms": int(time.time() * 1000), "status": "started"}
+            {
+                "kind": "paper_run",
+                "received_ms": int(time.time() * 1000),
+                "status": "started",
+                "code": PAPER_MATCHING_MODEL,
+            }
         )
         lifecycle_started = True
+        notify("READY=1\nSTATUS=Paper collector running")
         emit({"kind": "paper_started", **manifest, "runtime": str(path), "credentials_used": False})
 
         async def produce() -> None:
@@ -224,10 +248,31 @@ async def run_paper(
 
         producer = asyncio.create_task(produce())
         tasks.append(producer)
-        deadline, shutdown_deadline = loop.time() + args.duration, None
+        deadline = None if getattr(args, "continuous", False) else loop.time() + args.duration
+        shutdown_deadline = None
         last_results: dict[str, tuple[str, str]] = {}
         last_heartbeat = 0.0
+        last_disk_check = loop.time()
+        last_loop_ms = int(time.time() * 1000)
         while True:
+            now = int(time.time() * 1000)
+            interrupted = now - last_loop_ms > config.data.max_price_age_ms
+            if interrupted:
+                for broker in brokers:
+                    broker.observation_gap(now, "PAPER_CAPTURE_GAP")
+                master.record_observation(
+                    {
+                        "kind": "paper_interruption",
+                        "received_ms": now,
+                        "source_ms": last_loop_ms,
+                        "code": "PAPER_CAPTURE_GAP",
+                    }
+                )
+            last_loop_ms = now
+            if loop.time() - last_disk_check >= 60:
+                last_disk_check = loop.time()
+                if shutil.disk_usage(path).free < 256 * 1024 * 1024:
+                    raise LedgerError("PAPER_DISK_RESERVE_REQUIRED")
             data.retain_markets(
                 tuple(p.market for ledger in ledgers for p in ledger.active_positions())
             )
@@ -235,7 +280,9 @@ async def run_paper(
                 await producer
                 raise LedgerError("PAPER_DATA_WORKER_STOPPED")
             if shutdown_deadline is None and (
-                loop.time() >= deadline or stop.is_set() or master.stop_requested()
+                (deadline is not None and loop.time() >= deadline)
+                or stop.is_set()
+                or master.stop_requested()
             ):
                 shutdown_deadline = loop.time() + args.shutdown_seconds
                 for ledger in ledgers:
@@ -249,7 +296,15 @@ async def run_paper(
                     }
                 )
                 last_heartbeat = loop.time()
-            snapshot = data.current_snapshot()
+                notify(
+                    "WATCHDOG=1\nSTATUS="
+                    + (
+                        "Paper collector stopping"
+                        if shutdown_deadline is not None
+                        else "Paper collector running"
+                    )
+                )
+            snapshot = None if interrupted else data.current_snapshot()
             for name, broker, engine, ledger in zip(
                 selected, brokers, engines, ledgers, strict=True
             ):
@@ -279,11 +334,13 @@ async def run_paper(
                     break
             await asyncio.sleep(0.25)
     finally:
+        notify("STOPPING=1\nSTATUS=Saving paper runtime")
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         try:
-            await data.close()
+            async with asyncio.timeout(10):
+                await data.close()
         except BaseException:
             lifecycle_status = "failed"
             raise
@@ -305,7 +362,7 @@ async def run_paper(
                     loop.remove_signal_handler(sig)
     summary_report = paper_report(path)
     output = path / "report.json"
-    output.write_text(json.dumps(summary_report, default=str, indent=2) + "\n")
+    atomic_json(output, summary_report)
     emit(
         {
             "kind": "paper_finished",

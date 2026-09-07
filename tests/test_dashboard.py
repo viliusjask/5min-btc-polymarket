@@ -221,6 +221,7 @@ def test_dashboard_accounts_for_pair_fills_resolution_and_payout_without_leaking
             ledger.db.execute("UPDATE intents SET signed_payload=?", ("PRIVATE_SIGNED_VALUE",))
         before = reader.snapshot(now_ms=clock[0])["portfolios"][name]
         assert before["fills"] == before["orders"] == 2
+        assert all(row["execution_status"] == "FILLED" for row in before["recent_orders"])
         assert D(before["realized_net_pnl"]) == 0
         assert D(before["cash"]) < D("16.66")
         assert all(D(point["pnl"]) == 0 for point in before["pnl_curve"])
@@ -240,3 +241,73 @@ def test_dashboard_accounts_for_pair_fills_resolution_and_payout_without_leaking
         ledger.close()
 
     asyncio.run(run(runtime(tmp_path, monkeypatch)))
+
+
+@pytest.mark.parametrize("cause", [None, "QUOTE_EXPIRED"])
+def test_cancelled_order_shows_execution_outcome_and_old_model_warning(
+    tmp_path, monkeypatch, cause
+):
+    from test_paper import submit
+    from test_strategy import make_snapshot
+
+    from btc5m.pairing import pair_decision
+    from btc5m.paper import PaperBroker
+    from btc5m.streams import PublicStreams
+
+    root = runtime(tmp_path, monkeypatch)
+
+    async def run():
+        name = "passive_pairs"
+        base = Config()
+        config = replace(
+            base,
+            strategy=replace(base.strategy, mode=name),
+            risk=replace(base.risk, allocation_usd=D("16.66")),
+        )
+        ledger = Ledger(root / name / "ledger.sqlite", "0x" + str(5).zfill(40), environment="paper")
+        session = ledger.start_or_resume_session(config)
+        ledger.clear_stop_request()
+        clock = [make_snapshot().now_ms]
+        streams = PublicStreams(config, clock=lambda: clock[0] / 1000)
+        broker = PaperBroker(ledger, config, streams=streams, clock=lambda: clock[0] / 1000)
+        broker.update(make_snapshot())
+        order = await submit(
+            ledger, broker, pair_decision(broker.snapshot, config, ()), session, clock[0]
+        )
+        clock[0] += 1000
+        broker.update(make_snapshot(now_ms=clock[0]))
+        await broker.reconcile(order)
+        reader = DashboardReader(root, base)
+        row = reader.snapshot(now_ms=clock[0])["portfolios"][name]["recent_orders"][0]
+        assert row["execution_status"] == "RESTING"
+        if cause:
+            ledger.record_observation(
+                {
+                    "kind": "quote_cancel",
+                    "received_ms": clock[0],
+                    "identity": order.intent_id,
+                    "code": cause,
+                }
+            )
+        ledger.request_cancel(order.intent_id, clock[0])
+        row = reader.snapshot(now_ms=clock[0])["portfolios"][name]["recent_orders"][0]
+        assert row["execution_status"] == "CANCELLING"
+        if cause:
+            assert row["execution_reason"] == cause
+        clock[0] += 6000
+        ledger.apply_evidence(
+            order.intent_id, await broker.reconcile(ledger.order(order.intent_id))
+        )
+        state = broker._load(order.intent_id)
+        state.pop("matching_model")  # Persisted pre-fix execution, retained without rewriting P/L.
+        broker._save(order.intent_id, state)
+        data = DashboardReader(root, base).snapshot(now_ms=clock[0])["portfolios"][name]
+        row = data["recent_orders"][0]
+        assert row["state"] == "SETTLED"  # Internal reconciliation state remains available.
+        assert row["execution_status"] == "CANCELLED_UNFILLED"
+        assert row["execution_reason"] == (cause or "PAPER_CANCELLED_AFTER_TRADE_GRACE")
+        assert data["legacy_matching_orders"] == 1
+        assert data["orders"] == 1 and data["fills"] == 0
+        ledger.close()
+
+    asyncio.run(run())

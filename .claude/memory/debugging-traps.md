@@ -153,3 +153,24 @@ noncooperative code requires external termination followed by journal inspection
 - Simulated maker volume must be strictly later than the activation book timestamp. A trade
   sharing that timestamp may already be removed from the displayed queue; consuming it again
   invents a fill. Equal-timestamp ordering is unknown, so exclude it conservatively.
+
+- 2026-09-07: Zero passive fills despite many orders was not explained by checking same-token
+  SELL flow alone. Polymarket also matches BUY Up with BUY Down at complementary prices. A real
+  0.48 bid replay changed from zero to five shares after adding that path. Retain transaction
+  hashes, avoid double-counting mirrored outcome messages, and distinguish internal SETTLED
+  reconciliation from actual filled/cancelled execution. Investigate the venue's full matching
+  model before calling zero fills expected; synthetic tests had omitted the same real pathway.
+- 2026-09-07: systemd 249 `systemd-analyze --user verify` against the active XDG_RUNTIME_DIR
+  replaced the user's private control socket. Verify in a temporary isolated runtime instead.
+  Recovery used a temporary session-bus socket/service and daemon reexecution without stopping
+  other user work; temporary recovery units were removed. The installer regression protects the
+  existing runtime. Do not test service recovery by killing the user's whole WSL instance.
+
+- 2026-09-07: After fixing the missing complementary flow, new orders still all cancelled.
+  The controller compared an owned quote with the next preferred entry and cancelled on every
+  price/side change, including favorable changes. The original synthetic fill tests bypassed
+  intervening Engine.step calls, so they missed the cancellation. Exercise the complete order
+  lifetime through the controller, with moving books, before crediting a later trade. Keep an
+  owned quote while its own risk/edge constraints hold; record the actual cancellation trigger
+  by order identity. One of 25 original-order public replays then filled; the other 24 did not.
+  A passing isolated matcher regression is not evidence that strategy-plus-execution works.

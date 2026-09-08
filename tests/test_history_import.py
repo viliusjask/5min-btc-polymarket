@@ -2,10 +2,12 @@ import asyncio
 import csv
 import gzip
 import json
+import os
 import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -461,3 +463,37 @@ def test_raw_precision_is_preserved_beyond_default_decimal_context(tmp_path):
     run_import(tmp_path, paths)
     snap = next(f.snapshot for f in frames(tmp_path / "imported" / "capture.sqlite") if f.snapshot)
     assert snap.spot.price == D("80000.123456789123456789")
+
+
+def test_durable_publication_failure_never_exposes_completed_import(tmp_path, monkeypatch):
+    paths = fixture(tmp_path)
+    original = os.fsync
+
+    def fail_derived_tape(fd):
+        if Path(f"/proc/self/fd/{fd}").resolve().name == "capture.sqlite.partial":
+            raise OSError("Injected final tape synchronization failure")
+        original(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_derived_tape)
+    with pytest.raises(OSError, match="final tape synchronization"):
+        run_import(tmp_path, paths)
+    assert not (tmp_path / "imported" / "capture.sqlite").exists()
+    assert (tmp_path / "imported" / "capture.sqlite.partial").is_file()
+    assert json.loads((tmp_path / "imported" / "import.json").read_text())["status"] == "failed"
+
+
+def test_only_unpublished_import_uses_normal_synchronization(tmp_path, monkeypatch):
+    import btc5m.history_import as importer
+
+    original = importer._convert
+    observed = []
+
+    def convert(db, tape, *args):
+        observed.append((tape.path.name, tape.db.execute("PRAGMA synchronous").fetchone()[0]))
+        return original(db, tape, *args)
+
+    monkeypatch.setattr(importer, "_convert", convert)
+    run_import(tmp_path, fixture(tmp_path))
+    assert observed == [("capture.sqlite.partial", 1)]
+    with Tape(tmp_path / "ordinary.sqlite") as tape:
+        assert tape.db.execute("PRAGMA synchronous").fetchone()[0] == 2

@@ -101,6 +101,15 @@ removed after either success or failure; a failed partial tape and manifest rema
 diagnosis. Supplied source archives and the finished tape remain. The strict no-terms
 output is a diagnostic tape, so keep the source files to create a later assumed-terms run.
 
+Only the unpublished derived tape uses SQLite NORMAL synchronization while being built.
+Before publication, the importer switches to FULL, requires a complete WAL checkpoint,
+flushes the database file explicitly, then publishes and flushes the manifest directory.
+An interrupted conversion remains incomplete and requires a fresh destination. The
+ordinary `Tape` writer and continuous collector retain FULL synchronization. A bounded
+200-frame actual-data benchmark produced identical decoded outputs and final sizes:
+FULL took4.06seconds, NORMAL0.69seconds, including durable finalization. This measures
+the tested import path under that disk load, not a guaranteed whole-day speedup.
+
 For meaningful comparison, retain all tested variants and compare complete time blocks
 under the same terms/latency/availability assumptions. Keep execution assumptions separate
 from known collection gaps. More historical hours can broaden a test, but cannot turn

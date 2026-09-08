@@ -1,4 +1,20 @@
 
+# Progress: independent unified integration review
+
+2026-09-08. A separate integration agent combined the four independent fixes in
+`feat/unified-research`, preserving both appended documentation contributions at conflicts.
+The integration reproduced and corrected an incomplete HTTP lifecycle fixture and the
+catalog freshness race reported during root's browser checks. The latter samples the
+comparison clock after capture quality is read, while retaining rejection of actual
+future timestamps. No collector freshness rule, strategy or account data changed.
+
+Reviewed production source `ac3d037f681e631ddf58a3c40c02dd64e2f8621d` passed **734 tests
+in 273.90 seconds**, Ruff lint/format (72 files), mypy (34 source files), locked dependencies,
+CLI help and whitespace checks under Python 3.12.13. No blocking review finding remains.
+[Independent review and exact checks](research/unified-integration-review.md).
+Root owns final browser/probe checks, preserved service cutover and PR publication; the
+integration agent did not restart services, write runtime history or access credentials.
+
 # Progress: discovery timeout recovery
 
 2026-09-08. `fix/discovery-recovery`, isolated `.worktrees/discovery-recovery`, base `8d12573`.

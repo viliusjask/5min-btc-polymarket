@@ -348,3 +348,10 @@ Verify readiness with one request followed by no requests, including a later app
 request-by-request tests can conceal this coupling. Reading a fresh tail alone would conceal
 incomplete cumulative counts, so keep source freshness and history completeness distinct.
 
+## 2026-09-08: Catalog reads made a current capture appear to be in the future
+
+The experiment list sampled its response clock before reading study statistics and capture
+quality. The collector could append during that work, so a valid new capture compared against
+the older clock appeared stale. Sample the comparison clock after the data read. A controlled
+clock test should cover both a concurrent current capture and a genuinely future timestamp;
+never solve this race by removing future-timestamp rejection or refreshing source timestamps.

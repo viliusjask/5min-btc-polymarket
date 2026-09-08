@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 from collections import Counter
+from dataclasses import asdict, replace
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +19,7 @@ from btc5m.capture_quality import read_quality
 from btc5m.comparison import MASTER_WALLET
 from btc5m.config import STRATEGIES, Config
 from btc5m.dashboard_live import LiveDashboardReader
+from btc5m.experiment_browser import ExperimentBrowser
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.paper import PAPER_MATCHING_MODEL
 from btc5m.research import ResearchReader
@@ -349,6 +351,41 @@ class DashboardReader:
                 raise LedgerError("EXECUTION_ENVIRONMENT_MISMATCH")
             ledger.db.execute("BEGIN")
             summary, result = ledger.summary(), ledger.portfolio_results()[name]
+            # Match the actual per-portfolio session fingerprint before presenting
+            # current config as captured settings or deriving loss-budget headroom.
+            risk = replace(
+                self.config.risk,
+                allocation_usd=allocation,
+                daily_loss_usd=min(self.config.risk.daily_loss_usd, allocation),
+                session_loss_usd=min(self.config.risk.session_loss_usd, allocation),
+            )
+            configured = replace(
+                self.config, strategy=replace(self.config.strategy, mode=name), risk=risk
+            )
+            fingerprint = ledger.db.execute(
+                "SELECT fingerprint FROM sessions WHERE id=?", (summary.session_id,)
+            ).fetchone()
+            verified_config = fingerprint is not None and fingerprint[0] == configured.fingerprint
+            exposure = summary.position_risk + summary.risk_reserve
+            risk_budget = (
+                {
+                    "daily_loss_limit": risk.daily_loss_usd,
+                    "session_loss_limit": risk.session_loss_usd,
+                    "daily_realized_net": summary.daily_realized_net_pnl,
+                    "session_realized_net": summary.session_realized_net_pnl,
+                    "held_position_risk": summary.position_risk,
+                    "reserved_for_orders": summary.risk_reserve,
+                    "daily_remaining_before_new_order": risk.daily_loss_usd
+                    - max(D(0), -summary.daily_realized_net_pnl)
+                    - exposure,
+                    "session_remaining_before_new_order": risk.session_loss_usd
+                    - max(D(0), -summary.session_realized_net_pnl)
+                    - exposure,
+                    "configured_trade_budget": risk.trade_budget_usd,
+                }
+                if verified_config
+                else None
+            )
             orders = {
                 ident: json.loads(raw)
                 for ident, raw in ledger.db.execute("SELECT id,data FROM intents")
@@ -459,6 +496,8 @@ class DashboardReader:
             return {
                 **result,
                 "allocation": allocation,
+                "configuration": asdict(configured) if verified_config else None,
+                "risk_budget": risk_budget,
                 "cash": summary.cash,
                 "risk_reserved": summary.risk_reserve,
                 "halts": summary.halts,
@@ -600,6 +639,7 @@ def make_server(
     if not 0 <= port <= 65535:
         raise LedgerError("INVALID_DASHBOARD_PORT")
     research = ResearchReader(reader.path)
+    experiments = ExperimentBrowser(reader)
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self) -> None:
@@ -642,6 +682,7 @@ def make_server(
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/lab.js": ("lab.js", "text/javascript; charset=utf-8"),
                 "/research.js": ("research.js", "text/javascript; charset=utf-8"),
+                "/browser.js": ("browser.js", "text/javascript; charset=utf-8"),
                 "/style.css": ("style.css", "text/css; charset=utf-8"),
                 "/icon.svg": ("icon.svg", "image/svg+xml"),
             }
@@ -653,6 +694,45 @@ def make_server(
                     payload = json.dumps(reader.snapshot(), allow_nan=False).encode()
                 except Exception:
                     self.respond(503, b'{"error":"PAPER_DATA_UNAVAILABLE"}', "application/json")
+                    return
+                self.respond(200, payload, "application/json")
+            elif path in ("/api/experiments", "/api/experiment"):
+                from urllib.parse import parse_qs
+
+                params = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                if (path == "/api/experiments" and params) or (
+                    path == "/api/experiment"
+                    and (
+                        set(params) != {"key", "cohort"}
+                        or any(len(v) != 1 for v in params.values())
+                    )
+                ):
+                    self.respond(400, b'{"error":"INVALID_EXPERIMENT_QUERY"}', "application/json")
+                    return
+                try:
+                    result = (
+                        experiments.snapshot()
+                        if path == "/api/experiments"
+                        else experiments.detail(params["key"][0], params["cohort"][0])
+                    )
+                    payload = json.dumps(result, allow_nan=False).encode()
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    ArithmeticError,
+                    sqlite3.Error,
+                    LedgerError,
+                ) as exc:
+                    invalid = isinstance(exc, ValueError) and str(exc).startswith(
+                        "UNKNOWN_EXPERIMENT"
+                    )
+                    self.respond(
+                        400 if invalid else 503,
+                        b'{"error":"EXPERIMENT_UNAVAILABLE_OR_INVALID_SELECTION"}',
+                        "application/json",
+                    )
                     return
                 self.respond(200, payload, "application/json")
             elif path == "/api/lab":

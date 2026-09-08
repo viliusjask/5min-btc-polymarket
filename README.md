@@ -67,10 +67,13 @@ independently from Codex. See [service controls, Windows startup and recovery li
 
 ## Paper and real account dashboard
 
-The **Experiments** view adds an independent research lab: 84 registered parameter/signal/exit
-variants, central-probability scoring against the market, and frozen tests on later rounds.
-It shares the public recording while preserving the six original portfolios. See
-[lab setup, dashboard interpretation and recovery](docs/experiment-lab.md) and the
+The **Paper** view lists the six original portfolios, both registered study suites, and every
+later-data phase together. Search/filter the catalog, sort its numeric results, and open any
+row for completed-round statistics, profit graphs, costs, configuration and order outcomes.
+The comparison shows all filtered experiments as context, with up to eight colored highlights.
+No simulated profits are added into a combined account. See the
+[experiment browser guide](docs/experiment-browser.md),
+[lab setup and recovery](docs/experiment-lab.md), and the
 [primary research register](docs/research/experiment-lab.md). No funded orders are enabled.
 
 In another terminal, point the dashboard at the paper run's directory:
@@ -79,11 +82,12 @@ In another terminal, point the dashboard at the paper run's directory:
 uv run --locked btc5m dashboard --runtime work/paper-six --port 8765
 ```
 
-Open [the local dashboard](http://127.0.0.1:8765/). It refreshes every five seconds and includes
-six portfolio cards, recorded profit/loss, orders and fills, Bitcoin prices, feed health, history
-sampling and explanations for skipped entries. Use the same `--config` as the collector to show
-its thresholds. The collector and dashboard are separate processes: closing or restarting the
-page/server does not interrupt paper trading. The dashboard starts no collector of its own.
+Open [the local dashboard](http://127.0.0.1:8765/). The experiment catalog refreshes every
+30 seconds. Collection/execution diagnostics and same-market research are accessible from an
+experiment's detail; operational diagnostics retain their five-second polling. Use the same
+`--config` as the collector to display verified portfolio configuration and risk-budget headroom.
+The collector and dashboard are separate processes: closing or restarting the page/server does
+not interrupt paper trading. The dashboard starts no collector of its own.
 
 **Paper / Real at the top switches views only.** Paper needs no credentials. To also connect the
 Real view, explicitly provide the existing ignored account file:

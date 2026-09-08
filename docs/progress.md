@@ -663,3 +663,19 @@ entry/exit parameters and confirmation remain hypotheses. A bounded funded exper
 existing journal; constructing a separate paper platform is not required. Preserve the dedicated
 wallet/journal and resolve discrepancies before further entries. Manual claiming remains external.
 Branches and worktrees stay preserved; no upstream push or merge is part of this development run.
+
+## Unified experiment browser, September 8
+
+The Paper landing view now lists original portfolios and both study suites across phases, with
+numeric sorting, search, cohort/sample filters, individual context curves and selected highlights.
+Details retain research and execution evidence; [the browser guide](experiment-browser.md) defines
+cohort denominators, historical risk rejections, report/journal boundaries and bounded read caches.
+Read-only runtime checks found 108 distinct source/phase rows, including the newly registered
+single-control later-data phase. Desktop and 390-pixel browser checks cover list, filters, phase
+identity, detail/cohort navigation, no overflow and zero Paper-triggered Real requests. Collector
+history catch-up and final integration are reviewed separately; this change does not restart a service.
+
+The browser branch's final validation passed 720 tests, Ruff checks/formatting, mypy and the
+locked dependency check under Python 3.12.13. Independent and author Chrome checks both passed;
+the author run showed five experiment rows on the initial 1600×1050 screen, 108 unique phase-aware
+rows, a 30-completed-round filter, later-phase detail, cohort switching and 390-pixel containment.

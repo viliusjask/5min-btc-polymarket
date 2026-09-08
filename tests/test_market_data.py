@@ -233,6 +233,8 @@ def test_current_snapshot_reports_first_failed_check_and_recovers(failure, compo
             assert data.snapshot_status["code"] == "CAPTURED"
             data.streams = PublicStreams(Config(), clock=venue.clock.wall)
             original_cache_time = data._cached_at
+            original_cache = data._cached_market
+            assert original_cache is not None
             original_spot = dict(data._points["spot"])
             if failure == "cache":
                 data._cached_at -= 6
@@ -253,8 +255,8 @@ def test_current_snapshot_reports_first_failed_check_and_recovers(failure, compo
             elif failure == "observer":
                 data._observer_failed = True
             elif failure == "round":
-                data._cached_snapshot = replace(
-                    snap, market=replace(snap.market, start_s=START - 300)
+                data._cached_market = replace(
+                    original_cache, market=replace(snap.market, start_s=START - 300)
                 )
             assert data.current_snapshot() is None
             status = data.snapshot_status
@@ -263,7 +265,7 @@ def test_current_snapshot_reports_first_failed_check_and_recovers(failure, compo
             if failure in ("spot", "book"):
                 assert status["source_age_ms"] == 6000
             data._cached_at = original_cache_time
-            data._cached_snapshot = snap
+            data._cached_market = original_cache
             data._points["spot"] = original_spot
             data._observer_failed = False
             data.streams.pending_books.clear()
@@ -530,6 +532,7 @@ def test_delayed_final_metadata_survives_current_discovery_failure_and_is_not_in
             }
             with pytest.raises(DataUnavailable):
                 await data.snapshot()
+            await settle()  # Settlement polling now progresses independently.
             finals = [r for r in venue.records if r["kind"] == "final_reference"]
             assert len(finals) == 1
             assert finals[0]["slug"] == old_slug
@@ -539,11 +542,13 @@ def test_delayed_final_metadata_survives_current_discovery_failure_and_is_not_in
             venue.clock.elapsed += 31
             with pytest.raises(DataUnavailable):
                 await data.snapshot()
+            await settle()  # Settlement polling now progresses independently.
             assert len([r for r in venue.records if r["kind"] == "final_reference"]) == 1
             venue.clock.ms += 3600000
             venue.clock.elapsed += 3600
             with pytest.raises(DataUnavailable):
                 await data.snapshot()
+            await settle()  # Settlement polling now progresses independently.
             assert any(
                 r["kind"] == "reference_retired" and r["final_status"] == "official"
                 for r in venue.records
@@ -957,6 +962,7 @@ def test_delayed_official_rule_change_cannot_supply_calibration_label() -> None:
             venue.event["eventMetadata"] = {"finalPrice": "79700"}
             with pytest.raises(DataUnavailable):
                 await data.snapshot()
+            await settle()  # Settlement polling now progresses independently.
             assert not any(r["kind"] == "final_reference" for r in venue.records)
             assert any(
                 r["kind"] == "metadata_unavailable" and r["code"] == "UNSUPPORTED_RULE"

@@ -7,8 +7,8 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Collector and dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/strategy-policy-audit`
-  (`fix/strategy-policy-audit`, [PR12](https://github.com/viliusjask/5min-btc-polymarket/pull/12)).
+- Collector and dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/metadata-refresh`
+  (`fix/metadata-refresh`, [PR13](https://github.com/viliusjask/5min-btc-polymarket/pull/13)).
 - The original registered lab remains on `.worktrees/experiment-lab`; the 17-variant
   order-flow study remains on `.worktrees/order-flow`. Keep these three active checkouts.
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
@@ -157,3 +157,33 @@ PIDs, unit files, configuration and registration hashes were preserved. Code val
 681 tests; PR12 CI passed. The dashboard marks the cutover and explains that lifetime totals
 include the earlier policies. Further deployment details and backups remain in the active
 checkout's ignored `work/deployment/` and `work/value-audit/policy-migration/` directories.
+
+## Independent market refresh and book recovery
+
+The metadata-refresh repair separates settlement-result polling from current-market HTTP
+refreshes. A slow delayed result no longer holds the refresh lock. The settlement task is
+cancelled and joined with the other feed tasks during shutdown. Market settings retain their
+five-second validation lifetime; price and book source/receipt timestamps are never renewed
+by cache reuse. A valid settings response can be retained while the BTC price feed recovers.
+
+Book transport interruptions now require synchronized depth without expiring market settings.
+Cached REST depth from before an interruption cannot be reused, and a response completed after
+a newer invalidation cannot restore it. Tick changes require fresh authoritative metadata; supported coarse headers may be accepted
+only under the documented dividing-grid refinement with compatible actual prices. Other
+inconsistent venue settings remain rejected. The CLI immediately invalidates prepared-entry input on book failure.
+
+Capture diagnostics distinguish `METADATA_INVALIDATED`, with its original reason, from actual
+`METADATA_CACHE_EXPIRED` and `BOOK_RESYNC_PENDING`. The dashboard shows settings age and the
+latest underlying reason. Historical expiry counts include the old collector's mixed meanings;
+they remain intact. Ratios in the cause table use rejected samples, not every sample or trade.
+No runtime configuration, accounting schema, wallet session, or study registration changes are
+required for this code-only restart. Both study workers retain their registered checkouts.
+
+
+The repaired collector/dashboard started at 23:08:33 UTC on September 7 (02:08 Kyiv, September 8),
+from source `cf9f573`. Seven sessions and original financial rows were verified preserved, with
+both lab PIDs, units, configs and registrations unchanged. Capture resumed after a 48.508-second
+recorded interruption; that missing interval stays missing. The six-minute old/new public-feed
+comparison improved usable samples from 67.7% to 96.5%. This is capture evidence, not profitability
+or a promise of uninterrupted feeds. The remaining real HTTP/price outages still reject until
+fresh inputs recover. [Full verification and limits](progress.md).

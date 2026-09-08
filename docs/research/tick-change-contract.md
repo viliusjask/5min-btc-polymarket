@@ -1,6 +1,6 @@
 # Protected exits across a tick refinement — SDK 0.9.0
 
-**Decision:** when the fresh held-book and SDK ticks agree on a supported grid, permit an existing-position protected SELL FAK without requiring equality with the historical entry tick. When those current sources disagree, permit only a supported finer/dividing SDK tick, notably book `0.01` / SDK `0.001`, with compatible protected prices and all non-tick checks intact. Keep the stricter current entry-snapshot agreement policy.
+**Decision:** when the fresh held-book and SDK ticks agree on a supported grid, permit an existing-position protected SELL FAK without requiring equality with the historical entry tick. When those current sources disagree, permit only a supported finer/dividing SDK tick, notably book `0.01` / SDK `0.001`, with compatible protected prices and all non-tick checks intact. The original entry-snapshot equality policy is superseded for collection by the September 8 rule below; funded BUY preparation remains strict.
 
 ## Official behavior and the observed disagreement
 
@@ -34,3 +34,39 @@ Local pure SDK checks (no signing/network/orders) with requested SELL `5.257891`
 | `.01` | `.995` | `UserInputError` |
 
 Each successful vector preserves the gross floor; the residual `0.007891` shares remains owned. Add adapter fixtures for agreeing current grids despite a different saved-entry tick (in both directions), successful current book/SDK tick-only refinement, fee/minimum/token mismatch still rejected, current SDK coarser than current book rejected, off-grid price rejected, unchanged entry skip, and a cached `.01` that only the forced fetch replaces. Actual venue acceptance or fills are not proven by pure construction or documentation; a rejection still follows the established rejection/unknown-outcome policy. No funded action or implementation change was performed for this handoff.
+
+
+## Collection across a compatible refinement — September 8
+
+The original exact-equality policy also removed public research snapshots during refinement.
+It is an application restriction: the venue documents a tick field on each endpoint but does
+not promise atomic updates across them. The pinned SDK still selects the signing grid from
+fresh `/clob-markets.mts`. The public `/book` client reads and preserves the raw header on each
+request; this discrepancy is not a local SDK book cache. [CLOB market info](https://docs.polymarket.com/api-reference/markets/get-clob-market-info),
+[order-book response](https://docs.polymarket.com/api-reference/market-data/get-order-book).
+
+Collection now uses that freshly validated signing grid and admits a reported flags/book tick
+only when equal, or supported and coarser with an exact integer ratio. For example, every
+0.01-grid price is also valid on a 0.001 grid. All actual book levels must fit the chosen grid.
+A coarser authoritative tick, nondividing grids, unsupported values, changed conditions/tokens,
+minimum-size disagreement and invalid fee/accepting state still reject. Original reported
+values remain in the observations; accepted refinements are explicitly recorded. This rule
+does not infer the tick from a price threshold, invent finer liquidity, or renew timestamps.
+
+Tick events still invalidate cached metadata. Fresh consistent authoritative metadata and
+compatible quotes must recover it; a reconnect or older in-flight response cannot clear it.
+
+This change makes public capture and paper evaluation usable under the bounded refinement.
+It does not relax the funded broker's BUY preparation check. Such a BUY can still reject a
+current book/header disagreement; public capture success is not funded-order validation.
+The existing protected SELL rule above is unchanged. The latest actual probe and test evidence
+are recorded in [progress](../progress.md).
+
+
+A new simultaneous anonymous probe on September 7, 23:03:56–23:04:21 UTC corroborated this
+transition in 12 samples: `/clob-markets.mts` and both `/tick-size` responses were 0.001,
+while `/markets.minimum_tick_size` remained 0.01. Both book headers were initially 0.01
+(three samples), then 0.001 (nine samples). Response headers reported `cf-cache-status:
+DYNAMIC`; that does not establish the server's internal cache policy. Requests were parallel,
+not an atomic exchange snapshot. Raw timestamped bodies/headers remain in the ignored
+`work/corroborated-tick-refinement.json`. This confirms the compatibility case, not fills.

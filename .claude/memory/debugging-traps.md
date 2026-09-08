@@ -65,6 +65,17 @@ causes in operator-facing monitoring; JSON totals alone do not explain whether t
 Format per entry: **Symptom → root cause → how to spot it faster next time → fix.**
 Cross-project traps belong in ~/.claude/memory/debugging-traps.md instead.
 
+## 2026-09-08: Healthy HTTP requests timed out behind the synchronous observer
+
+Repeated Gamma `TimeoutError` with working fresh anonymous requests suggested a connection
+problem. But every tick's `record_observation` called `record_clock`, rereading and decoding
+10.57 MB of completed measurement history. A scratch replay of the actual public history
+reproduced a five-second HTTP timeout behind a 100-tick observer burst. Check outer versus
+transport timeout type, process logical I/O, and synchronous callback costs before rotating
+clients or extending deadlines. Query only due pending calibrations using a partial deadline
+index; test migration, exact window boundaries and rollback. Recovery of the original process
+still needs post-deployment verification; a fresh-process probe alone is insufficient.
+
 ## 2026-09-06: Optional snapshot time froze freshness across I/O
 
 A snapshot accepted a seven-second-old spot under a five-second limit when the caller supplied

@@ -32,6 +32,7 @@ from btc5m.execution_types import SnapshotInput
 from btc5m.ledger import Ledger, LedgerError, normalize_wallet, runtime_path
 from btc5m.market_data import ANCHOR_TOLERANCE, DataUnavailable, MarketData
 from btc5m.rpc import ReadOnlyRPC, RPCError
+from btc5m.storage import StorageError
 from btc5m.strategy import evaluate
 
 ANONYMOUS_WALLET = "0x" + "00" * 20
@@ -156,7 +157,14 @@ async def configure_credentials(args: argparse.Namespace) -> int:
 
 def safe_reason(exc: BaseException) -> str:
     if isinstance(
-        exc, CLIError | CredentialError | BrokerError | LedgerError | RPCError | DataUnavailable
+        exc,
+        CLIError
+        | CredentialError
+        | BrokerError
+        | LedgerError
+        | RPCError
+        | DataUnavailable
+        | StorageError,
     ):
         code = str(exc)
         if re.fullmatch(r"[A-Z][A-Z0-9_]{0,100}", code):
@@ -205,6 +213,40 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     archive.add_argument("archive_action", choices=("status",))
     archive.add_argument("--source", type=Path, required=True, help="existing capture.sqlite")
+    storage = commands.add_parser(
+        "storage", allow_abbrev=False, help="lossless paper-history storage"
+    )
+    storage.add_argument(
+        "storage_action", choices=("status", "verify", "prepare", "sync", "maintain")
+    )
+    storage.add_argument("--source", type=Path, help="existing paper ledger")
+    storage.add_argument(
+        "--destination", type=Path, help="independent compact copy; never auto-selected"
+    )
+    storage.add_argument("--runtime", type=Path, help="existing paper runtime for maintenance")
+    storage.add_argument(
+        "--enable-new",
+        action="store_true",
+        help="maintenance only: enable small new journals after every reader supports compact storage",
+    )
+    history = commands.add_parser(
+        "history", allow_abbrev=False, help="convert external public history"
+    )
+    history.add_argument("history_action", choices=("import-outcometick",))
+    for name in ("markets", "books", "spot", "twap60", "destination"):
+        history.add_argument("--" + name, type=Path, required=True)
+    for name in ("trades", "best-bid-ask", "binance"):
+        history.add_argument("--" + name, type=Path)
+    history.add_argument("--start", type=_historical_time, required=True)
+    history.add_argument("--end", type=_historical_time, required=True)
+    history.add_argument("--config", type=Path, default=default_config())
+    for name in ("tick-size", "min-order-size", "fee-rate"):
+        history.add_argument(
+            "--" + name, type=Decimal, help="explicit historical execution assumption"
+        )
+    history.add_argument("--fee-exponent", type=int)
+    history.add_argument("--binance-latency-ms", type=int)
+    history.add_argument("--resolution-delay-ms", type=int)
     lab = commands.add_parser(
         "lab", allow_abbrev=False, help="paper-only parameter studies on a common recorded tape"
     )
@@ -367,6 +409,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 help="include all safe public observations and raw paired decisions",
             )
     args = parser.parse_args(argv)
+    if args.command == "storage":
+        if args.storage_action == "maintain":
+            if args.runtime is None or args.source is not None or args.destination is not None:
+                parser.error("storage maintain requires --runtime, without --source/--destination")
+        else:
+            if args.source is None or args.runtime is not None or args.enable_new:
+                parser.error("storage action requires --source, without --runtime/--enable-new")
+            if (args.storage_action in ("prepare", "sync")) != (args.destination is not None):
+                parser.error("only storage prepare/sync require --destination")
+    if args.command == "history":
+        if args.start < 0 or args.start >= args.end:
+            parser.error("history requires ordered --start and --end")
+        terms = (args.tick_size, args.min_order_size, args.fee_rate, args.fee_exponent)
+        if any(v is not None for v in terms) and not all(v is not None for v in terms):
+            parser.error(
+                "supply all four historical trading terms, or omit all for strict diagnostics"
+            )
+        if (args.binance is None) != (args.binance_latency_ms is None):
+            parser.error("--binance requires an explicit --binance-latency-ms")
+        if any(
+            v is not None and not 0 <= v <= 3600000
+            for v in (args.binance_latency_ms, args.resolution_delay_ms)
+        ):
+            parser.error("modeled delays must be between zero and 3600000 milliseconds")
     if args.command == "lab":
         if args.lab_action != "variants" and args.runtime is None:
             parser.error("lab run/freeze/report requires --runtime")
@@ -954,6 +1020,59 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
 
 
 async def async_main(args: argparse.Namespace) -> int:
+    if args.command == "storage":
+        from btc5m.storage import compact_copy, storage_status, sync_compact_copy, verify_storage
+        from btc5m.storage_runtime import maintain_runtime
+
+        now = time.time_ns() // 1000000
+        if args.storage_action == "maintain":
+            result = maintain_runtime(args.runtime, now_ms=now, enable_new=args.enable_new)
+            emit({k: v for k, v in result.items() if k != "journals"})
+            return 0 if result["ok"] else 2
+        if args.storage_action == "prepare":
+            emit(compact_copy(args.source, args.destination, before_ms=max(0, now - 7200000)))
+        elif args.storage_action == "sync":
+            emit(sync_compact_copy(args.source, args.destination))
+        else:
+            emit(
+                (storage_status if args.storage_action == "status" else verify_storage)(args.source)
+            )
+        return 0
+    if args.command == "history":
+        from btc5m.history_import import HistoricalTerms, import_outcometick
+
+        try:
+            terms = (
+                None
+                if args.tick_size is None
+                else HistoricalTerms(
+                    args.tick_size, args.min_order_size, args.fee_rate, args.fee_exponent
+                )
+            )
+            emit(
+                import_outcometick(
+                    markets=args.markets,
+                    books=args.books,
+                    spot=args.spot,
+                    twap60=args.twap60,
+                    destination=args.destination,
+                    start_ms=args.start,
+                    end_ms=args.end,
+                    config=load_config(args.config),
+                    terms=terms,
+                    trades=args.trades,
+                    best_bid_ask=args.best_bid_ask,
+                    binance=args.binance,
+                    binance_latency_ms=args.binance_latency_ms,
+                    resolution_delay_ms=args.resolution_delay_ms,
+                )
+            )
+        except ValueError as exc:
+            code = str(exc)
+            raise CLIError(
+                code if re.fullmatch(r"[A-Z][A-Z0-9_]{0,100}", code) else "INVALID_EXTERNAL_HISTORY"
+            ) from exc
+        return 0
     if args.command == "archive":
         from btc5m.archive import archive_status
 

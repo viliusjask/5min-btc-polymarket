@@ -19,6 +19,7 @@ from btc5m.lab_variants import Valuations, Variant, evaluate_variant
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.pairing import pair_decision
 from btc5m.paper import PaperBroker
+from btc5m.storage import register_event_reader
 from btc5m.strategy import _quote, _safety_reason, _skip, fee_for
 from btc5m.streams import PublicStreams, PublicTrade
 
@@ -161,6 +162,7 @@ class Replay:
             # replay connection uses nested contexts; baseline/live ledgers are unchanged.
             self.ledger.db.close()
             self.ledger.db = sqlite3.connect(path, timeout=5, factory=NestedConnection)
+            register_event_reader(self.ledger.db)
             # This journal is a reproducible cache of a FULL-synchronized input tape.
             # NORMAL preserves transaction atomicity; a power loss may discard a suffix
             # of cache frames, whose surviving cursor then replays them from the tape.

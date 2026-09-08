@@ -62,10 +62,20 @@ write-ahead log); use SQLite backup, and include WAL/SHM when reporting current 
   Legacy hot payload bytes are unavailable rather than triggering a multi-gigabyte scan.
 - `verify_storage(path)`: full SQLite integrity, chunk digest, reference/counter and ordered-event
   verification. This is an explicit offline-style scan, not a dashboard polling operation.
-- `compact_copy(source, destination, before_ms=...)`: creates a new file using SQLite backup,
+- `compact_copy(source, destination, before_ms=..., guarded=False)`: creates a new file using SQLite backup,
   compacts it, rebuilds its file and verifies identical event count, IDs and ordered digest. A
   pre-existing destination is rejected. An interrupted copy is left for inspection, never selected
   as the active database automatically.
+- `protect_source(path)`: explicitly installs append-only guards on a legacy paper source. The
+  optional `guarded=True` copy argument installs these before taking its snapshot. This is a small
+  source schema change; it does not rewrite its data. Already compact sources use strict sync.
+- `prepare_guarded_sync(source, destination)`: enter this context manager while collection
+  continues. It verifies the entire destination and holds its owner/maintenance locks and SQLite
+  write transaction. Stop the source writer only after it yields, then call the returned object's
+  `sync()`. That final step checks source identity and exact guard definitions, verifies the appended
+  tail and copies/checks current non-event tables. It does not rescan the old prefix while collection
+  is stopped. A failed or interrupted context releases its locks and rolls back uncommitted changes;
+  retry from a fresh preflight. Stage many journals in manageable groups per owning service.
 - `sync_compact_copy(source, destination)`: requires the original and destination writer locks,
   checks filesystem/wallet identity and both copies' exact original event prefix, appends the final
   event tail, and copies the current non-event tables transactionally. It performs full verification
@@ -81,3 +91,18 @@ The caller must verify session, accounting and study identities, preserve the or
 verification succeeds, and record the resulting collection gap. This module neither restarts
 services nor removes the original. Operational text logs require a separate bounded rotation policy;
 they must not become an excuse to delete unique source or experiment evidence.
+
+Guarded preparation creates four specifically named `btc5m_event_guard_*` triggers on the source.
+They prohibit updates, deletes, replacements and insertion into earlier event IDs while permitting
+ordinary appends. The extra insert checks cover SQLite's `REPLACE` behavior and its automatic row-ID
+allocation. Installation is atomic and idempotent. Definitions and their version are recorded in the
+copy manifest and checked again under the stopped source's writer lock. Missing or altered guards
+are errors, never permission to assume the old prefix is unchanged. These guards enforce ordinary
+SQLite writes; they are not protection against a privileged operator deliberately bypassing SQLite
+or modifying the database file. Keep periodic independent archive integrity checks and backups.
+
+Only the exact named guards are removed from the independent copy before payload rotation. The
+original source retains them. Guarded preparation leaves no write-prohibiting guards on the activated
+compact database. Existing callers that do not opt in continue using strict full-prefix verification.
+All successful sync results include an ordered-event digest; guarded results identify the verification
+mode as `guarded-prefix-and-tail` so the online preflight is explicit in deployment evidence.

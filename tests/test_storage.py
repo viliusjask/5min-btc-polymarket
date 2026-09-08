@@ -367,3 +367,169 @@ def test_unknown_compact_version_open_failure_releases_connection_and_writer_loc
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     finally:
         os.close(fd)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE events SET data='{}' WHERE id=1",
+        "DELETE FROM events WHERE id=1",
+        "INSERT OR REPLACE INTO events VALUES (19,'DECISION',2000,'{}')",
+        "INSERT INTO events VALUES (-1,'DECISION',2000,'{}')",
+        "INSERT INTO events VALUES (0,'DECISION',2000,'{}')",
+    ],
+)
+def test_source_guards_reject_mutation_and_replacement_but_allow_append(tmp_path, statement):
+    from btc5m.storage import protect_source
+
+    ledger = populated(tmp_path)
+    original = ledger.db.execute("SELECT * FROM events ORDER BY id").fetchall()
+    protect_source(ledger.path)
+    with pytest.raises(sqlite3.IntegrityError, match="EVENT_HISTORY_IMMUTABLE"):
+        with ledger.db:
+            ledger.db.execute(statement)
+    assert ledger.db.execute("SELECT * FROM events ORDER BY id").fetchall() == original
+    with ledger.db:
+        ledger.db.execute("INSERT INTO events(kind,at_ms,data) VALUES ('DECISION',2000,'{}')")
+    assert ledger.db.execute("SELECT MAX(id) FROM events").fetchone()[0] == 20
+    ledger.close()
+
+
+def test_source_guards_reject_inserting_an_old_hole_and_are_idempotent(tmp_path):
+    from btc5m.storage import protect_source
+
+    ledger = populated(tmp_path)
+    with ledger.db:
+        ledger.db.execute("DELETE FROM events WHERE id=10")
+    assert protect_source(ledger.path) == protect_source(ledger.path)
+    with pytest.raises(sqlite3.IntegrityError, match="EVENT_HISTORY_IMMUTABLE"):
+        with ledger.db:
+            ledger.db.execute("INSERT INTO events VALUES (10,'DECISION',2000,'{}')")
+    ledger.close()
+
+
+def test_guarded_preflight_then_short_sync_keeps_tail_and_non_event_changes(tmp_path):
+    from btc5m.storage import compact_copy, prepare_guarded_sync, verify_storage
+
+    ledger = populated(tmp_path)
+    source, target = ledger.path, tmp_path / "compact.sqlite"
+    compact_copy(source, target, before_ms=2000, guarded=True)
+    with prepare_guarded_sync(source, target) as prepared:
+        # A destination cannot change between its online verification and final synchronization.
+        with sqlite3.connect(target, timeout=0) as other:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                other.execute("UPDATE event_records SET at_ms=0 WHERE id=1")
+        with ledger.db:
+            ledger.db.execute("INSERT INTO events(kind,at_ms,data) VALUES ('DECISION',3000,'{}')")
+            ledger.db.execute("INSERT INTO measurements VALUES ('latest','{\"value\":2}')")
+        expected = ledger.db.execute("SELECT * FROM events ORDER BY id").fetchall()
+        ledger.close()
+        result = prepared.sync()
+        assert result["appended_events"] == 1
+        assert result["verification_mode"] == "guarded-prefix-and-tail"
+    reader = Ledger(target, WALLET, readonly=True)
+    try:
+        assert reader.db.execute("SELECT * FROM events ORDER BY id").fetchall() == expected
+        assert reader.db.execute("SELECT * FROM measurements").fetchall() == [
+            ("latest", '{"value":2}')
+        ]
+        assert not reader.db.execute(
+            "SELECT name FROM sqlite_master WHERE name LIKE 'btc5m_event_guard_%'"
+        ).fetchall()
+    finally:
+        reader.close()
+    assert verify_storage(target)["event_sha256"] == result["event_sha256"]
+
+
+@pytest.mark.parametrize("replace_guard", [False, True])
+def test_guarded_sync_rejects_removed_or_tampered_guard_after_preflight(tmp_path, replace_guard):
+    from btc5m.storage import StorageError, compact_copy, prepare_guarded_sync
+
+    ledger = populated(tmp_path)
+    source, target = ledger.path, tmp_path / "compact.sqlite"
+    compact_copy(source, target, before_ms=2000, guarded=True)
+    with prepare_guarded_sync(source, target) as prepared:
+        with ledger.db:
+            ledger.db.execute("DROP TRIGGER btc5m_event_guard_update")
+            if replace_guard:
+                ledger.db.execute(
+                    "CREATE TRIGGER btc5m_event_guard_update BEFORE UPDATE ON events BEGIN SELECT 1; END"
+                )
+        ledger.close()
+        with pytest.raises(StorageError, match="GUARD"):
+            prepared.sync()
+
+
+def test_guarded_sync_abort_and_retry_keeps_copy_readable(tmp_path):
+    from btc5m.storage import compact_copy, prepare_guarded_sync, verify_storage
+
+    ledger = populated(tmp_path)
+    source, target = ledger.path, tmp_path / "compact.sqlite"
+    before = compact_copy(source, target, before_ms=2000, guarded=True)
+    with pytest.raises(RuntimeError, match="operator interrupted"):
+        with prepare_guarded_sync(source, target):
+            raise RuntimeError("operator interrupted")
+    assert verify_storage(target)["event_sha256"] == before["event_sha256"]
+    ledger.close()
+    with prepare_guarded_sync(source, target) as prepared:
+        assert prepared.sync()["appended_events"] == 0
+
+
+def test_guarded_preflight_rejects_corrupt_destination_before_writer_stops(tmp_path):
+    from btc5m.storage import StorageError, compact_copy, prepare_guarded_sync
+
+    ledger = populated(tmp_path)
+    source, target = ledger.path, tmp_path / "compact.sqlite"
+    compact_copy(source, target, before_ms=2000, guarded=True)
+    with sqlite3.connect(target) as db:
+        db.execute("UPDATE event_records SET at_ms=0 WHERE id=1")
+    with pytest.raises(StorageError, match="ARCHIVE"):
+        with prepare_guarded_sync(source, target):
+            pytest.fail("corrupt copy was offered for synchronization")
+    # Failed preflight does not stop or lock the original collector.
+    with ledger.db:
+        ledger.db.execute("INSERT INTO events(kind,at_ms,data) VALUES ('DECISION',3000,'{}')")
+    ledger.close()
+
+
+def test_guarded_sync_does_not_rescan_old_events_while_writer_is_stopped(tmp_path, monkeypatch):
+    from btc5m import storage
+
+    ledger = populated(tmp_path, count=10000)
+    source, target = ledger.path, tmp_path / "compact.sqlite"
+    storage.compact_copy(source, target, before_ms=20000, guarded=True)
+    with storage.prepare_guarded_sync(source, target) as prepared:
+        ledger.close()
+        real_open = storage._open
+
+        def bounded(path, **kwargs):
+            db = real_open(path, **kwargs)
+            db.set_progress_handler(lambda: 1, 20000)
+            return db
+
+        monkeypatch.setattr(storage, "_open", bounded)
+        prepared.copied.set_progress_handler(lambda: 1, 20000)
+        assert prepared.sync()["appended_events"] == 0
+
+
+def test_guarded_sync_rolls_back_failed_tail_and_retries_from_new_preflight(tmp_path):
+    from btc5m.storage import compact_copy, prepare_guarded_sync, verify_storage
+
+    ledger = populated(tmp_path)
+    source, target = ledger.path, tmp_path / "compact.sqlite"
+    original = compact_copy(source, target, before_ms=2000, guarded=True)
+    with ledger.db:
+        ledger.db.execute("INSERT INTO events(kind,at_ms,data) VALUES ('DECISION',3000,'{}')")
+    ledger.close()
+    with sqlite3.connect(target) as db:
+        db.execute(
+            "CREATE TRIGGER test_deny_tail BEFORE INSERT ON event_records BEGIN SELECT RAISE(ABORT,'injected tail failure'); END"
+        )
+    with prepare_guarded_sync(source, target) as prepared:
+        with pytest.raises(sqlite3.IntegrityError, match="injected tail failure"):
+            prepared.sync()
+    assert verify_storage(target)["event_sha256"] == original["event_sha256"]
+    with sqlite3.connect(target) as db:
+        db.execute("DROP TRIGGER test_deny_tail")
+    with prepare_guarded_sync(source, target) as prepared:
+        assert prepared.sync()["appended_events"] == 1

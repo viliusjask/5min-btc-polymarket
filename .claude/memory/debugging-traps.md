@@ -355,3 +355,21 @@ quality. The collector could append during that work, so a valid new capture com
 the older clock appeared stale. Sample the comparison clock after the data read. A controlled
 clock test should cover both a concurrent current capture and a genuinely future timestamp;
 never solve this race by removing future-timestamp rejection or refreshing source timestamps.
+
+## 2026-09-08: Closed order history kept consuming collector time
+
+After fixing measurement expiry, the collector still performed large logical reads during
+idle steps. `unresolved_orders` and daily-entry counting scanned all historical intent JSON.
+A partial index alone did not fix it: without planner statistics, `ORDER BY rowid` still led
+SQLite to prefer the full table. Test the query under an instruction budget with unanalyzed
+indexes and realistic closed history. Explicit index selection must retain insertion order,
+UTC-day boundaries, positive-fill Decimal handling and legacy read-only compatibility.
+
+## 2026-09-08: Archival provider fields must not masquerade as local receipts
+
+A malformed provider timestamp object could contain `received_ms`. Copying it into an archive
+envelope caused recursive local-clock validation to terminate persistence even though normal
+book validation correctly rejected the source message. Keep normalized envelope timestamps
+integer/null and original provider fields inside the raw payload. A serializer failure must
+also produce an explicit dropped-sequence record; incrementing a sequence then raising creates
+an unexplained hole. Test rejected input through archive drain and tape commit, not only ingest.

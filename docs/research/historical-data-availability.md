@@ -46,3 +46,18 @@ process failure; uncommitted message buffers and disk failure require separate t
 No external historical dataset was imported, no paid source was enabled and no credentials
 were requested during this check. Backfills should be separate attributed inputs with
 coverage checks, never inserted into older frames as though originally observed locally.
+
+## Why a year of prices is not a year of equivalent strategy tests
+
+The official [February 12, 2026 five-minute market](https://polymarket.com/event/btc-updown-5m-1770897300)
+identifies `https://data.chain.link/streams/btc-usd` as its settlement source, while the
+sampled September market identifies the TWAP60 stream. This confirms that historical rule
+differences are real, not merely hypothetical. We have not established the first launch date
+or the exact transition date. Older markets require their own verified rules, inputs and
+fee interpretation; running today's TWAP-dependent model on substituted spot prices would
+test a changed strategy rather than faithfully reconstruct its current behavior.
+
+PMXT's documented v2 starting date supplies a possible several-month book archive, not a
+verified full year or proof that every BTC token and necessary oracle input is covered. Its
+CC BY 4.0 terms require attribution. Evaluate one bounded market interval before considering
+a bulk import; never treat missing exporter hours or timestamps as complete observations.

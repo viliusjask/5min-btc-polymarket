@@ -149,16 +149,19 @@ def test_unchanged_results_reuse_round_reads_and_detail_is_readonly(tmp_path, st
         reader.detail("directional:../../secrets:bad", "all")
 
 
-def test_browser_http_is_paper_only_and_validates_queries(tmp_path):
-    from btc5m.dashboard import make_server
+def test_browser_http_is_paper_only_and_validates_queries(tmp_path, monkeypatch):
+    from test_dashboard import runtime
+
+    from btc5m.config import Config
+    from btc5m.dashboard import DashboardReader, make_server
 
     class NoAccount:
         def snapshot(self):
             pytest.fail("Paper list called the real account")
 
-    server = make_server(
-        SimpleNamespace(path=tmp_path, snapshot=paper_snapshot), port=0, live=NoAccount()
-    )
+    reader = DashboardReader(runtime(tmp_path, monkeypatch), Config())
+    monkeypatch.setattr(reader, "snapshot", paper_snapshot)
+    server = make_server(reader, port=0, live=NoAccount())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"
@@ -182,6 +185,7 @@ def test_browser_http_is_paper_only_and_validates_queries(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(2)
+    assert reader._worker is not None and not reader._worker.is_alive()
 
 
 def test_fresh_prices_do_not_hide_missing_usable_snapshot(tmp_path, monkeypatch):
@@ -213,6 +217,32 @@ def test_fresh_prices_do_not_hide_missing_usable_snapshot(tmp_path, monkeypatch)
     ]
     assert capture["data_status"] == "unavailable"
     assert capture["latest"]["code"] == "METADATA_CACHE_EXPIRED"
+
+
+@pytest.mark.parametrize("future_ms, expected", [(0, "recent"), (1000, "stale")])
+def test_quality_freshness_uses_time_after_concurrent_capture_read(
+    tmp_path, monkeypatch, future_ms, expected
+):
+    import btc5m.experiment_browser as browser
+
+    clock = [1800000000.0]
+    monkeypatch.setattr(browser.time, "time", lambda: clock[0])
+
+    def advancing_quality(_path):
+        # A collector can append while the catalog is reading study statistics.
+        clock[0] += 1
+        return {
+            "status": "available",
+            "last_ms": int(clock[0] * 1000) + future_ms,
+            "latest": {"code": "CAPTURED"},
+            "current_unavailable_since_ms": None,
+        }
+
+    monkeypatch.setattr(browser, "read_quality", advancing_quality)
+    reader = browser.ExperimentBrowser(SimpleNamespace(path=tmp_path, snapshot=paper_snapshot))
+    result = reader.snapshot()
+    assert result["capture"]["data_status"] == expected
+    assert result["generated_ms"] == int(clock[0] * 1000)
 
 
 def test_journal_advancing_past_report_does_not_mix_financial_generations(

@@ -321,7 +321,6 @@ class ExperimentBrowser:
                 paper = self.paper.snapshot()
             except READ_ERRORS:
                 errors.append({"source": "paper", "error": "PAPER_UNAVAILABLE"})
-            now = int(time.time() * 1000)
             manifest = paper.get("manifest", {})
             entries = []
             for name in manifest.get("strategies", STRATEGIES):
@@ -452,6 +451,10 @@ class ExperimentBrowser:
             ]
             input_ms = min(feed_times) if feed_times else None
             collector = paper.get("collector", {})
+            quality = read_quality(self.path / "capture.sqlite")
+            # Capture can advance during the study/journal reads above. Compare
+            # its timestamp with the clock after reading it, not the request start.
+            now = int(time.time() * 1000)
             data_status = (
                 "loading"
                 if collector.get("caught_up") is False
@@ -461,7 +464,6 @@ class ExperimentBrowser:
                 if not 0 <= now - input_ms <= 15000
                 else "recent"
             )
-            quality = read_quality(self.path / "capture.sqlite")
             if quality.get("status") == "available":
                 input_ms = quality.get("last_ms")
                 data_status = (

@@ -15,6 +15,15 @@ from btc5m.config import Config
 from btc5m.ledger import Ledger
 
 
+def test_tape_failures_keep_safe_reason_without_printing_untrusted_payload():
+    from btc5m.lab_tape import TapeError
+
+    assert cli.safe_reason(TapeError("TAPE_FUTURE_RECEIPT")) == "TAPE_FUTURE_RECEIPT"
+    assert (
+        cli.safe_reason(TapeError("invalid record: arbitrary text")) == "OPERATION_FAILED_TAPEERROR"
+    )
+
+
 def test_storage_cli_reads_and_prepares_without_loading_credentials(tmp_path, monkeypatch, capsys):
     import json
 

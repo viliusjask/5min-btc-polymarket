@@ -373,3 +373,13 @@ book validation correctly rejected the source message. Keep normalized envelope 
 integer/null and original provider fields inside the raw payload. A serializer failure must
 also produce an explicit dropped-sequence record; incrementing a sequence then raising creates
 an unexplained hole. Test rejected input through archive drain and tape commit, not only ingest.
+
+## 2026-09-08: Forecast gaps are not necessarily execution gaps
+
+Directional historical Replay omitted the independently recorded PublicStreams books, and
+treated every rejected forecast snapshot as a broker observation gap. A fresh stop quote
+could therefore be ignored, or its acknowledged sale cancelled on the following frame.
+Use the separately recorded, fresh execution book while continuing to block new forecast
+entries. Missing frame/stream continuity still invalidates execution. Regression evidence
+must include a completed SELL after restart, not merely a STOP intent. Preserve old study
+identities and uncertainty flags; compare the corrected implementation in a new study.

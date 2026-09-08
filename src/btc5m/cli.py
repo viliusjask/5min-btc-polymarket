@@ -29,6 +29,7 @@ from btc5m.credentials import CredentialError
 from btc5m.domain import Snapshot
 from btc5m.engine import Engine
 from btc5m.execution_types import SnapshotInput
+from btc5m.lab_tape import TapeError
 from btc5m.ledger import Ledger, LedgerError, normalize_wallet, runtime_path
 from btc5m.market_data import ANCHOR_TOLERANCE, DataUnavailable, MarketData
 from btc5m.rpc import ReadOnlyRPC, RPCError
@@ -164,7 +165,8 @@ def safe_reason(exc: BaseException) -> str:
         | LedgerError
         | RPCError
         | DataUnavailable
-        | StorageError,
+        | StorageError
+        | TapeError,
     ):
         code = str(exc)
         if re.fullmatch(r"[A-Z][A-Z0-9_]{0,100}", code):

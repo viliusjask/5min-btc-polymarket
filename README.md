@@ -122,6 +122,11 @@ counters and accounting remain cumulative. Account-wide lifetime returns are not
 
 ## The six policies
 
+Saved public data can be reused for [historical backtests](docs/historical-replay.md), including
+all six current policies and selected research variants. Historical results are separate from
+ongoing accounts. [Archive coverage](docs/research/archive-capture.md) includes its gaps and
+recording limits; no external year-long dataset has been imported.
+
 | # | CLI strategy | What changes |
 | --- | --- | --- |
 | 1 | `momentum` | Recent 30-second BTC continuation, scaled by five-minute variation, with entry band and hard exits. |

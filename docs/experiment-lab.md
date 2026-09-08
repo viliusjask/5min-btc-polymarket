@@ -112,6 +112,12 @@ systemctl --user restart btc5m-lab.service
 
 ## Persistence and operating limits
 
+For selected historical dates and variants, use the separate
+[historical replay workflow](historical-replay.md). The
+[public archive description](research/archive-capture.md) identifies the additional events
+retained prospectively, and the [availability research](research/historical-data-availability.md)
+explains which older external sources exist and why a price chart alone cannot replay fills.
+
 `capture.sqlite` stores exact public source/receipt times, books, price histories and as-received
 official labels. Shared ticks are deduplicated. Frames are compressed and checksummed. SQLite
 WAL/FULL commits retain completed input transactions; checksums detect frame damage, not malicious

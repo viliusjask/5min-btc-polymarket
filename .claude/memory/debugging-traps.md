@@ -326,3 +326,14 @@ when deploying collector/dashboard diagnostics.
   documented atomic venue contract. Use the pinned SDK's authoritative grid and prove the
   narrow supported coarse-to-fine compatibility mathematically; never waive token/fee/size
   checks. Verify through the real ledger filter so new diagnostic fields are not silently lost.
+
+## 2026-09-08: Recovery insertion order evicted a still-active round
+
+`ROUND_STATE_MISSING` with two-second-old valid metadata came from an explicit
+`reference_retired` event for the active round. Rotating old tape recovery slots
+can insert historical rounds after the current round; a count-limited cache
+cannot treat dictionary insertion order as chronological age. Inspect retirement
+events before blaming discovery and exercise restoration out of time order.
+Retire oldest market times first while preserving retained slots and the existing
+bound. Keep current reference conflicts too: deleting and rediscovering their
+state can erase a contradiction even when subsequent snapshots look healthy.

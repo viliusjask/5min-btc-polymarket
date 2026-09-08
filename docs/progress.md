@@ -744,3 +744,20 @@ The code-only service cutover retained seven account sessions/financial prefixes
 pinned studies; usable production capture resumed. Details and precise limits are in
 `docs/research/unified-integration-review.md`. The user's subsequent archive/history request
 is being implemented in separate feature worktrees so this running source stays stable.
+
+### Historical archive and replay acceptance, September 8
+
+Independent workers implemented source capture, bounded historical intent reads and finite
+selected-date replay; root reviewed and integrated them, then a separate agent reviewed the
+combined implementation. Source `2342405` passed 776 tests; the final metadata-only symlink
+correction passed 59 focused tests and all static/lock gates at `b225bed`.
+
+An anonymous capture retained 30,747 public events, including 1,962 without an eligible trading
+snapshot. Both actual old readers consumed the new frames. Two all-six historical replays
+completed and resumed at their frozen boundaries; the longer sample exercised fills/closures
+in five strategies, but all completed rounds were flagged and cannot support profit claims.
+
+The collector/dashboard now run continuously from `.worktrees/historical-archive`. Both pinned
+lab workers, seven account sessions and all prior financial prefixes were retained. The new
+archive session and public events were verified in the persistent runtime; no funded action or
+external historical import occurred. See [the detailed acceptance evidence](research/historical-integration-review.md).

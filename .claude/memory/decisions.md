@@ -101,3 +101,12 @@
   floor remains a sensitivity scenario. Existing USD5 entry and USD10 loss guards are retained.
   Raw results and uncertain exclusions remain visible; variant profits cannot be added together.
   Collector/dashboard/lab now use `.worktrees/experiment-lab`; PR8 is for the user to merge.
+
+- 2026-09-08: Public historical archiving extends the existing paper collector and tape, not a
+  duplicate service. New event/session fields are additive; old studies keep their pinned
+  readers and historical flags. Historical runs select a fixed entry range and source frame
+  boundary in new study directories. They remain exploratory, process later recorded exits
+  and labels, and disclose unresolved/claimable exposure. Current collector/dashboard location
+  is `.worktrees/historical-archive`; existing runtime/configuration/financial sessions remain.
+  The initial 4.27 GiB was locally collected history over about 25–32 hours, not a downloaded
+  archive. External book history and older rule differences require separate coverage research.

@@ -7,8 +7,8 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Collector and dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/unified-research`
-  (`feat/unified-research`; the unified monitoring follow-up to PR13).
+- Collector and dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/historical-archive`
+  (`feat/historical-archive`; unified monitoring plus persistent public archive/replay).
 - The original registered lab remains on `.worktrees/experiment-lab`; the 17-variant
   order-flow study remains on `.worktrees/order-flow`. Keep these three active checkouts.
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
@@ -190,7 +190,7 @@ fresh inputs recover. [Full verification and limits](progress.md).
 
 ## Unified monitoring and history-scan repair, September 8
 
-Collector/dashboard now use the `unified-research` checkout. Paper opens one sortable,
+The earlier deployment used the `unified-research` checkout. Paper opens one sortable,
 filterable catalog containing the original six wallets and both suites, with separate rows
 for later phases. Each row opens detailed results; comparison curves show independent
 experiments, never a fictitious combined wallet. Paper/Real remains a display-only switch.
@@ -203,3 +203,19 @@ was 68.069 seconds. That missing interval remains recorded. No balances, loss bu
 historical flags were reset. Independent integration passed 734 tests; the exact source,
 browser checks and finite collector evidence are recorded in
 [the integration review](research/unified-integration-review.md).
+
+## Public archive and historical replay, September 8
+
+At 09:42 UTC, collector/dashboard moved to `historical-archive`, source `b225bed`. The
+existing paper process automatically records independent oracle updates, intermediate public
+book/trade messages and market-rule provenance in its existing tape. The two old study workers
+remain on their registered implementations and continue reading the compatible extended tape.
+All seven sessions, financial row prefixes, configurations and study registrations were verified
+preserved. The restart produced a recorded 62.050-second adjacent-frame gap; it was not filled in.
+
+[Historical replay commands](historical-replay.md) select dates and variants into separate
+result directories, with a frozen source boundary. [Archive capture](research/archive-capture.md)
+documents scope, uncommitted-tail limits and explicit gaps; the
+[combined review](research/historical-integration-review.md) records tests and actual deployment
+checks. Committed source data is retained without automatic deletion. Historical availability
+does not imply that a full year of the exact current market rules and execution inputs exists.

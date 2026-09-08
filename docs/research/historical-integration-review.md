@@ -63,3 +63,60 @@ No remaining confirmed release-blocking issue was found in the reviewed scope.
 Actual-source replay, collector throughput and service-cutover evidence belong to the
 parent task. Synthetic execution checks do not establish a profitable trading strategy,
 full historical market coverage or lossless capture during sleep/disconnection.
+
+## Root acceptance and preserved deployment
+
+The parent independently reviewed the worker changes before this combined review and
+fast-forwarded its feature branch to final source `b225bed`. No funded endpoint, credential
+file, external historical import, cash reset or historical uncertainty rewrite was used.
+
+An anonymous 75-second paper command into a new scratch directory exited successfully and
+flushed its last archive frame. The captured receipt span was 78.352 seconds: 95 frames,
+30,747 additional public events, and 1,962 events retained during seven unavailable-snapshot
+frames. Spot/TWAP, Binance aggregate trades, Polymarket messages and public metadata were
+present; local sequences were contiguous, receipts were causal and no buffer overflow occurred.
+Both actual pinned readers (`experiment-lab` and `order-flow`) decoded all 95 real frames
+with the same identity, 88 valid snapshots and unchanged reason counts.
+
+Two actual-source original-six replays used six $100 wallets and the current
+`paper-strategy-policy.toml`, on source `2342405`:
+
+| Selected UTC entry interval, September 8 | Frozen source cap | Frames processed including warmup/later exits | Result |
+| --- | ---: | ---: | --- |
+| 09:00–09:10 | 102889 | 4,422 | 26 orders, no fills; all six finished without unresolved exposure. |
+| 08:35–09:25 | 103222 | 6,602 | Five policies exercised fills/closures; Fast value had no entry. All completed rounds were flagged, so this is execution-path validation, not reliable profit evidence. |
+
+Both studies resumed with zero new frames despite the source growing, retained their exact
+registered manifest and phase results, and produced no automatic holdout. Every BUY order
+timestamp stayed inside its entry interval. The final symlink correction changes metadata
+path resolution only; its actual-source check counted the resolved source's database, WAL
+and SHM correctly. Archive inspection itself took 0.44 ms in a warm read of the roughly 1 GiB
+tape, without decoding payloads. This is a measured example, not a cold-start guarantee.
+The stricter implementation identity still requires a new study after a code change.
+
+At **09:42 UTC September 8**, collector/dashboard switched from `unified-research` to
+`historical-archive`. Shutdown/start took 61.747 seconds. Source identity
+`580e84ec4d184c35859a3c53e3c8413f`, seven session IDs and all prior fill/accounting prefixes
+were verified retained. Both configuration files, both study manifests, both pinned units
+and worker PIDs 3802676/3850281 were unchanged. Only collector/dashboard checkout paths changed;
+the collector retained `--continuous --capture-flow`. Source frames 103669→103670 have a
+**62.050-second** receipt gap, which remains recorded rather than repaired.
+
+New service PIDs were collector 884297 and dashboard 884298. In the first 70 checked frames,
+60 were eligible and 19,844 additional events were retained with contiguous local sequences,
+no overflow and matching producer source hashes. Four services were active. The two five-second
+collector samples were 23.4%→12.2% CPU and 870,922,064→312,509 logical bytes read. The workload
+and moment differed; the controlled scaling benchmark establishes the specific removed scan,
+while these samples show the deployed effect rather than guaranteeing a permanent rate.
+
+Actual Chrome checks at port 8765 passed all 108 unique rows, numeric sorts, filters,
+original/study detail, cohort views and 390-pixel containment, with zero JavaScript errors
+and zero requests to the Real account endpoint. Background history loading caught up past
+2.49 million observations. A transient stale spot input during browser QA remained correctly
+shown as unavailable; this deployment does not eliminate external feed delays.
+
+Ignored evidence is in `work/archive-integration/` (capture and historical reports, resume
+checks and source-status measurements), `work/deployment/` (unit verification, financial
+prefix hashes, pinned files, cutover and live checks), and the previously established
+`unified-research/work/unified-research/` browser check outputs. No temporary test process
+owns the ongoing paper run; the systemd services do.

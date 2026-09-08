@@ -1,3 +1,25 @@
+# Progress: discovery timeout recovery
+
+2026-09-08. `fix/discovery-recovery`, isolated `.worktrees/discovery-recovery`, base `8d12573`.
+
+- Traced repeated outer HTTP timeouts to a reproducible event-loop starvation mechanism:
+  every public observation reread and decoded all historical measurement payloads. The
+  current anonymous master held 1,026 rows / 10.57 MB and no due calibration work.
+- Added an internal index for pending calibration deadlines and queried only overdue rows.
+  Existing journal initialization installs it; calibration windows, transaction semantics,
+  historical records and all HTTP/account behavior remain unchanged.
+- A deterministic failing regression caught the historical scan. Tests cover migration,
+  thousands of completed/future rows, exact deadlines, observed/missing transitions and
+  rollback/restart. The same scratch observation burst changed from a five-second HTTP
+  timeout to a successful response; expiry lookup median fell from 47.55 ms to 0.00274 ms.
+- [Diagnosis, exact evidence and limits](research/discovery-recovery.md). No production
+  write or service restart; combined review and live recovery verification remain with root.
+
+Worker validation: **716 tests passed in 195.53 seconds**, including 195 focused ledger,
+engine and market-data cases. Ruff lint/format, mypy (33 sources), locked dependencies,
+CLI help and whitespace checks passed. Root reviewed the implementation and regressions
+with no findings before the independent integration review.
+
 # Progress: metadata refresh and book recovery
 
 2026-09-08 (Kyiv). `fix/metadata-refresh`, isolated `.worktrees/metadata-refresh`,

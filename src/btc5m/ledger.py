@@ -161,6 +161,10 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS accounting (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, day TEXT NOT NULL, cash TEXT NOT NULL, pnl TEXT NOT NULL, fee TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, at_ms INTEGER NOT NULL, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS measurements (key TEXT PRIMARY KEY, data TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS pending_calibration_clock
+                    ON measurements(json_extract(data,'$.target_ms'))
+                    WHERE json_extract(data,'$.kind')='calibration'
+                        AND json_extract(data,'$.status')='pending';
             """)
             prior = self._meta("wallet")
             if prior and prior != self.wallet:
@@ -1096,18 +1100,20 @@ class Ledger:
     def record_clock(self, now_ms: int) -> None:
         self._write()
         with self.db:
-            for key, raw in self.db.execute("SELECT key,data FROM measurements").fetchall():
+            # Every public tick reaches this path. Completed depth/decision payloads
+            # must not be reread or decoded; the partial index retains only pending
+            # calibration deadlines and removes them transactionally on status change.
+            for key, raw in self.db.execute(
+                "SELECT key,data FROM measurements "
+                "WHERE json_extract(data,'$.kind')='calibration' "
+                "AND json_extract(data,'$.status')='pending' "
+                "AND json_extract(data,'$.target_ms')<?",
+                (now_ms - 2000,),
+            ).fetchall():
                 data = json.loads(raw)
-                if (
-                    data.get("kind") == "calibration"
-                    and data.get("status") == "pending"
-                    and now_ms > data["target_ms"] + 2000
-                ):
-                    data["status"] = "missing"
-                    data["missing_recorded_ms"] = now_ms
-                    self.db.execute(
-                        "UPDATE measurements SET data=? WHERE key=?", (_json(data), key)
-                    )
+                data["status"] = "missing"
+                data["missing_recorded_ms"] = now_ms
+                self.db.execute("UPDATE measurements SET data=? WHERE key=?", (_json(data), key))
 
     def record_snapshot(
         self, snapshot: Snapshot, config: Config, *, modes: tuple[str, ...] = ("value", "momentum")

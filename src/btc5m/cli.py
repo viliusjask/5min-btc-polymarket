@@ -16,6 +16,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -177,6 +178,21 @@ def _seconds(value: str) -> float:
     return result
 
 
+def _historical_time(value: str) -> int:
+    try:
+        stamp = datetime.fromisoformat(value)
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            raise ValueError("timezone required")
+        delta = stamp.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+        if delta.microseconds % 1000:
+            raise ValueError("millisecond precision required")
+        return delta.days * 86400000 + delta.seconds * 1000 + delta.microseconds // 1000
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "use timezone-aware ISO8601, e.g. 2026-09-08T06:00:00Z"
+        ) from exc
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="btc5m",
@@ -184,14 +200,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Development-verified BTC5m experiment; funded execution remains unverified.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    archive = commands.add_parser(
+        "archive", allow_abbrev=False, help="read-only bounded saved-history status"
+    )
+    archive.add_argument("archive_action", choices=("status",))
+    archive.add_argument("--source", type=Path, required=True, help="existing capture.sqlite")
     lab = commands.add_parser(
         "lab", allow_abbrev=False, help="paper-only parameter studies on a common recorded tape"
     )
-    lab.add_argument("lab_action", choices=("run", "freeze", "report"))
+    lab.add_argument("lab_action", choices=("run", "freeze", "report", "variants"))
     lab.add_argument(
         "--runtime",
         type=Path,
-        required=True,
         help="separate experiment directory, usually PAPER_RUNTIME/lab",
     )
     lab.add_argument(
@@ -201,7 +221,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     lab.add_argument("--continuous", action="store_true", help="keep consuming new recorded frames")
     lab.add_argument(
         "--suite",
-        choices=("directional", "order-flow"),
+        choices=("directional", "order-flow", "original-six"),
         help="registered experiment suite; order-flow requires --capture-flow on the paper collector",
     )
     lab.add_argument(
@@ -216,7 +236,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="full rounds before automatic shortlist selection (new study default: 288)",
     )
     lab.add_argument(
-        "--variants", help="comma-separated registered IDs to freeze for a future test"
+        "--variants", help="comma-separated registered IDs to run, or freeze for a future test"
+    )
+    lab.add_argument(
+        "--start",
+        type=_historical_time,
+        help="historical entry start, inclusive, timezone-aware ISO8601",
+    )
+    lab.add_argument(
+        "--end",
+        type=_historical_time,
+        help="historical entry end, exclusive, timezone-aware ISO8601",
     )
     lab.add_argument("--test-rounds", type=int, default=288)
     credentials = commands.add_parser(
@@ -338,10 +368,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             )
     args = parser.parse_args(argv)
     if args.command == "lab":
+        if args.lab_action != "variants" and args.runtime is None:
+            parser.error("lab run/freeze/report requires --runtime")
         if args.lab_action == "run" and args.source is None:
             parser.error("lab run requires --source capture.sqlite")
         if args.lab_action == "freeze" and not args.variants:
             parser.error("lab freeze requires --variants")
+        if (args.start is None) != (args.end is None):
+            parser.error("historical lab run requires both --start and --end")
+        if args.start is not None:
+            if args.lab_action != "run" or args.continuous or args.explore_rounds is not None:
+                parser.error(
+                    "historical bounds require finite lab run without --continuous or --explore-rounds"
+                )
+            if args.start < 0 or args.start >= args.end or args.start % 300000 or args.end % 300000:
+                parser.error("historical bounds must be ordered five-minute boundaries")
     if (
         args.command == "doctor"
         and not args.account
@@ -913,6 +954,11 @@ async def run_live(args: argparse.Namespace, config: Config) -> int:
 
 
 async def async_main(args: argparse.Namespace) -> int:
+    if args.command == "archive":
+        from btc5m.archive import archive_status
+
+        emit(archive_status(args.source))
+        return 0
     if args.command == "lab":
         if args.lab_action == "report":
             emit(json.loads((args.runtime / "report.json").read_text()))

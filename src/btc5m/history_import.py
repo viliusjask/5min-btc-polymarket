@@ -793,6 +793,9 @@ def import_outcometick(
         sources = {k: {**v, "rows": counts[k]} for k, v in sources.items()}
         _write(manifest, {"status": "converting", "identity_hash": identity_hash, **identity})
         with Tape(partial) as tape:
+            # This is an unpublished, reproducible derivative of immutable sources.
+            # A crash discards the incomplete run; source/live tapes remain FULL.
+            tape.db.execute("PRAGMA synchronous=NORMAL")
             with tape.db:
                 tape.db.execute(
                     "INSERT INTO meta VALUES (?,?)",
@@ -809,7 +812,14 @@ def import_outcometick(
                     ),
                 )
             summary = _convert(db, tape, metadata, start_ms, end_ms, config, terms, profile)
-            tape.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            tape.db.execute("PRAGMA synchronous=FULL")
+            if tape.db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() != (0, 0, 0):
+                raise ValueError("HISTORY_FINAL_CHECKPOINT_INCOMPLETE")
+        descriptor = os.open(partial, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
         os.link(partial, destination / "capture.sqlite")
         partial.unlink()
         report = {

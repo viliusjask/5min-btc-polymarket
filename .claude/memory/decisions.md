@@ -1,5 +1,12 @@
 # Decisions
 
+- 2026-09-08: The user wants one Paper experiment catalog covering the original six portfolios
+  and all registered study variants, with meaningful sorting/filtering, overlaid individual
+  curves and a detail view per experiment. Separate six-card and experiment landing screens
+  obscure the research purpose. Preserve source/phase/version identity and historical losses.
+  The user explicitly requested independent same-model fix agents, root review, then another
+  integration/review agent; this supersedes the earlier single-agent preference for current work.
+
 - 2026-09-07: User clarified that better monitoring means research tools for conclusions,
   not more operational observability. The previous response narrowed that request too far.
   Add performance distributions, outlier/cost sensitivity, entry-condition breakdowns,

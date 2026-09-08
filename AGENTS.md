@@ -84,6 +84,7 @@ Write meaningful failing tests before high-impact implementation. Fixtures are s
 public, timestamped and attributed. Financial claims distinguish estimates from receipt-confirmed cash.
 Use small verified Conventional Commit checkpoints. Record task/review progress in docs/progress.md.
 
-For the six-strategy implementation the user explicitly selected a single-agent workflow with
-no cross-model reviews, conductor, management ceremony or human development checkpoints. Older
-plan review gates are historical; own code review, relevant tests and feature-branch discipline apply.
+The user authorizes independent same-model agents for distinct fixes, followed by root review
+and a separate integration/review agent. No cross-model reviews, conductor, management ceremony
+or human development checkpoints. Older plan gates and the earlier single-agent preference are
+historical; relevant tests and feature-branch discipline still apply.

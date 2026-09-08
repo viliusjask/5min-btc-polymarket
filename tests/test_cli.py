@@ -15,6 +15,58 @@ from btc5m.config import Config
 from btc5m.ledger import Ledger
 
 
+def test_storage_cli_reads_and_prepares_without_loading_credentials(tmp_path, monkeypatch, capsys):
+    import json
+
+    monkeypatch.setattr(cli, "load_credentials", lambda *a: pytest.fail("credential read"))
+    source, destination = tmp_path / "paper.sqlite", tmp_path / "compact.sqlite"
+    ledger = Ledger(source, cli.ANONYMOUS_WALLET, environment="paper")
+    ledger.close()
+    assert (
+        cli.main(["storage", "prepare", "--source", str(source), "--destination", str(destination)])
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["verified"]
+    assert cli.main(["storage", "status", "--source", str(destination)]) == 0
+    assert json.loads(capsys.readouterr().out)["format"] == "compact-events-v1"
+    assert (
+        cli.main(["storage", "prepare", "--source", str(source), "--destination", str(destination)])
+        == 2
+    )
+    assert "STORAGE_DESTINATION_EXISTS" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--fee-rate", ".07"],
+        ["--binance", "prices.zip"],
+        ["--binance-latency-ms", "100"],
+        ["--resolution-delay-ms", "-1"],
+    ],
+)
+def test_history_cli_rejects_incomplete_execution_assumptions(extra):
+    base = [
+        "history",
+        "import-outcometick",
+        "--markets",
+        "m.gz",
+        "--books",
+        "b.gz",
+        "--spot",
+        "s.gz",
+        "--twap60",
+        "t.gz",
+        "--destination",
+        "new",
+        "--start",
+        "2026-09-04T00:00:00Z",
+        "--end",
+        "2026-09-05T00:00:00Z",
+    ]
+    assert cli.main(base + extra) == 2
+
+
 def test_help_and_missing_execute_never_load_credentials(monkeypatch, capsys):
     def forbidden(*args, **kwargs):
         pytest.fail("credential read attempted")

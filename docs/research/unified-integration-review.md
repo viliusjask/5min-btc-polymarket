@@ -85,3 +85,43 @@ The root agent owns the final integrated browser checks, anonymous multi-round s
 probe, preserved service cutover and PR. This review has not restarted a collector or
 tested funded execution. The historical gaps remain recorded; neither this review nor
 a finite recovery probe establishes profitability or permanent data availability.
+
+## Root acceptance and local service deployment
+
+The final Chrome check against the actual `localhost:8765` service passed: 108 unique
+source/phase rows, numeric sorting, source/search/minimum-completed filters, all/unflagged
+cohorts, original and study details, selected holdout, eight highlighted curves with all
+filtered curves available as context, percentage curves, existing diagnostics/research
+navigation, and a 390-pixel layout without document overflow. JavaScript errors: zero.
+Paper-triggered `/api/live` requests: zero. The follower caught up through 2,380,716 events
+and reported running with a recent valid snapshot at the sampled check.
+
+An isolated anonymous collector used source `8c652f7` and the actual 1,026 public measurement
+rows (10,567,084 bytes), plus the preceding accepted oracle history. The later `ac3d037`
+change affects only dashboard time comparison; collector behavior is unchanged. Requested
+collection was 650 seconds, followed by the normal bounded shutdown period. Across three
+BTC rounds it recorded **797 usable frames out of 876** (91.0%), 492 discovery observations,
+zero recorded snapshot HTTP failures and zero recorder intervals over five seconds.
+There were 79 rejected snapshots, mainly stale/silent oracle inputs; the longest unavailable
+span was 8.729 seconds. This is recovery evidence for that interval, not complete data or
+permanent availability. Two paper strategies recorded fills. The probe returned exit code2
+after the bounded shutdown because paired inventory and a small Momentum remainder still
+awaited official resolution; they remain recorded in its separate scratch runtime. This
+was not a clean-flat exit, and no hypothetical settlement or profit was invented.
+
+The root then changed only the two collector/dashboard checkout paths in the existing
+service definitions. Unit verification used an isolated `XDG_RUNTIME_DIR`. At 08:33 UTC,
+seven session identities and all previous fills/accounting prefixes were verified intact.
+Both configuration files, both study manifests and worker PIDs3802676/3850281 were unchanged.
+The collector/dashboard restarted as PIDs631895/631896 from `unified-research`; the source
+is `ac3d037`, with review documentation at `ebdfae9`. The 68.499-second operation left a
+68.069-second adjacent-frame gap, visibly recorded.
+
+The original collector subsequently produced usable snapshots in successive rounds and
+no snapshot HTTP failure in the sampled post-start interval. Separate five-second CPU
+samples fell from54.8% to18.2% of one core. These are short machine observations; remaining
+history-scaled work is being investigated separately as archival volume grows.
+
+Local ignored evidence: `work/unified-research/{browser-check.json,probe-seed.json,probe-results.json}`
+and `work/deployment/{cutover.json,financial-before.json,postcheck.json,cpu-before.json,cpu-after.json}`.
+All funded operations remain off. Historical warnings and original account loss limits remain.

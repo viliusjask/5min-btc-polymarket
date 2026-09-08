@@ -733,3 +733,14 @@ The browser branch's final validation passed 720 tests, Ruff checks/formatting, 
 locked dependency check under Python 3.12.13. Independent and author Chrome checks both passed;
 the author run showed five experiment rows on the initial 1600×1050 screen, 108 unique phase-aware
 rows, a 30-completed-round filter, later-phase detail, cohort switching and 390-pixel containment.
+
+### Unified monitoring root acceptance, September8
+
+Independent integration source ac3d037 passed734 tests and all existing static/dependency
+gates. Actual Chrome desktop/mobile checks passed against8765 without any Real request.
+The anonymous three-round probe recorded797/876 usable frames with no snapshot HTTP failure,
+but retained short stale-input gaps and unresolved simulated settlement at bounded shutdown.
+The code-only service cutover retained seven account sessions/financial prefixes and both
+pinned studies; usable production capture resumed. Details and precise limits are in
+`docs/research/unified-integration-review.md`. The user's subsequent archive/history request
+is being implemented in separate feature worktrees so this running source stays stable.

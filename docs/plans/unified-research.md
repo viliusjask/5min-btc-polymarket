@@ -34,3 +34,13 @@ Deploy only after the combined tests/review; preserve account session identities
 Base commit: `8d12573` (PR13 remains open as of September 8). Running source is the separate `metadata-refresh` worktree. Current runtime: `/home/vilius/.local/share/btc5m/paper-six-100-each`. Frozen audit: `/home/vilius/projects/5min-btc-polymarket/.worktrees/metadata-refresh/work/results-audit/report.md` and its companion JSON/CSV files. No credentials are needed.
 
 The six-wallet LOSS_LIMIT rule is behaving as implemented; it is a visibility/research-design issue, not authorization to remove budget protection. Likewise, a losing strategy is not by itself a code bug. Keep model-performance findings and future parameter tests in the results explanation instead of changing strategies during these fixes.
+
+## Root acceptance completed
+
+All four changes were independently integrated and reviewed; the catalog clock race found
+during final QA was reproduced and corrected. Source ac3d037 passed734 tests and static gates.
+The actual dashboard passed Chrome desktop/mobile checks; the anonymous public probe covered
+three rounds with797/876 usable frames. The local paper/dashboard cutover preserved existing
+records and pinned studies. Evidence and remaining uncertainty are in
+`docs/research/unified-integration-review.md`. Publication follows as the reviewable PR.
+The subsequent user request for a reusable archive/historical replay is a separate feature.

@@ -24,6 +24,19 @@ MAX_CHUNK_BYTES = 4 * 1024 * 1024
 DEFAULT_HOT_BYTES = 64 * 1024 * 1024
 DEFAULT_HOT_MS = 2 * 60 * 60 * 1000
 VERSION = 1
+SOURCE_GUARDS = {
+    "btc5m_event_guard_update": """CREATE TRIGGER btc5m_event_guard_update
+        BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT,'EVENT_HISTORY_IMMUTABLE'); END""",
+    "btc5m_event_guard_delete": """CREATE TRIGGER btc5m_event_guard_delete
+        BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT,'EVENT_HISTORY_IMMUTABLE'); END""",
+    "btc5m_event_guard_insert": """CREATE TRIGGER btc5m_event_guard_insert
+        BEFORE INSERT ON events WHEN NEW.id!=-1
+            AND NEW.id<=COALESCE((SELECT MAX(id) FROM events),0)
+        BEGIN SELECT RAISE(ABORT,'EVENT_HISTORY_IMMUTABLE'); END""",
+    "btc5m_event_guard_positive": """CREATE TRIGGER btc5m_event_guard_positive
+        AFTER INSERT ON events WHEN NEW.id<=0 OR EXISTS(SELECT 1 FROM events WHERE id>NEW.id)
+        BEGIN SELECT RAISE(ABORT,'EVENT_HISTORY_IMMUTABLE'); END""",
+}
 
 
 class StorageError(ValueError):
@@ -32,6 +45,55 @@ class StorageError(ValueError):
 
 def _encoded(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+
+
+def _guard_manifest(db: sqlite3.Connection) -> dict[str, Any] | None:
+    names = ",".join("?" for _ in SOURCE_GUARDS)
+    actual = dict(
+        db.execute(
+            f"SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ({names})",
+            tuple(SOURCE_GUARDS),
+        )
+    )
+    if not actual:
+        return None
+    if actual != SOURCE_GUARDS:
+        raise StorageError("EVENT_ARCHIVE_SOURCE_GUARD_CHANGED")
+    return {"version": 1, "definitions_sha256": hashlib.sha256(_encoded(SOURCE_GUARDS)).hexdigest()}
+
+
+def protect_source(path: Path) -> dict[str, Any]:
+    """Explicitly enforce append-only events before an online guarded copy.
+
+    This small, atomic schema change is the only optional source mutation.
+    Existing collector inserts keep working. Compacted journals use strict sync.
+    """
+    with _lock(path, ".compact.lock"), closing(_open(path, readonly=False)) as db:
+        _paper(db)
+        if db.execute("SELECT type FROM sqlite_master WHERE name='events'").fetchone() != (
+            "table",
+        ):
+            raise StorageError("EVENT_ARCHIVE_GUARD_REQUIRES_LEGACY_FORMAT")
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            guard = _guard_manifest(db)
+            if guard is None:
+                for sql in SOURCE_GUARDS.values():
+                    db.execute(sql)
+                guard = _guard_manifest(db)
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+    assert guard is not None
+    return guard
+
+
+def _drop_copied_guards(db: sqlite3.Connection) -> None:
+    if _guard_manifest(db) is not None:
+        with db:
+            for name in SOURCE_GUARDS:
+                db.execute(f'DROP TRIGGER "{name}"')
 
 
 def _paper(db: sqlite3.Connection) -> None:
@@ -313,7 +375,7 @@ def storage_status(path: Path) -> dict[str, Any]:
     }
 
 
-def _event_digest(db: sqlite3.Connection, highwater: int | None = None) -> tuple[int, int, str]:
+def _event_hasher(db: sqlite3.Connection, highwater: int | None = None) -> tuple[int, int, Any]:
     digest, count, last = hashlib.sha256(), 0, 0
     query = "SELECT id,kind,at_ms,data FROM events"
     params: tuple[int, ...] = ()
@@ -324,7 +386,47 @@ def _event_digest(db: sqlite3.Connection, highwater: int | None = None) -> tuple
         digest.update(_encoded(row) + b"\n")
         count += 1
         last = row[0]
+    return count, last, digest
+
+
+def _event_digest(db: sqlite3.Connection, highwater: int | None = None) -> tuple[int, int, str]:
+    count, last, digest = _event_hasher(db, highwater)
     return count, last, digest.hexdigest()
+
+
+def _tables(db: sqlite3.Connection) -> set[str]:
+    return {
+        name
+        for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        if name not in {"events", "event_records", "event_chunks", "event_storage"}
+        and not name.startswith("sqlite_")
+    }
+
+
+def _table_digest(db: sqlite3.Connection, quoted: str) -> str:
+    digest = hashlib.sha256()
+    for row in db.execute(f"SELECT * FROM {quoted} ORDER BY rowid"):
+        digest.update(_encoded(row) + b"\n")
+    return digest.hexdigest()
+
+
+def _copy_tables(original: sqlite3.Connection, copied: sqlite3.Connection) -> None:
+    tables = _tables(original)
+    if tables != _tables(copied):
+        raise StorageError("EVENT_ARCHIVE_NON_EVENT_SCHEMA_CHANGED")
+    for name in sorted(tables):
+        quoted = '"' + name.replace('"', '""') + '"'
+        columns = original.execute(f"PRAGMA table_info({quoted})").fetchall()
+        if columns != copied.execute(f"PRAGMA table_info({quoted})").fetchall():
+            raise StorageError("EVENT_ARCHIVE_NON_EVENT_SCHEMA_CHANGED")
+        copied.execute(f"DELETE FROM {quoted}")
+        placeholders = ",".join("?" for _ in columns)
+        copied.executemany(
+            f"INSERT INTO {quoted} VALUES ({placeholders})",
+            original.execute(f"SELECT * FROM {quoted} ORDER BY rowid"),
+        )
+        if _table_digest(original, quoted) != _table_digest(copied, quoted):
+            raise StorageError("EVENT_ARCHIVE_NON_EVENT_COPY_MISMATCH")
 
 
 def verify_storage(path: Path) -> dict[str, Any]:
@@ -405,11 +507,19 @@ def maintain_storage(
     return {**result, "status": storage_status(path)}
 
 
-def compact_copy(source: Path, destination: Path, *, before_ms: int) -> dict[str, Any]:
+def compact_copy(
+    source: Path,
+    destination: Path,
+    *,
+    before_ms: int,
+    guarded: bool = False,
+) -> dict[str, Any]:
     """Create a new compact, fully verified SQLite snapshot; never overwrite the source."""
     source, destination = source.resolve(), destination.resolve()
     if source == destination or destination.exists():
         raise StorageError("STORAGE_DESTINATION_EXISTS")
+    if guarded:
+        protect_source(source)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
@@ -426,6 +536,10 @@ def compact_copy(source: Path, destination: Path, *, before_ms: int) -> dict[str
         copied.execute("PRAGMA journal_mode=DELETE")
         copied.execute("PRAGMA synchronous=FULL")
         count, highwater, digest = _event_digest(copied)
+        source_guard = _guard_manifest(copied)
+        if guarded and source_guard is None:
+            raise StorageError("EVENT_ARCHIVE_SOURCE_GUARD_MISSING")
+        _drop_copied_guards(copied)
         stat = source.stat()
         if (source_stat.st_dev, source_stat.st_ino) != (stat.st_dev, stat.st_ino):
             raise StorageError("EVENT_ARCHIVE_SOURCE_IDENTITY_CHANGED")
@@ -438,6 +552,7 @@ def compact_copy(source: Path, destination: Path, *, before_ms: int) -> dict[str
             "event_sha256": digest,
             "created_ms": time.time_ns() // 1000000,
             "wallet": original.execute("SELECT value FROM meta WHERE key='wallet'").fetchone()[0],
+            "source_guard": source_guard,
         }
         enable_compaction(copied)
         with copied:
@@ -513,22 +628,6 @@ def sync_compact_copy(source: Path, destination: Path) -> dict[str, Any]:
             != manifest["highwater"]
         ):
             raise StorageError("EVENT_ARCHIVE_DESTINATION_HAS_NEW_EVENTS")
-        # Copy every original non-event table. Refuse unknown tables in the compact
-        # destination, rather than guessing whether they contain independent state.
-        original_tables = {
-            name
-            for (name,) in original.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            if name not in {"events", "event_records", "event_chunks", "event_storage"}
-            and not name.startswith("sqlite_")
-        }
-        copied_tables = {
-            name
-            for (name,) in copied.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            if name not in {"events", "event_records", "event_chunks", "event_storage"}
-            and not name.startswith("sqlite_")
-        }
-        if original_tables != copied_tables:
-            raise StorageError("EVENT_ARCHIVE_NON_EVENT_SCHEMA_CHANGED")
         appended = 0
         copied.execute("BEGIN IMMEDIATE")
         try:
@@ -538,18 +637,7 @@ def sync_compact_copy(source: Path, destination: Path) -> dict[str, Any]:
             ):
                 copied.execute("INSERT INTO events(id,kind,at_ms,data) VALUES (?,?,?,?)", row)
                 appended += 1
-            for name in sorted(original_tables):
-                # SQL identifiers originate in SQLite schema, not a caller string.
-                quoted = '"' + name.replace('"', '""') + '"'
-                columns = original.execute(f"PRAGMA table_info({quoted})").fetchall()
-                if columns != copied.execute(f"PRAGMA table_info({quoted})").fetchall():
-                    raise StorageError("EVENT_ARCHIVE_NON_EVENT_SCHEMA_CHANGED")
-                copied.execute(f"DELETE FROM {quoted}")
-                placeholders = ",".join("?" for _ in columns)
-                copied.executemany(
-                    f"INSERT INTO {quoted} VALUES ({placeholders})",
-                    original.execute(f"SELECT * FROM {quoted} ORDER BY rowid"),
-                )
+            _copy_tables(original, copied)
             count, highwater, digest = _event_digest(original)
             manifest.update(
                 events=count,
@@ -573,3 +661,187 @@ def sync_compact_copy(source: Path, destination: Path) -> dict[str, Any]:
         ):
             raise StorageError("EVENT_ARCHIVE_SYNC_MISMATCH")
         return {**result, "appended_events": appended}
+
+
+def _read_manifest(db: sqlite3.Connection) -> dict[str, Any]:
+    row = db.execute("SELECT source_manifest FROM event_storage WHERE id=1").fetchone()
+    if not row or not row[0]:
+        raise StorageError("EVENT_ARCHIVE_SOURCE_MANIFEST_MISSING")
+    try:
+        manifest = json.loads(row[0])
+        if not isinstance(manifest, dict) or any(
+            key not in manifest
+            for key in (
+                "source",
+                "device",
+                "inode",
+                "wallet",
+                "events",
+                "highwater",
+                "event_sha256",
+            )
+        ):
+            raise StorageError("EVENT_ARCHIVE_SOURCE_MANIFEST_INVALID")
+        return manifest
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise StorageError("EVENT_ARCHIVE_SOURCE_MANIFEST_INVALID") from exc
+
+
+def _check_guarded_source(
+    source: Path,
+    original: sqlite3.Connection,
+    copied: sqlite3.Connection,
+    manifest: dict[str, Any],
+) -> None:
+    _paper(original)
+    _paper(copied)
+    stat = source.stat()
+    if (manifest["source"], manifest["device"], manifest["inode"]) != (
+        str(source),
+        stat.st_dev,
+        stat.st_ino,
+    ):
+        raise StorageError("EVENT_ARCHIVE_SOURCE_IDENTITY_CHANGED")
+    if any(
+        db.execute("SELECT value FROM meta WHERE key='wallet'").fetchone()[0] != manifest["wallet"]
+        for db in (original, copied)
+    ):
+        raise StorageError("EVENT_ARCHIVE_WALLET_MISMATCH")
+    guard = _guard_manifest(original)
+    if guard is None or guard != manifest.get("source_guard"):
+        raise StorageError("EVENT_ARCHIVE_SOURCE_GUARD_MISSING_OR_CHANGED")
+
+
+class PreparedGuardedSync:
+    """A verified destination held under its SQLite write lock until context exit."""
+
+    def __init__(
+        self,
+        source: Path,
+        copied: sqlite3.Connection,
+        manifest: dict[str, Any],
+        state: tuple[int, int, Any],
+    ) -> None:
+        self.source, self.copied, self.manifest, self.state = source, copied, manifest, state
+        self.active = True
+        self.used = False
+
+    def sync(self) -> dict[str, Any]:
+        """Run only after stopping the source owner; work scales with its new tail."""
+        if not self.active or self.used:
+            raise StorageError("EVENT_ARCHIVE_PREFLIGHT_EXPIRED")
+        if not self.copied.in_transaction:
+            raise StorageError("EVENT_ARCHIVE_PREFLIGHT_LOCK_LOST")
+        with (
+            _lock(self.source, ".lock"),
+            _lock(self.source, ".compact.lock"),
+            closing(_open(self.source)) as original,
+        ):
+            self.used = True
+            original.execute("BEGIN")
+            _check_guarded_source(self.source, original, self.copied, self.manifest)
+            source_highwater = original.execute(
+                "SELECT COALESCE(MAX(id),0) FROM events"
+            ).fetchone()[0]
+            if source_highwater < self.manifest["highwater"]:
+                raise StorageError("EVENT_ARCHIVE_SOURCE_PREFIX_CHANGED")
+            count, last, digest = self.state
+            digest = digest.copy()
+            tail = hashlib.sha256()
+            appended = 0
+            try:
+                for row in original.execute(
+                    "SELECT id,kind,at_ms,data FROM events WHERE id>? ORDER BY id",
+                    (self.manifest["highwater"],),
+                ):
+                    self.copied.execute(
+                        "INSERT INTO events(id,kind,at_ms,data) VALUES (?,?,?,?)", row
+                    )
+                    encoded = _encoded(row) + b"\n"
+                    tail.update(encoded)
+                    digest.update(encoded)
+                    appended += 1
+                    last = row[0]
+                actual_tail = hashlib.sha256()
+                actual_count = 0
+                for row in self.copied.execute(
+                    "SELECT id,kind,at_ms,data FROM events WHERE id>? ORDER BY id",
+                    (self.manifest["highwater"],),
+                ):
+                    actual_tail.update(_encoded(row) + b"\n")
+                    actual_count += 1
+                if (
+                    actual_tail.digest() != tail.digest()
+                    or actual_count != appended
+                    or last != source_highwater
+                ):
+                    raise StorageError("EVENT_ARCHIVE_TAIL_MISMATCH")
+                _copy_tables(original, self.copied)
+                manifest = {
+                    **self.manifest,
+                    "events": count + appended,
+                    "highwater": last,
+                    "event_sha256": digest.hexdigest(),
+                    "synced_ms": time.time_ns() // 1000000,
+                }
+                self.copied.execute(
+                    "UPDATE event_storage SET source_manifest=? WHERE id=1",
+                    (_encoded(manifest).decode(),),
+                )
+                self.copied.commit()
+                self.used = True
+            except BaseException:
+                self.copied.rollback()
+                self.used = True
+                raise
+            return {
+                "verified": True,
+                "verification_mode": "guarded-prefix-and-tail",
+                "events": count + appended,
+                "highwater": last,
+                "event_sha256": digest.hexdigest(),
+                "appended_events": appended,
+                "tail_sha256": tail.hexdigest(),
+            }
+
+
+@contextmanager
+def prepare_guarded_sync(source: Path, destination: Path) -> Iterator[PreparedGuardedSync]:
+    """Perform expensive verification online, then hold the copy stable for short sync.
+
+    Enter while the source collector is running. Stop that writer only after this
+    yields. Each context holds one destination connection/write transaction; stage
+    large collections in manageable groups per owning service. Any failed or
+    interrupted context releases its locks and leaves committed history intact.
+    """
+    source, destination = source.resolve(), destination.resolve()
+    if source == destination:
+        raise StorageError("STORAGE_DESTINATION_IS_SOURCE")
+    with (
+        _lock(destination, ".lock"),
+        _lock(destination, ".compact.lock"),
+        closing(_open(destination, readonly=False)) as copied,
+    ):
+        _paper(copied)
+        if not _compact(copied):
+            raise StorageError("EVENT_COMPACTION_NOT_ENABLED")
+        copied.execute("BEGIN IMMEDIATE")
+        prepared = None
+        try:
+            manifest = _read_manifest(copied)
+            with closing(_open(source)) as original:
+                original.execute("BEGIN")
+                _check_guarded_source(source, original, copied, manifest)
+            checked = verify_storage(destination)
+            expected = (manifest["events"], manifest["highwater"], manifest["event_sha256"])
+            if (checked["events"], checked["highwater"], checked["event_sha256"]) != expected:
+                raise StorageError("EVENT_ARCHIVE_DESTINATION_PREFIX_CHANGED")
+            state = _event_hasher(copied)
+            if (state[0], state[1], state[2].hexdigest()) != expected:
+                raise StorageError("EVENT_ARCHIVE_DESTINATION_PREFIX_CHANGED")
+            prepared = PreparedGuardedSync(source, copied, manifest, state)
+            yield prepared
+        finally:
+            if prepared is not None:
+                prepared.active = False
+            copied.rollback()

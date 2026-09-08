@@ -11,15 +11,18 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import uuid
 import zlib
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from decimal import Decimal
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
 from btc5m.capture_quality import advance_quality
+from btc5m.config import Config
 from btc5m.domain import Book, Level, Market, PricePoint, Snapshot
 from btc5m.ledger import _market
 
@@ -53,6 +56,7 @@ class Frame:
     code: str
     research: dict[str, Any] | None = None
     diagnostic: dict[str, Any] | None = None
+    archive: dict[str, Any] | None = None
 
 
 class Tape:
@@ -88,6 +92,8 @@ class Tape:
                     CREATE TABLE IF NOT EXISTS markets(slug TEXT PRIMARY KEY, data TEXT NOT NULL);
                     CREATE TABLE IF NOT EXISTS labels(frame_id INTEGER NOT NULL, slug TEXT NOT NULL,
                         data TEXT NOT NULL, PRIMARY KEY(frame_id,slug));
+                    CREATE TABLE IF NOT EXISTS capture_sessions(id TEXT PRIMARY KEY,
+                        started_ms INTEGER NOT NULL, data TEXT NOT NULL);
                 """)
                 with self.db:
                     self.db.execute("INSERT OR IGNORE INTO meta VALUES ('version','1')")
@@ -139,6 +145,61 @@ class Tape:
 
     def highwater(self) -> int:
         return self.db.execute("SELECT COALESCE(MAX(id),0) FROM frames").fetchone()[0]
+
+    def start_capture(
+        self, config: Config, *, now_ms: int, capture_flow: bool, session_id: str | None = None
+    ) -> str:
+        """A prospective producer record; never alters prior frames or study identities."""
+        if self.readonly:
+            raise TapeError("READ_ONLY")
+        ident = session_id or uuid.uuid4().hex
+        source = Path(__file__).parent
+        files = (
+            "market_data.py",
+            "streams.py",
+            "public_archive.py",
+            "lab_tape.py",
+            "comparison.py",
+            "order_flow.py",
+            "capture_quality.py",
+            "config.py",
+            "domain.py",
+            "ledger.py",
+        )
+        record = {
+            "version": 1,
+            "id": ident,
+            "started_ms": now_ms,
+            "tape_identity": self.identity,
+            "next_frame_id": self.highwater() + 1,
+            "previous_frame_ms": self.last_ms or None,
+            "config_fingerprint": config.fingerprint,
+            "config": asdict(config),
+            "capture_flow": capture_flow,
+            "python": sys.version.split()[0],
+            "polymarket_client": version("polymarket-client"),
+            "source_hashes": {
+                name: hashlib.sha256((source / name).read_bytes()).hexdigest() for name in files
+            },
+            "semantics": {
+                "oracle": "SDK normalized BTC/USD Chainlink spot and TWAP60; accepted exact Decimal ticks",
+                "oracle_full_accuracy_value": "TWAP E18 field becomes exact Decimal value in SDK; raw field not exposed or reconstructed",
+                "book_sequence": "local_receipt_order_not_exchange_queue",
+                "book_scope": "current subscribed Polymarket market; REST books for retained positions",
+                "exchange": "Binance BTCUSDT aggTrade; normalized depth20 when capture_flow is true",
+                "timestamps": "source timestamps retained; received_ms is local wall clock",
+                "durability": "archive batches commit with FULL synchronous WAL frames, normally every 500ms",
+                "overflow": "bounded buffer drops remainder of batch with an explicit sequence gap",
+                "retention": "no automatic archive pruning",
+                "eligibility": "archive presence does not certify a valid trading snapshot",
+                "continuity": "new process has no prior exchange stream continuity",
+            },
+        }
+        with self.db:
+            self.db.execute(
+                "INSERT INTO capture_sessions VALUES (?,?,?)", (ident, now_ms, encode(record))
+            )
+        return ident
 
     def labels_at(self, ident: int) -> dict[str, Any]:
         return {
@@ -194,6 +255,7 @@ class Tape:
         code: str = "CAPTURED",
         research: dict[str, Any] | None = None,
         diagnostic: dict[str, Any] | None = None,
+        archive: dict[str, Any] | None = None,
         max_gap_ms: int | None = None,
     ) -> int:
         if self.readonly:
@@ -217,6 +279,12 @@ class Tape:
 
         receipts(research)
         receipts(diagnostic)
+        if archive is not None:
+            receipts({key: value for key, value in archive.items() if key != "events"})
+            for event in archive.get("events", []):
+                # Raw provider fields are evidence (including malformed/future claims),
+                # not our local receipt clock. Validate the archive envelope only.
+                receipts({key: value for key, value in event.items() if key != "payload"})
         if diagnostic is not None and (
             max_gap_ms is None or not isinstance(diagnostic.get("code"), str)
         ):
@@ -259,6 +327,7 @@ class Tape:
                             "code": code,
                             "research": research,
                             "diagnostic": diagnostic,
+                            "archive": archive,
                         }
                     ).encode(),
                     1,
@@ -372,6 +441,7 @@ class Tape:
                     item["code"],
                     item.get("research"),
                     item.get("diagnostic"),
+                    item.get("archive"),
                 )
             except (ValueError, KeyError, TypeError, zlib.error) as exc:
                 raise TapeError("TAPE_CORRUPT_FRAME") from exc

@@ -1049,6 +1049,9 @@ class Ledger:
             "timestamp_ms",
             "generation",
             "mode",
+            "symbol",
+            "envelope_ms",
+            "window_seconds",
         }
         safe = {key: value for key, value in record.items() if key in allowed}
         if record.get("kind") == "metadata_rejected":

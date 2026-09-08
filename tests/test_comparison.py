@@ -9,14 +9,16 @@ from btc5m import cli, comparison
 from btc5m.config import STRATEGIES
 from btc5m.ledger import Ledger
 from btc5m.market_data import DataUnavailable
+from btc5m.public_archive import PublicArchive
 
 
 class AnonymousData:
     streams = None
     snapshot_status = {"code": "STREAM_WARMUP", "component": "spot"}
 
-    def __init__(self, config, *, enhanced, observer, capture_flow=False):
+    def __init__(self, config, *, enhanced, observer, capture_flow=False, capture_archive=False):
         assert enhanced
+        self.archive = PublicArchive() if capture_archive else None
 
     async def __aenter__(self):
         return self

@@ -44,6 +44,11 @@ The new buffer admits at most 20,000 records and 8 MiB of encoded event bytes pe
 the remainder of that batch to be omitted with `ARCHIVE_BUFFER_OVERFLOW`, a dropped count,
 first/last local sequence and receipt bounds. Recording resumes on the next batch. The
 buffer does not grow indefinitely and does not read historical SQLite rows per event.
+Unserializable public fields, including nonfinite JSON numbers, similarly produce an
+`ARCHIVE_SERIALIZATION_FAILED` gap rather than changing book eligibility or silently
+skipping sequence numbers. Malformed provider timestamps remain in the raw payload;
+the normalized `source_ms` envelope is an integer or null. Provider objects cannot be
+mistaken for the collector's local receipt clock.
 
 No archive, tick or historical frame is automatically deleted. The earlier observed combined
 runtime footprint was roughly 4.27 GiB over approximately 25–32 hours; the additional raw
@@ -84,3 +89,5 @@ The focused market/stream/tape/collector regression selection passed 152 tests. 
 archive-envelope validation refinement passed its 17 archive/tape checks; Ruff lint and
 format, mypy and the locked dependency check also pass. Combined integration verification
 and live service cutover belong to the parent task; this worktree has not changed services.
+Independent review subsequently identified malformed provider timestamp and nonfinite-field
+failure paths. Five failing regressions reproduced those issues before their narrow fixes.

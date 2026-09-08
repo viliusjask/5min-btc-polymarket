@@ -56,6 +56,14 @@ def _stamp(value: Any) -> int:
     return value
 
 
+def _archive_stamp(value: Any) -> int | None:
+    """A typed envelope; malformed provider values remain only inside raw payload."""
+    try:
+        return _stamp(value)
+    except ValueError:
+        return None
+
+
 class PublicStreams:
     def __init__(
         self,
@@ -143,7 +151,7 @@ class PublicStreams:
                     "kind": "binance_trade_wire",
                     "source": "binance:BTCUSDT:aggTrade",
                     "received_ms": int(self.clock() * 1000),
-                    "source_ms": event.get("T"),
+                    "source_ms": _archive_stamp(event.get("T")),
                     "session_id": self.session_id,
                     "payload": {
                         k: event[k]
@@ -206,7 +214,7 @@ class PublicStreams:
                 {
                     "kind": "polymarket_wire",
                     "source": "polymarket:market_websocket",
-                    "source_ms": event.get("timestamp"),
+                    "source_ms": _archive_stamp(event.get("timestamp")),
                     "received_ms": int(self.clock() * 1000),
                     "session_id": self.session_id,
                     "generation": self.generation,

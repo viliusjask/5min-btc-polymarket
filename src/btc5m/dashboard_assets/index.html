@@ -9,6 +9,7 @@
     <script src="/app.js" defer></script>
     <script src="/lab.js" defer></script>
     <script src="/research.js" defer></script>
+    <script src="/browser.js" defer></script>
   </head>
   <body>
     <header class="masthead">
@@ -16,7 +17,7 @@
         <span class="brand-mark">₿</span>
         <div>
           <span class="eyebrow">FIVE MINUTE LAB</span>
-          <h1 id="view-title">Paper observatory</h1>
+          <h1 id="view-title">Paper experiments</h1>
         </div>
       </div>
       <div class="header-actions">
@@ -25,7 +26,7 @@
             Paper
           </button>
           <button data-view="live" aria-pressed="false">Real</button>
-          <button data-view="lab" aria-pressed="false">Experiments</button>
+
         </div>
         <span id="view-badge" class="badge">SIMULATED · READ ONLY</span
         ><button id="export" class="quiet">Export snapshot ↓</button>
@@ -33,6 +34,7 @@
     </header>
     <main>
       <div id="lab-view" hidden>
+        <button data-return-browser class="quiet">← All experiments</button>
         <label class="select-label">Experiment study<select id="lab-suite"><option value="directional">Original parameter study</option><option value="order-flow">Order flow and pair construction</option></select></label>
         <div class="statusbar"><strong id="lab-status">Loading experiments…</strong><span id="lab-updated"></span></div>
         <div id="lab-error" class="error" role="alert" hidden></div>
@@ -81,6 +83,55 @@
         </div>
       </div>
       <div id="paper-view">
+        <div id="experiment-browser">
+          <div class="statusbar"><strong id="browser-status">Reading all experiments…</strong><span id="browser-updated"></span></div>
+          <p id="browser-error" class="error" role="alert" hidden></p>
+          <section class="insight"><span class="insight-mark">i</span><div><p id="browser-intro">Original portfolios and registered studies share market history. Each row keeps its own allocation, rules and results.</p></div></section>
+          <section class="panel">
+            <div class="panel-heading"><h2>All experiments</h2><a class="quiet" href="#browser-comparison">Compare curves ↓</a><span id="browser-count" class="unit" role="status"></span></div>
+            <div class="browser-filters">
+              <label class="select-label browser-search-label">Search experiments<input id="browser-search" type="search" placeholder="Name, strategy, parameter, version…" autocomplete="off" /></label>
+              <label class="select-label">Source<select id="browser-source"><option value="all">All sources</option></select></label>
+              <label class="select-label">Family<select id="browser-family"><option value="all">All families</option></select></label>
+              <label class="select-label">Phase<select id="browser-phase"><option value="all">All phases</option></select></label>
+              <label class="select-label">Evidence<select id="browser-evidence"><option value="all">Any evidence</option><option value="flagged">Flagged completed rounds</option><option value="unflagged">Has unflagged completed rounds</option><option value="unavailable">Unavailable statistics</option></select></label>
+              <label class="select-label">Activity<select id="browser-activity"><option value="all">All activity</option><option value="recorded">Recorded trades</option><option value="blocked">Historical budget rejections</option><option value="halted">Recorded halt</option><option value="no_fills">No fills</option><option value="unavailable">Report unavailable</option></select></label>
+              <label class="select-label">Completed result cohort<select id="browser-cohort"><option value="all">All recorded, including flags</option><option value="unflagged">Unflagged completed subtotal</option></select></label>
+              <label class="select-label">Minimum completed rounds<input id="browser-min-rounds" type="number" min="0" step="1" value="0" /></label>
+              <button id="browser-reset-filters" class="quiet">Reset filters</button>
+            </div>
+            <p id="browser-semantics" class="caption"></p>
+            <div id="browser-list" class="table-wrap browser-table" tabindex="0" aria-label="Experiments; scroll horizontally for more metrics"></div>
+            <p class="caption">A round is one five-minute market that used capital; several orders or fills remain one round. Missing values appear as Unavailable and sort last. Largest win is unavailable when there are no winning rounds. All results remain exploratory; a large return with few rounds is weak evidence.</p>
+          </section>
+          <section id="browser-comparison" class="panel browser-comparison">
+            <div class="panel-heading"><div><span class="eyebrow">SELECT INDIVIDUAL EXPERIMENTS BELOW</span><h2>How did the results develop?</h2></div><label class="select-label">Chart measure<select id="browser-chart-metric"><option value="net">Completed net profit · USD</option><option value="return">Completed profit / initial allocation · %</option></select></label></div>
+            <div id="browser-chart" class="chart"></div>
+            <div id="browser-legend" class="legend browser-legend"></div>
+            <div class="browser-selection"><label><input id="browser-all-curves" type="checkbox" checked /> All filtered experiments as context</label><span id="browser-selection-count" role="status"></span><button id="browser-clear-selection" class="quiet">Clear chart</button><button id="browser-compare-visible" class="quiet">Compare first 8 visible</button></div>
+            <p class="caption">Each line is one experiment. Never add these overlapping simulated profits. The common UTC axis uses market end times, not cash-receipt times. Lines stop at their last completed result. Long curves retain at most 1,200 points, preserving cumulative minima/maxima and endpoints; rankings use the full sample. Filtered profit divided by starting allocation is a subtotal ratio, not account equity or an investable portfolio return.</p>
+          </section>
+        </div>
+        <div id="experiment-detail" hidden>
+          <button id="experiment-back" class="quiet">← All experiments</button>
+          <div class="section-heading"><div><span id="experiment-identity" class="eyebrow"></span><h2 id="experiment-title" tabindex="-1">Experiment</h2></div><label class="select-label">Completed result cohort<select id="experiment-cohort"><option value="all">All recorded, including flags</option><option value="unflagged">Unflagged completed subtotal</option></select></label><button id="experiment-compare">Add to comparison</button></div>
+          <p id="experiment-status" class="caption" role="status"></p><p id="experiment-error" class="error" role="alert" hidden></p>
+          <p id="experiment-policy" class="caption"></p>
+          <section id="experiment-metrics" class="metrics"></section>
+          <section class="insight"><span class="insight-mark">i</span><div><h3>What supports this result?</h3><p id="experiment-conclusion"></p></div></section>
+          <div class="chart-grid"><section class="panel"><h3>Completed net profit</h3><div id="experiment-net-chart" class="chart"></div><p class="caption">Selected cohort, cumulative completed profit by UTC market end. Account realized totals can also contain amounts on unfinished rounds.</p></section><section class="panel"><h3>Drawdown</h3><div id="experiment-drawdown-chart" class="chart"></div><p id="experiment-drawdown-note" class="caption"></p></section></div>
+          <section class="panel"><h3>Risk budget and incomplete exposure</h3><p id="experiment-risk-note" class="caption"></p><div id="experiment-risk" class="table-wrap"></div></section>
+          <div class="chart-grid"><section class="panel"><h3>Profit per completed market</h3><div id="experiment-round-chart" class="chart"></div></section><section class="panel"><h3>Consistency by market opening hour</h3><div id="experiment-hour-chart" class="chart"></div><div id="experiment-hours" class="table-wrap"></div></section></div>
+          <div class="chart-grid"><section class="panel"><h3>Winner concentration</h3><div id="experiment-concentration" class="table-wrap"></div></section><section class="panel"><h3>Recorded fees and cost sensitivity</h3><div id="experiment-costs" class="table-wrap"></div><p id="experiment-cost-note" class="caption"></p></section></div>
+          <section class="panel"><div class="panel-heading"><h3>Entry and exit conditions</h3><label class="select-label">Group by<select id="experiment-group"><option value="entry_price">First filled entry price</option><option value="entry_time">Seconds remaining at entry</option><option value="direction">Purchased outcome</option><option value="exit_reason">Executed exit reason</option></select></label></div><div id="experiment-groups" class="table-wrap"></div></section>
+          <section class="panel"><h3>Chronological completed rounds</h3><div id="experiment-rounds" class="table-wrap"></div><p class="caption">All completed capital-used rounds in the selected cohort, oldest first. Filled trades on unfinished markets remain in the order journal below.</p></section>
+          <section class="panel"><h3>Orders and trade outcomes</h3><p id="experiment-orders-note" class="caption"></p><div id="experiment-orders" class="table-wrap"></div></section>
+          <details class="panel"><summary>Configuration, timeframe and recorded limitations</summary><div id="experiment-config" class="table-wrap"></div><p id="experiment-limits" class="caption"></p></details>
+          <div class="browser-detail-actions"><button id="experiment-diagnostics">Open collection and execution diagnostics</button><button id="experiment-research">Compare on the same markets</button><button id="experiment-export">Download this analysis</button></div>
+        </div>
+
+        <div id="paper-diagnostics" hidden>
+          <button data-return-browser class="quiet">← All experiments</button>
         <div class="statusbar">
           <div>
             <span id="status-dot" class="status-dot"></span
@@ -215,6 +266,7 @@
           </p>
           <p id="runtime-label"></p>
         </footer>
+      </div>
       </div>
       <div id="live-view" hidden>
         <div class="statusbar">

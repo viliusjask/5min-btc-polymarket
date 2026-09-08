@@ -832,3 +832,51 @@ footer p:first-child {
     margin-top: 10px;
   }
 }
+
+/* One catalog for paper portfolios and every registered study phase. */
+.browser-comparison { margin-top: 24px; scroll-margin-top: 18px; }
+.browser-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; margin: 20px 0; }
+.browser-search-label { flex: 1 1 280px; }
+input[type="search"], input[type="number"] { font: inherit; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; background: #182332; min-width: 180px; width: 100%; }
+input:focus-visible, summary:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
+input[type="checkbox"] { accent-color: var(--teal); width: 18px; height: 18px; cursor: pointer; }
+.browser-table { max-height: 540px; overflow: auto; margin: 18px 0; }
+.browser-table table { min-width: 1350px; }
+.browser-table th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.browser-table th button { border: 0; padding: 6px 4px; background: transparent; text-align: inherit; }
+.browser-table td { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.browser-table td:nth-child(2) { min-width: 230px; max-width: 340px; white-space: normal; }
+.browser-name { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 4px 0; color: var(--text); }
+.browser-meta { color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.browser-selection, .browser-detail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 14px 0; }
+.browser-legend { display: flex; flex-wrap: wrap; gap: 8px; }
+.browser-legend button { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; max-width: 350px; text-align: left; }
+.browser-legend .swatch { flex-shrink: 0; }
+#experiment-detail > .panel, #experiment-detail > .metrics, #experiment-detail > .insight, #experiment-detail > .chart-grid { margin-top: 22px; }
+#experiment-detail .table-wrap { max-height: 410px; overflow: auto; }
+#experiment-detail .caption { margin-top: 12px; }
+#experiment-title, #experiment-policy, #browser-error, #experiment-identity { overflow-wrap: anywhere; }
+#experiment-config td { white-space: normal; overflow-wrap: anywhere; }
+#experiment-config { margin-top: 16px; }
+#experiment-detail summary { cursor: pointer; font-weight: 600; }
+#experiment-risk-note { margin-bottom: 14px; }
+@media (max-width: 650px) {
+  .browser-filters > label { flex: 1 1 140px; min-width: 0; }
+  .browser-filters select { max-width: 100%; }
+  .browser-filters .browser-search-label { flex-basis: 100%; }
+  .browser-table { max-height: 65vh; }
+  .browser-selection, .browser-detail-actions { align-items: stretch; }
+  .browser-comparison .panel-heading { display: grid; gap: 16px; }
+  #experiment-detail .section-heading { align-items: start; flex-wrap: wrap; gap: 14px; }
+}
+.browser-filters .select-label { flex-direction: column; align-items: stretch; gap: 6px; }
+.browser-filters input[type="number"] { min-width: 0; }
+.browser-comparison .select-label { flex-direction: column; align-items: stretch; max-width: 100%; gap: 6px; }
+.browser-comparison select { max-width: 100%; }
+@media (max-width: 650px) {
+  #experiment-detail .select-label { flex-direction: column; align-items: stretch; max-width: 100%; }
+  #experiment-detail .panel-heading { flex-wrap: wrap; gap: 12px; }
+  #experiment-detail select { max-width: 100%; }
+}
+
+.browser-context-line { stroke-width: 1; }

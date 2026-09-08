@@ -370,7 +370,7 @@ function chartFrame(id, min, max, range, format) {
   const svg = svgNode("svg", {
     viewBox: `0 0 ${w} ${h}`,
     role: "img",
-    "aria-label": host.parentNode.querySelector("h3").textContent,
+    "aria-label": host.parentNode.querySelector("h2, h3").textContent,
   });
   for (let i = 0; i < 4; i++) {
     const v = min + ((max - min) * i) / 3,
@@ -1008,7 +1008,7 @@ function activity() {
   root.append(table);
 }
 function render() {
-  if (!state || view !== "paper") return;
+  if (!state || view !== "paper" || $("paper-diagnostics").hidden) return;
   topSummary();
   portfolioCards();
   charts();
@@ -1017,6 +1017,7 @@ function render() {
   activity();
 }
 async function refresh() {
+  if (view === "paper" && $("paper-diagnostics").hidden) return refreshBrowser();
   if (view === "lab") return refreshLab();
   if (view === "live") return refreshLive();
   if (fetching) return;
@@ -1071,7 +1072,7 @@ for (const button of document.querySelectorAll("[data-tab]"))
     if (state) activity();
   });
 $("export").addEventListener("click", () => {
-  const snapshot = view === "live" ? liveState : view === "lab" ? labState : state;
+  const snapshot = view === "live" ? liveState : view === "lab" ? labState : !$("paper-diagnostics").hidden ? state : !$("experiment-detail").hidden ? browserDetail : browserState;
   if (!snapshot) return;
   const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
       type: "application/json",
@@ -1095,7 +1096,7 @@ for (const button of document.querySelectorAll("[data-view]"))
     $("live-view").hidden = view !== "live";
     $("lab-view").hidden = view !== "lab";
     $("view-title").textContent =
-      view === "paper" ? "Paper observatory" : view === "lab" ? "Strategy experiments" : "Real account";
+      view === "paper" ? "Paper experiments" : view === "lab" ? "Strategy experiments" : "Real account";
     $("view-badge").textContent =
       view === "live" ? "REAL FUNDS · READ ONLY" : "SIMULATED · READ ONLY";
     $("tooltip").hidden = true;
@@ -1354,5 +1355,4 @@ async function refreshLive() {
     liveFetching = false;
   }
 }
-refresh();
-setInterval(refresh, 5000);
+window.addEventListener("DOMContentLoaded", () => { refresh(); setInterval(refresh, 5000); });

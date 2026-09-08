@@ -217,7 +217,7 @@ def test_http_serves_dashboard_but_no_paths_secrets_or_mutations(tmp_path, monke
     url = f"http://127.0.0.1:{server.server_port}"
     try:
         with urlopen(url) as response:
-            assert b"Paper observatory" in response.read()
+            assert b"Paper experiments" in response.read()
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
         with urlopen(url + "/api/state") as response:
             state = json.load(response)

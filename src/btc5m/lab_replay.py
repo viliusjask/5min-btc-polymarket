@@ -57,8 +57,13 @@ class LabEngine(Engine):
     signal_state: dict[str, Any]
 
     def _evaluate(self, snapshot: Snapshot, config: Config) -> Decision:
-        if snapshot.market.start_s * 1000 < self.entry_start_ms or (
-            self.entry_end_ms is not None and snapshot.market.start_s * 1000 >= self.entry_end_ms
+        if (
+            snapshot.now_ms < self.entry_start_ms
+            or snapshot.market.start_s * 1000 < self.entry_start_ms
+            or (
+                self.entry_end_ms is not None
+                and max(snapshot.now_ms, snapshot.market.start_s * 1000) >= self.entry_end_ms
+            )
         ):
             return _skip(snapshot, "STUDY_ENTRY_WINDOW", {})
         if config.strategy.mode in PAIR_STRATEGIES:

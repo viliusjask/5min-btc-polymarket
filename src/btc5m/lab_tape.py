@@ -60,7 +60,13 @@ class Frame:
 
 
 class Tape:
-    def __init__(self, path: Path, *, readonly: bool = False) -> None:
+    def __init__(
+        self, path: Path, *, readonly: bool = False, label_highwater: int | None = None
+    ) -> None:
+        if label_highwater is not None and (
+            not readonly or type(label_highwater) is not int or label_highwater < 0
+        ):
+            raise TapeError("INVALID_TAPE_LABEL_HIGHWATER")
         self.path, self.readonly = path.resolve(), readonly
         self.lock: int | None = None
         self.tick_ids: dict[PricePoint, int] = {}
@@ -108,7 +114,12 @@ class Tape:
             self.last_ms = self.db.execute("SELECT COALESCE(MAX(now_ms),0) FROM frames").fetchone()[
                 0
             ]
-            self.label_cache = self.labels_at(self.highwater())
+            highwater = self.highwater()
+            if label_highwater is not None and label_highwater > highwater:
+                raise TapeError("INVALID_TAPE_LABEL_HIGHWATER")
+            self.label_cache = self.labels_at(
+                highwater if label_highwater is None else label_highwater
+            )
             self.known_markets: dict[str, Market] = {}
             if not readonly:
                 # Backfill the initial tape format without changing any captured frame.

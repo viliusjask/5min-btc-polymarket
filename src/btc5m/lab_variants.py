@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import asdict, dataclass, is_dataclass, replace
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Any, get_type_hints
 
 from btc5m.config import PAIR_STRATEGIES, STRATEGIES, Config
@@ -104,6 +104,30 @@ def variant_from(raw: dict[str, Any]) -> Variant:
     if raw.get("ident") != variant.ident:
         raise ValueError("LAB_VARIANT_ID_MISMATCH")
     return variant
+
+
+def original_six_variants(base: Config) -> tuple[Variant, ...]:
+    """Exact per-wallet configurations from paper --strategies all, including risk."""
+    allocation = (base.risk.allocation_usd / len(STRATEGIES)).quantize(
+        D(".01"), rounding=ROUND_DOWN
+    )
+    if allocation < base.risk.trade_budget_usd:
+        raise ValueError("PAPER_ALLOCATION_TOO_SMALL")
+    risk = replace(
+        base.risk,
+        allocation_usd=allocation,
+        daily_loss_usd=min(base.risk.daily_loss_usd, allocation),
+        session_loss_usd=min(base.risk.session_loss_usd, allocation),
+    )
+    return tuple(
+        Variant(
+            f"original-{mode}",
+            "original-six",
+            mode.replace("_", " ").title(),
+            replace(base, strategy=replace(base.strategy, mode=mode), risk=risk),
+        )
+        for mode in STRATEGIES
+    )
 
 
 def default_variants(base: Config, *, dense: bool = False) -> tuple[Variant, ...]:

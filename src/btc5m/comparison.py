@@ -146,6 +146,7 @@ async def run_paper(
         enhanced=True,
         observer=master.record_observation,
         capture_flow=getattr(args, "capture_flow", False),
+        capture_archive=True,
     )
     code = 0
     lifecycle_started = False
@@ -172,6 +173,13 @@ async def run_paper(
         master.start_or_resume_session(config)
         master.clear_stop_request()
         atomic_json(manifest_path, manifest)
+        assert data.archive is not None
+        tape.start_capture(
+            config,
+            now_ms=int(time.time() * 1000),
+            capture_flow=getattr(args, "capture_flow", False),
+            session_id=data.archive.session_id,
+        )
         cutoff = int(time.time() * 1000) - (config.strategy.volatility_long_seconds + 60) * 1000
         restored = data.restore_history(
             json.loads(row[0])
@@ -363,6 +371,7 @@ async def run_paper(
                     research=research,
                     diagnostic=diagnostic,
                     max_gap_ms=config.data.max_price_age_ms,
+                    archive=data.archive.drain(),
                 )
                 last_capture = loop.time()
             for name, broker, engine, ledger in zip(
@@ -406,6 +415,17 @@ async def run_paper(
             raise
         finally:
             try:
+                # Transports are closed: persist the last bounded archive batch even
+                # when no complete trading snapshot was available at shutdown.
+                if tape is not None and lifecycle_started and data.archive is not None:
+                    archived = data.archive.drain()
+                    if archived["events"] or archived["gap"]:
+                        tape.append(
+                            max(int(time.time() * 1000), tape.last_ms),
+                            None,
+                            code="COLLECTOR_STOPPED",
+                            archive=archived,
+                        )
                 if lifecycle_started:
                     master.record_observation(
                         {

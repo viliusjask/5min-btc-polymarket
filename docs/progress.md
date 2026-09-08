@@ -1,3 +1,4 @@
+
 # Progress: discovery timeout recovery
 
 2026-09-08. `fix/discovery-recovery`, isolated `.worktrees/discovery-recovery`, base `8d12573`.
@@ -19,6 +20,43 @@ Worker validation: **716 tests passed in 195.53 seconds**, including 195 focused
 engine and market-data cases. Ruff lint/format, mypy (33 sources), locked dependencies,
 CLI help and whitespace checks passed. Root reviewed the implementation and regressions
 with no findings before the independent integration review.
+
+# Progress: dashboard history catch-up
+
+2026-09-08. `fix/dashboard-catchup`, based on `8d12573`. Historical dashboard aggregation
+advanced at most 100,000 events per request; a 30-second comparison cache stretched a
+2.36-million-event startup into roughly 12 minutes and stopped progress without a browser.
+
+- The HTTP server now owns a read-only history worker. It follows only the public journal
+  in 10,000-event batches, waits 50 ms while behind and one second when caught up or failing,
+  and shares the reader lock with consistent snapshot serialization. Portfolio/account reads
+  remain on their existing request paths. Every SQLite connection stays within its thread.
+- Server close signals and joins the worker. Event-loop checks and a SQLite progress callback
+  interrupt the active scan; SQLite connection busy waits retain the existing five-second
+  timeout. The shutdown measurement below is observed latency, not a hard I/O deadline.
+- Malformed events surface a sanitized `PAPER_HISTORY_UNAVAILABLE` warning and the existing
+  HTTP 503 response. In-memory aggregates reset before retrying a partially applied event;
+  recovery reconstructs original cumulative counts. Journal replacement and truncation also
+  rebuild state. Source timestamps, financial rows and source events remain unchanged.
+- Five regressions first failed against the base. They cover one HTTP request followed by
+  independent catch-up and later appends, active-batch shutdown, failure/recovery without
+  duplicate counts, replacement and truncation. Lab/research route tests now use real readers
+  and synthetic paper runtimes while retaining their no-Real-account assertions.
+
+Read-only runtime measurement against `paper-six-100-each`: first snapshot loaded
+100,000 / 2,366,487 events in 2.168 seconds; the worker reached 540,000 at 12.252 seconds,
+1,120,000 at 22.292 seconds and 1,690,000 at 32.370 seconds. At 41.282 seconds, the final
+validation snapshot reported 2,366,697 / 2,366,697, `caught_up=true` and `status=running`.
+Only the initial and final snapshots ran; intervening progress checks inspected the cursor.
+The worker stopped in 0.001 seconds. No collector restart, runtime write, funded call,
+dependency change or API schema change occurred. Integration/browser QA remains with root.
+
+Verification: all 40 selected dashboard/history/Live/lab/research cases have passing results.
+The broad run passed 39 cases and exposed the lab fixture's already-created capture database;
+after restoring its intended legacy-runtime setup, all three lab cases passed in 6.75 seconds.
+Ruff lint/format (68 files), mypy (33 sources), locked dependencies and whitespace checks pass.
+The task-scoped production review found no blocking issue; full combined checks remain with root.
+
 
 # Progress: metadata refresh and book recovery
 

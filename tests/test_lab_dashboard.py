@@ -1,14 +1,15 @@
 import json
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
+from test_dashboard import runtime
 
 from btc5m import cli
-from btc5m.dashboard import lab_profit_context, make_server
+from btc5m.config import Config
+from btc5m.dashboard import DashboardReader, lab_profit_context, make_server
 from btc5m.lab_tape import Tape
 
 
@@ -27,12 +28,15 @@ def test_excluded_profit_is_exact_complement_and_not_unfinished_inventory_value(
     assert row["unresolved_rounds"] == 1 and row["open_basis"] == "4.93"
 
 
-def test_lab_endpoint_is_readonly_and_never_opens_real_account(tmp_path):
+def test_lab_endpoint_is_readonly_and_never_opens_real_account(tmp_path, monkeypatch):
     class NoAccount:
         def snapshot(self):
             pytest.fail("experiment page accessed real account")
 
-    server = make_server(SimpleNamespace(path=tmp_path), port=0, live=NoAccount())
+    root = runtime(tmp_path, monkeypatch)
+    # Preserve the legacy-runtime case before this test adds capture diagnostics.
+    (root / "capture.sqlite").unlink()
+    server = make_server(DashboardReader(root, Config()), port=0, live=NoAccount())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import signal
 import sqlite3
 import threading
@@ -26,6 +27,7 @@ from btc5m.research import ResearchReader
 
 D = Decimal
 ASSETS = Path(__file__).with_name("dashboard_assets")
+LOG = logging.getLogger(__name__)
 
 
 def lab_profit_context(payload: dict[str, Any]) -> None:
@@ -170,8 +172,52 @@ class DashboardReader:
     def __init__(self, path: Path, config: Config) -> None:
         self.path, self.config = path.resolve(), config
         self.lock = threading.Lock()
+        self._stop = threading.Event()
+        self._worker: threading.Thread | None = None
         self.identity: tuple[int, int] | None = None
         self._reset()
+
+    def start(self) -> None:
+        """Follow the public journal independently of browser request/cache cadence."""
+        with self.lock:
+            if self._worker is None and not self._stop.is_set():
+                self._worker = threading.Thread(
+                    target=self._follow, name="paper-dashboard-history", daemon=True
+                )
+                self._worker.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._worker is not None:
+            self._worker.join()
+
+    def _follow(self) -> None:
+        failed = False
+        while not self._stop.is_set():
+            # A slow HTTP portfolio read must not keep a closing worker waiting for its lock.
+            if not self.lock.acquire(timeout=0.1):
+                continue
+            delay = 1.0
+            try:
+                if self._stop.is_set():
+                    return
+                # Only public history is pumped here, not the six portfolio journals.
+                _, maximum = self._master(limit=10000)
+                failed = False
+                if self.cursor < maximum:
+                    delay = 0.05
+            except Exception as exc:
+                if not failed and not self._stop.is_set():
+                    # Never log event payloads, filesystem paths or raw exception messages.
+                    LOG.warning(
+                        "PAPER_HISTORY_UNAVAILABLE events_loaded=%s error_type=%s",
+                        self.cursor,
+                        type(exc).__name__,
+                    )
+                failed = True
+            finally:
+                self.lock.release()
+            self._stop.wait(delay)
 
     def _reset(self) -> None:
         self.cursor = 0
@@ -294,7 +340,7 @@ class DashboardReader:
             self.incidents[key].update(last_ms=stamp)
             self.incidents[key]["count"] += 1
 
-    def _master(self) -> tuple[dict[str, Any], int]:
+    def _master(self, *, limit: int = 100000) -> tuple[dict[str, Any], int]:
         manifest_path = self.path / "paper.json"
         if manifest_path.stat().st_size > 16384:
             raise LedgerError("INVALID_PAPER_MANIFEST")
@@ -316,6 +362,7 @@ class DashboardReader:
             self.identity = identity
         master = Ledger(path, MASTER_WALLET, readonly=True)
         try:
+            master.db.set_progress_handler(lambda: int(self._stop.is_set()), 1000)
             if master.environment != "paper":
                 raise LedgerError("EXECUTION_ENVIRONMENT_MISMATCH")
             master.db.execute("BEGIN")
@@ -331,9 +378,17 @@ class DashboardReader:
                     'received_ms',at_ms,'source_ms',json_extract(data,'$.source_ms'),
                     'bid_count',json_array_length(data,'$.bids'),'ask_count',json_array_length(data,'$.asks'),
                     'best_bid',json_extract(data,'$.bids[0].price'),'best_ask',json_extract(data,'$.asks[0].price'))
-                ELSE data END FROM events WHERE id>? AND id<=? ORDER BY id LIMIT 100000"""
-            for ident, kind, stamp, raw in master.db.execute(query, (self.cursor, maximum)):
-                self._consume(kind, stamp, json.loads(raw))
+                ELSE data END FROM events WHERE id>? AND id<=? ORDER BY id LIMIT ?"""
+            for ident, kind, stamp, raw in master.db.execute(query, (self.cursor, maximum, limit)):
+                if self._stop.is_set():
+                    break
+                try:
+                    self._consume(kind, stamp, json.loads(raw))
+                except Exception:
+                    # A malformed row may have changed several aggregates before failing.
+                    # Rebuild from the journal on recovery, never retry over partial counts.
+                    self._reset()
+                    raise
                 self.cursor = ident
         finally:
             master.close()
@@ -552,6 +607,8 @@ class DashboardReader:
 
     def snapshot(self, *, now_ms: int | None = None) -> dict[str, Any]:
         with self.lock:
+            if self._stop.is_set():
+                raise LedgerError("DASHBOARD_READER_CLOSED")
             now = int(time.time() * 1000) if now_ms is None else now_ms
             manifest, maximum = self._master()
             selected = manifest["strategies"]
@@ -821,11 +878,19 @@ def make_server(
         do_DELETE = do_POST
         do_PATCH = do_POST
 
+    class Server(ThreadingHTTPServer):
+        def server_close(self) -> None:
+            try:
+                super().server_close()
+            finally:
+                reader.close()
+
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        server = Server(("127.0.0.1", port), Handler)
     except OSError:
         raise LedgerError("DASHBOARD_PORT_UNAVAILABLE") from None
     server.daemon_threads = True
+    reader.start()
     return server
 
 

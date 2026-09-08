@@ -327,6 +327,7 @@ when deploying collector/dashboard diagnostics.
   narrow supported coarse-to-fine compatibility mathematically; never waive token/fee/size
   checks. Verify through the real ledger filter so new diagnostic fields are not silently lost.
 
+
 ## 2026-09-08: Recovery insertion order evicted a still-active round
 
 `ROUND_STATE_MISSING` with two-second-old valid metadata came from an explicit
@@ -337,3 +338,13 @@ events before blaming discovery and exercise restoration out of time order.
 Retire oldest market times first while preserving retained slots and the existing
 bound. Keep current reference conflicts too: deleting and rediscovering their
 state can erase a contradiction even when subsequent snapshots look healthy.
+
+## 2026-09-08: Current capture with a historical dashboard heartbeat
+
+When capture-quality timestamps advance but the dashboard heartbeat/diagnostics remain old,
+compare `events_loaded` with `events_available` before blaming collection. The comparison
+response cache also paced the reader's historical scan, so closing the browser halted recovery.
+Verify readiness with one request followed by no requests, including a later appended event;
+request-by-request tests can conceal this coupling. Reading a fresh tail alone would conceal
+incomplete cumulative counts, so keep source freshness and history completeness distinct.
+

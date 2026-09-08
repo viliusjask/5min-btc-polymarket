@@ -156,11 +156,20 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created_ms INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS intents (id TEXT PRIMARY KEY, opening_round TEXT UNIQUE, state TEXT NOT NULL, data TEXT NOT NULL, signed_payload TEXT);
+                CREATE INDEX IF NOT EXISTS unresolved_intents ON intents(state)
+                    WHERE state NOT IN ('SETTLED','REJECTED');
+                CREATE INDEX IF NOT EXISTS daily_buy_intents
+                    ON intents(json_extract(data,'$.created_ms'))
+                    WHERE json_extract(data,'$.side')='BUY';
                 CREATE TABLE IF NOT EXISTS positions (id TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS fills (chain INTEGER, tx TEXT, log INTEGER, intent_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(chain,tx,log));
                 CREATE TABLE IF NOT EXISTS accounting (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, day TEXT NOT NULL, cash TEXT NOT NULL, pnl TEXT NOT NULL, fee TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, at_ms INTEGER NOT NULL, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS measurements (key TEXT PRIMARY KEY, data TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS pending_calibration_clock
+                    ON measurements(json_extract(data,'$.target_ms'))
+                    WHERE json_extract(data,'$.kind')='calibration'
+                        AND json_extract(data,'$.status')='pending';
             """)
             prior = self._meta("wallet")
             if prior and prior != self.wallet:
@@ -183,6 +192,14 @@ class Ledger:
             raise LedgerError("WALLET_MISMATCH")
         if readonly:
             self.environment = self._meta("environment") or "live"
+        # Old pinned writers and read-only historical journals may lack these indexes.
+        # Cache schema capability only; order/account data is always read transactionally.
+        self._intent_indexes = {
+            row[0]
+            for row in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='intents'"
+            )
+        }
 
     def close(self) -> None:
         self.db.close()
@@ -270,10 +287,15 @@ class Ledger:
         return _intent(row[0])
 
     def unresolved_orders(self) -> tuple[Intent, ...]:
+        # ORDER BY rowid otherwise makes SQLite prefer a full archival table scan,
+        # even when the partial index exists. Do not depend on planner statistics.
+        index = (
+            " INDEXED BY unresolved_intents" if "unresolved_intents" in self._intent_indexes else ""
+        )
         return tuple(
             _intent(row[0])
             for row in self.db.execute(
-                "SELECT data FROM intents WHERE state NOT IN ('SETTLED','REJECTED') ORDER BY rowid"
+                f"SELECT data FROM intents{index} WHERE state NOT IN ('SETTLED','REJECTED') ORDER BY rowid"
             )
         )
 
@@ -345,10 +367,13 @@ class Ledger:
         # An entry slot represents a filled round or still-possible opening,
         # not a quote that is definitively closed without a fill. Include all
         # BUY intents: a pair's later successful quote has no opening_round key.
+        index = (
+            " INDEXED BY daily_buy_intents" if "daily_buy_intents" in self._intent_indexes else ""
+        )
         daily_rounds = {
             slug
             for slug, state, quantity in self.db.execute(
-                "SELECT json_extract(data,'$.market.slug'),state,json_extract(data,'$.confirmed_quantity') FROM intents WHERE json_extract(data,'$.side')='BUY' AND json_extract(data,'$.created_ms')>=? AND json_extract(data,'$.created_ms')<?",
+                f"SELECT json_extract(data,'$.market.slug'),state,json_extract(data,'$.confirmed_quantity') FROM intents{index} WHERE json_extract(data,'$.side')='BUY' AND json_extract(data,'$.created_ms')>=? AND json_extract(data,'$.created_ms')<?",
                 (day_start, day_start + 86400000),
             )
             if state not in TERMINAL or D(quantity) > 0
@@ -1024,6 +1049,9 @@ class Ledger:
             "timestamp_ms",
             "generation",
             "mode",
+            "symbol",
+            "envelope_ms",
+            "window_seconds",
         }
         safe = {key: value for key, value in record.items() if key in allowed}
         if record.get("kind") == "metadata_rejected":
@@ -1096,18 +1124,20 @@ class Ledger:
     def record_clock(self, now_ms: int) -> None:
         self._write()
         with self.db:
-            for key, raw in self.db.execute("SELECT key,data FROM measurements").fetchall():
+            # Every public tick reaches this path. Completed depth/decision payloads
+            # must not be reread or decoded; the partial index retains only pending
+            # calibration deadlines and removes them transactionally on status change.
+            for key, raw in self.db.execute(
+                "SELECT key,data FROM measurements "
+                "WHERE json_extract(data,'$.kind')='calibration' "
+                "AND json_extract(data,'$.status')='pending' "
+                "AND json_extract(data,'$.target_ms')<?",
+                (now_ms - 2000,),
+            ).fetchall():
                 data = json.loads(raw)
-                if (
-                    data.get("kind") == "calibration"
-                    and data.get("status") == "pending"
-                    and now_ms > data["target_ms"] + 2000
-                ):
-                    data["status"] = "missing"
-                    data["missing_recorded_ms"] = now_ms
-                    self.db.execute(
-                        "UPDATE measurements SET data=? WHERE key=?", (_json(data), key)
-                    )
+                data["status"] = "missing"
+                data["missing_recorded_ms"] = now_ms
+                self.db.execute("UPDATE measurements SET data=? WHERE key=?", (_json(data), key))
 
     def record_snapshot(
         self, snapshot: Snapshot, config: Config, *, modes: tuple[str, ...] = ("value", "momentum")

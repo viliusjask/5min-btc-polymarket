@@ -56,6 +56,14 @@ def _stamp(value: Any) -> int:
     return value
 
 
+def _archive_stamp(value: Any) -> int | None:
+    """A typed envelope; malformed provider values remain only inside raw payload."""
+    try:
+        return _stamp(value)
+    except ValueError:
+        return None
+
+
 class PublicStreams:
     def __init__(
         self,
@@ -64,6 +72,7 @@ class PublicStreams:
         clock: Callable[[], float] = time.time,
         observer: Callable[[dict[str, object]], None] | None = None,
         capture_flow: bool = False,
+        archive: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.config, self.clock, self.observer = config, clock, observer
         self.tokens: tuple[str, ...] = ()
@@ -83,12 +92,22 @@ class PublicStreams:
         self.flow = OrderFlow() if capture_flow else None
         self._depth_task: asyncio.Task[None] | None = None
         self._research_trades: list[PublicTrade] = []
+        self._archive = archive
 
     @property
     def exchange_history(self) -> tuple[PricePoint, ...]:
         return tuple(self._exchange[k] for k in sorted(self._exchange))
 
     def _emit(self, kind: str, **fields: object) -> None:
+        if self._archive is not None and kind == "stream_unavailable":
+            self._archive(
+                {
+                    "kind": kind,
+                    "received_ms": int(self.clock() * 1000),
+                    "session_id": self.session_id,
+                    **fields,
+                }
+            )
         if self.observer is not None:
             self.observer({"kind": kind, "received_ms": int(self.clock() * 1000), **fields})
 
@@ -126,6 +145,21 @@ class PublicStreams:
         self._emit("stream_unavailable", stream="books", code=code, generation=self.generation)
 
     def ingest_exchange(self, event: dict[str, Any]) -> None:
+        if self._archive is not None:
+            self._archive(
+                {
+                    "kind": "binance_trade_wire",
+                    "source": "binance:BTCUSDT:aggTrade",
+                    "received_ms": int(self.clock() * 1000),
+                    "source_ms": _archive_stamp(event.get("T")),
+                    "session_id": self.session_id,
+                    "payload": {
+                        k: event[k]
+                        for k in ("e", "s", "E", "T", "a", "f", "l", "p", "q", "m")
+                        if k in event
+                    },
+                }
+            )
         if event.get("e") != "aggTrade" or event.get("s") != "BTCUSDT":
             raise StreamError("EXCHANGE_IDENTITY")
         stamp, now = _stamp(event.get("T")), int(self.clock() * 1000)
@@ -156,6 +190,39 @@ class PublicStreams:
         kind = event.get("event_type")
         if kind not in ("book", "price_change", "last_trade_price", "tick_size_change"):
             return
+        if self._archive is not None:
+            # Persist before book consolidation/validation: rejected deltas and duplicate
+            # deliveries are evidence, not executable books or additional trade volume.
+            allowed = (
+                "event_type",
+                "market",
+                "timestamp",
+                "asset_id",
+                "hash",
+                "bids",
+                "asks",
+                "price_changes",
+                "price",
+                "size",
+                "side",
+                "transaction_hash",
+                "fee_rate_bps",
+                "old_tick_size",
+                "new_tick_size",
+            )
+            self._archive(
+                {
+                    "kind": "polymarket_wire",
+                    "source": "polymarket:market_websocket",
+                    "source_ms": _archive_stamp(event.get("timestamp")),
+                    "received_ms": int(self.clock() * 1000),
+                    "session_id": self.session_id,
+                    "generation": self.generation,
+                    "subscribed_condition_id": self.condition_id,
+                    "subscribed_tokens": self.tokens,
+                    "payload": {k: event[k] for k in allowed if k in event},
+                }
+            )
         if event.get("market") != self.condition_id:
             raise StreamError("MARKET_IDENTITY")
         stamp, now = _stamp(event.get("timestamp")), int(self.clock() * 1000)

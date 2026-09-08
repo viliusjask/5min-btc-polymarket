@@ -17,6 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from btc5m.archive import historical_window
 from btc5m.config import Config, load_config
 from btc5m.domain import Side
 from btc5m.flow_signals import order_flow_variants
@@ -24,7 +25,13 @@ from btc5m.lab_replay import Replay
 from btc5m.lab_report import replay_report
 from btc5m.lab_scoring import score_forecasts
 from btc5m.lab_tape import Frame, Tape, encode
-from btc5m.lab_variants import Valuations, Variant, default_variants, variant_from
+from btc5m.lab_variants import (
+    Valuations,
+    Variant,
+    default_variants,
+    original_six_variants,
+    variant_from,
+)
 from btc5m.service import atomic_json, notify
 
 SEMANTIC_FILES = (
@@ -38,6 +45,7 @@ SEMANTIC_FILES = (
     "streams.py",
     "strategy.py",
     "lab.py",
+    "archive.py",
     "lab_tape.py",
     "lab_variants.py",
     "lab_replay.py",
@@ -83,6 +91,8 @@ def freeze(
     selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     manifest = json.loads((runtime / "study.json").read_text())
+    if manifest.get("historical"):
+        raise ValueError("HISTORICAL_STUDY_IS_EXPLORATORY")
     if (
         manifest.get("environment") != "paper-lab"
         or manifest.get("implementation") != implementation_id()
@@ -121,6 +131,20 @@ def freeze(
     return phase
 
 
+def registered_variants(config: Config, suite: str, *, dense: bool = False) -> tuple[Variant, ...]:
+    if (
+        suite not in ("directional", "order-flow", "original-six")
+        or suite != "directional"
+        and dense
+    ):
+        raise ValueError("INVALID_LAB_SUITE")
+    if suite == "original-six":
+        return original_six_variants(config)
+    if suite == "order-flow":
+        return order_flow_variants(config)
+    return default_variants(config, dense=dense)
+
+
 class Study:
     def __init__(
         self,
@@ -132,8 +156,22 @@ class Study:
         variants: tuple[Variant, ...] | None = None,
         explore_rounds: int | None = None,
         suite: str | None = None,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+        variant_ids: tuple[str, ...] | None = None,
     ) -> None:
         self.path = runtime.resolve()
+        if (start_ms is None) != (end_ms is None):
+            raise ValueError("HISTORICAL_START_AND_END_REQUIRED")
+        if start_ms is not None and explore_rounds is not None:
+            raise ValueError("HISTORICAL_RANGE_REPLACES_EXPLORE_ROUNDS")
+        if (
+            start_ms is not None
+            and self.path.exists()
+            and not (self.path / "study.json").exists()
+            and any(p.name != "worker.lock" for p in self.path.iterdir())
+        ):
+            raise ValueError("HISTORICAL_REQUIRES_NEW_STUDY_RUNTIME")
         self.path.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lock = os.open(self.path / "worker.lock", os.O_CREAT | os.O_RDWR, 0o600)
         self.runners: dict[tuple[str, str], Replay] = {}
@@ -143,10 +181,21 @@ class Study:
             os.close(self.lock)
             raise ValueError("LAB_WORKER_ALREADY_RUNNING") from None
         try:
-            self.tape = Tape(source, readonly=True)
             manifest_path = self.path / "study.json"
-            if manifest_path.exists():
-                self.manifest = json.loads(manifest_path.read_text())
+            existing = json.loads(manifest_path.read_text()) if manifest_path.exists() else None
+            if manifest_path.exists() and not isinstance(existing, dict):
+                raise ValueError("INVALID_LAB_MANIFEST")
+            # Replay restores labels at its own cursor below. Do not eagerly parse
+            # labels appended after a historical study's frozen archive boundary.
+            self.tape = Tape(
+                source,
+                readonly=True,
+                label_highwater=0
+                if start_ms is not None or existing and existing.get("historical")
+                else None,
+            )
+            if isinstance(existing, dict):
+                self.manifest: dict[str, Any] = existing
                 if (
                     dense is not None
                     and dense != self.manifest["dense"]
@@ -158,14 +207,21 @@ class Study:
                     != self.manifest["variants"]
                     or suite is not None
                     and suite != self.manifest.get("suite", "directional")
+                    or start_ms is not None
+                    and (
+                        not self.manifest.get("historical")
+                        or start_ms != self.manifest["start_ms"]
+                        or end_ms != self.manifest["explore_end_ms"]
+                    )
+                    or variant_ids is not None
+                    and list(variant_ids) != [v["ident"] for v in self.manifest["variants"]]
                 ):
                     raise ValueError("LAB_TRIALS_CHANGED_USE_NEW_STUDY")
             else:
                 explore_rounds = 288 if explore_rounds is None else explore_rounds
                 dense = bool(dense)
                 suite = suite or "directional"
-                if suite not in ("directional", "order-flow") or suite == "order-flow" and dense:
-                    raise ValueError("INVALID_LAB_SUITE")
+                registered = registered_variants(config, suite, dense=dense)
                 if type(explore_rounds) is not int or not 12 <= explore_rounds <= 2016:
                     raise ValueError("EXPLORE_ROUNDS_MUST_BE_12_TO_2016")
                 source_start = 0
@@ -181,15 +237,47 @@ class Study:
                 ).fetchone()
                 stamp = first[0] if first else int(time.time() * 1000)
                 start = (stamp // 300000 + 1) * 300000
-                selected = (
-                    variants
-                    if variants is not None
-                    else order_flow_variants(config)
-                    if suite == "order-flow"
-                    else default_variants(config, dense=dense)
-                )
+                selected = variants if variants is not None else registered
+                if variant_ids is not None:
+                    known = {v.ident: v for v in selected}
+                    if (
+                        not variant_ids
+                        or len(set(variant_ids)) != len(variant_ids)
+                        or not set(variant_ids) <= known.keys()
+                    ):
+                        raise ValueError("SELECT_UNIQUE_REGISTERED_VARIANTS")
+                    selected = tuple(known[ident] for ident in variant_ids)
                 if not selected or len({v.ident for v in selected}) != len(selected):
                     raise ValueError("LAB_REQUIRES_UNIQUE_REGISTERED_VARIANTS")
+                historical = None
+                if start_ms is not None:
+                    assert end_ms is not None
+                    historical = historical_window(
+                        source,
+                        start_ms,
+                        end_ms,
+                        warmup_ms=max(
+                            v.config.strategy.volatility_long_seconds + 60 for v in selected
+                        )
+                        * 1000,
+                    )
+                    if historical["tape_identity"] != self.tape.identity:
+                        raise ValueError("LAB_SOURCE_IDENTITY_CHANGED")
+                    # Flow history begins only where the recorder explicitly enabled it.
+                    if suite == "order-flow" and (first is None or first[0] >= end_ms):
+                        raise ValueError("FLOW_RECORDING_REQUIRED_IN_HISTORICAL_RANGE")
+                    source_start = max(source_start, historical["source_start"])
+                    if source_start != historical["source_start"]:
+                        warmup = self.tape.db.execute(
+                            "SELECT now_ms FROM frames WHERE id>? ORDER BY id LIMIT 1",
+                            (source_start,),
+                        ).fetchone()[0]
+                        historical.update(
+                            source_start=source_start,
+                            warmup_first_ms=warmup if warmup < start_ms else None,
+                            warmup_available_span_ms=max(0, start_ms - warmup),
+                        )
+                    start = start_ms
                 self.manifest = json.loads(
                     encode(
                         {
@@ -203,7 +291,10 @@ class Study:
                             "created_ms": int(time.time() * 1000),
                             "base_config": config.fingerprint,
                             "start_ms": start,
-                            "explore_end_ms": start + explore_rounds * 300000,
+                            "explore_end_ms": end_ms
+                            if historical
+                            else start + explore_rounds * 300000,
+                            **({"historical": historical} if historical else {}),
                             "dense": dense,
                             "variants": [v.record() for v in selected],
                             "selection_policy": {
@@ -228,20 +319,45 @@ class Study:
             if self.manifest["base_config"] != config.fingerprint:
                 raise ValueError("LAB_CONFIGURATION_CHANGED_USE_NEW_STUDY")
             self.variants = {v.ident: v for v in map(variant_from, self.manifest["variants"])}
+            self.historical = self.manifest.get("historical")
+            self.source_cap = self.historical["source_highwater"] if self.historical else None
+            if self.source_cap is not None and self.tape.highwater() < self.source_cap:
+                raise ValueError("HISTORICAL_SOURCE_TRUNCATED")
             self.db = _database(self.path / "study.sqlite")
             exploration = {
                 "id": "explore",
                 "kind": "exploratory",
                 "start_ms": self.manifest["start_ms"],
-                "end_ms": None,
+                "end_ms": self.manifest["explore_end_ms"] if self.historical else None,
                 "variant_ids": list(self.variants),
             }
             with self.db:
                 self.db.execute(
                     "INSERT OR IGNORE INTO phases VALUES (?,?)", ("explore", encode(exploration))
                 )
+                if self.historical:
+                    self.db.executemany(
+                        "INSERT OR IGNORE INTO forecasts VALUES (?,?)",
+                        (
+                            (
+                                f"btc-updown-5m-{stamp // 1000}",
+                                encode(
+                                    {
+                                        "slug": f"btc-updown-5m-{stamp // 1000}",
+                                        "target_ms": stamp + 180000,
+                                        "status": "pending",
+                                    }
+                                ),
+                            )
+                            for stamp in range(
+                                self.manifest["start_ms"], self.manifest["explore_end_ms"], 300000
+                            )
+                        ),
+                    )
             self.cursor = int(self._meta("cursor") or self.manifest.get("source_start", 0))
             self.now_ms = int(self._meta("now_ms") or 0)
+            if self.source_cap is not None and self.cursor > self.source_cap:
+                raise ValueError("HISTORICAL_CURSOR_OUTSIDE_ARCHIVE")
             self.labels = self.tape.labels_at(self.cursor)
             self.phases: list[dict[str, Any]] = []
             self.refresh_phases()
@@ -263,6 +379,11 @@ class Study:
         self.phases = [
             json.loads(row[0]) for row in self.db.execute("SELECT data FROM phases ORDER BY rowid")
         ]
+        if self.historical and any(
+            p["kind"] != "exploratory" or p["end_ms"] != self.manifest["explore_end_ms"]
+            for p in self.phases
+        ):
+            raise ValueError("HISTORICAL_STUDY_IS_EXPLORATORY")
         for phase in self.phases:
             for ident in phase["variant_ids"]:
                 key = phase["id"], ident
@@ -274,6 +395,9 @@ class Study:
                         phase["start_ms"],
                         phase["end_ms"],
                     )
+                    self.runners[key] = runner
+                    if self.source_cap is not None and runner.cursor > self.source_cap:
+                        raise ValueError("HISTORICAL_CURSOR_OUTSIDE_ARCHIVE")
                     if runner.cursor == 0 and phase["kind"] == "holdout":
                         # No entry before the future boundary. Initialize at the frozen
                         # input watermark, without replaying earlier trades or labels.
@@ -290,7 +414,8 @@ class Study:
                         with runner.ledger.db:
                             runner.ledger._set("lab_cursor", str(runner.cursor))
                             runner.ledger._set("lab_labels", encode(runner.labels))
-                    self.runners[key] = runner
+                    if self.historical:
+                        runner.labels = self.tape.labels_at(runner.cursor)
 
     def _forecast(self, frame: Frame, cache: Valuations | None) -> None:
         slot = frame.now_ms // 300000 * 300
@@ -346,10 +471,14 @@ class Study:
         # A missing capture cannot vanish from the denominator when the process resumes.
         if self.now_ms:
             first = self.now_ms // 300000 * 300
+            if self.historical:
+                first = max(first, self.manifest["start_ms"] // 1000)
             for missed in range(first, slot, 300):
                 key = f"btc-updown-5m-{missed}"
                 self.db.execute(
-                    "INSERT OR IGNORE INTO forecasts VALUES (?,?)",
+                    "INSERT INTO forecasts VALUES (?,?) ON CONFLICT(slug) DO UPDATE SET data=excluded.data WHERE json_extract(forecasts.data,'$.status')='pending'"
+                    if self.historical
+                    else "INSERT OR IGNORE INTO forecasts VALUES (?,?)",
                     (
                         key,
                         encode(
@@ -357,14 +486,33 @@ class Study:
                         ),
                     ),
                 )
+            predicate = ""
+            parameters: tuple[Any, ...] = (frame.now_ms,)
+            if self.historical:
+                # Only the prior/current receipt round can have become overdue;
+                # do not revisit the entire pre-registered historical interval.
+                predicate = " AND slug IN (?,?)"
+                parameters += (slug, f"btc-updown-5m-{first}")
             self.db.execute(
-                "UPDATE forecasts SET data=json_set(data,'$.status','missing') WHERE json_extract(data,'$.status')='pending' AND json_extract(data,'$.target_ms')+2000<?",
-                (frame.now_ms,),
+                "UPDATE forecasts SET data=json_set(data,'$.status','missing') WHERE json_extract(data,'$.status')='pending' AND json_extract(data,'$.target_ms')+2000<?"
+                + predicate,
+                parameters,
             )
 
     async def advance(self, *, limit: int = 32) -> int:
         self.refresh_phases()
         cursor = min([self.cursor, *(r.cursor for r in self.runners.values())])
+        if self.source_cap is not None:
+            # Count only the bounded next batch, so read_after never decodes newer
+            # frames, including when the source has nonconsecutive row IDs.
+            limit = len(
+                self.tape.db.execute(
+                    "SELECT id FROM frames WHERE id>? AND id<=? ORDER BY id LIMIT ?",
+                    (cursor, self.source_cap, limit),
+                ).fetchall()
+            )
+            if not limit:
+                return 0
         count = 0
         for frame in self.tape.read_after(cursor, limit=limit):
             cache = Valuations(frame.snapshot) if frame.snapshot else None
@@ -372,7 +520,17 @@ class Study:
                 await runner.apply(frame, cache)
             if frame.ident > self.cursor:
                 with self.db:
-                    self._forecast(frame, cache)
+                    if (
+                        not self.historical
+                        or self.manifest["start_ms"]
+                        <= frame.now_ms
+                        < self.manifest["explore_end_ms"]
+                    ):
+                        self._forecast(frame, cache)
+                    elif self.now_ms < self.manifest["explore_end_ms"] <= frame.now_ms:
+                        self.db.execute(
+                            "UPDATE forecasts SET data=json_set(data,'$.status','missing') WHERE json_extract(data,'$.status')='pending'"
+                        )
                     if frame.research is not None and self.manifest.get("suite") == "order-flow":
                         self.db.execute(
                             "INSERT INTO research VALUES (?,?,?)",
@@ -434,15 +592,46 @@ class Study:
                 )
             ]
             phases.append({**phase, "variants": results, "forecasts": score_forecasts(subset)})
+        historical = None
+        if self.historical:
+            unresolved = []
+            for (_, ident), runner in self.runners.items():
+                positions = len(runner.ledger.active_positions())
+                claimable = [
+                    p
+                    for p in runner.ledger.positions()
+                    if p.status == "CLAIMABLE" and p.claimable_value > 0
+                ]
+                orders = len(runner.ledger.unresolved_orders())
+                if positions or claimable or orders:
+                    unresolved.append(
+                        {
+                            "ident": ident,
+                            "open_positions": positions,
+                            "claimable_positions": len(claimable),
+                            "claimable_value": str(sum(p.claimable_value for p in claimable)),
+                            "unresolved_orders": orders,
+                        }
+                    )
+            historical = {
+                **self.historical,
+                "complete": self.cursor == self.source_cap
+                and all(r.cursor == self.source_cap for r in self.runners.values()),
+                "unresolved_variants": unresolved,
+                "interpretation": "Selected historical entries are exploratory. Later frames and official labels stop at the frozen archive limit; unresolved exposure is not counted as a completed return.",
+            }
         return json.loads(
             encode(
                 {
                     "environment": "paper-lab",
                     "suite": self.manifest.get("suite", "directional"),
-                    "status": "running",
+                    "status": "complete" if historical and historical["complete"] else "running",
                     "generated_ms": int(time.time() * 1000),
                     "as_of_ms": self.now_ms,
-                    "source_highwater": self.tape.highwater(),
+                    "source_highwater": self.source_cap
+                    if self.historical
+                    else self.tape.highwater(),
+                    **({"historical": historical} if historical else {}),
                     "cursor": self.cursor,
                     "implementation": self.manifest["implementation"],
                     "trial_count": len(self.variants),
@@ -452,7 +641,7 @@ class Study:
                     "research": self.research_report(),
                     "limitations": [
                         "Paper execution on recorded public inputs; no venue orders. Independent variants cannot have their PnL added together.",
-                        "Same $100 starting capital and fixed trade budget, with existing daily/session loss guards; cash is not replenished.",
+                        "Original-six uses paper --strategies all per-wallet capital and loss limits; other suites use independent $100 wallets. Fixed trade budgets and loss guards remain active; cash is not replenished.",
                         "The recording cadence bounds execution precision. Latency variants wait at least their configured delay and then require subsequent protected depth.",
                         "Uncertain rounds are excluded from clean completed profit. Missing marks can conceal larger drawdowns; bid marks do not guarantee a full exit.",
                         "All rankings are exploratory until a frozen later-data test completes. Thirty completed rounds is a reporting/selection gate, not statistical proof.",
@@ -489,7 +678,11 @@ class Study:
         }
 
     def auto_freeze(self) -> dict[str, Any] | None:
-        if self._meta("auto_frozen") or self.now_ms < self.manifest["explore_end_ms"]:
+        if (
+            self.historical
+            or self._meta("auto_frozen")
+            or self.now_ms < self.manifest["explore_end_ms"]
+        ):
             return None
         cutoff = self.manifest["explore_end_ms"]
         for prior in self.phases:
@@ -549,6 +742,21 @@ class Study:
 
 async def run_lab(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    if args.lab_action == "variants":
+        print(
+            encode(
+                {
+                    "suite": args.suite or "directional",
+                    "variants": [
+                        v.record()
+                        for v in registered_variants(
+                            config, args.suite or "directional", dense=bool(args.dense)
+                        )
+                    ],
+                }
+            )
+        )
+        return 0
     if args.lab_action == "freeze":
         print(encode(freeze(args.runtime, args.variants.split(","), test_rounds=args.test_rounds)))
         return 0
@@ -564,7 +772,14 @@ async def run_lab(args: argparse.Namespace) -> int:
             dense=args.dense,
             explore_rounds=args.explore_rounds,
             suite=args.suite,
+            start_ms=getattr(args, "start", None),
+            end_ms=getattr(args, "end", None),
+            variant_ids=tuple(args.variants.split(","))
+            if getattr(args, "variants", None) is not None
+            else None,
         ) as study:
+            if study.historical and args.continuous:
+                raise ValueError("HISTORICAL_STUDY_REQUIRES_FINITE_RUN")
             notify("READY=1\nSTATUS=Paper experiment worker running")
             last_report = 0.0
             while not stop.is_set():
@@ -584,7 +799,8 @@ async def run_lab(args: argparse.Namespace) -> int:
                     except TimeoutError:
                         pass
             report = study.report()
-            report["status"] = "stopped"
+            if report["status"] != "complete":
+                report["status"] = "stopped"
             atomic_json(study.path / "report.json", report)
             print(
                 encode(

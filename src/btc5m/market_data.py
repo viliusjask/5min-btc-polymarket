@@ -37,6 +37,7 @@ from polymarket.streams import CryptoPricesChainlinkTwapSpec, CryptoPricesSpec
 
 from btc5m.config import Config
 from btc5m.domain import Book, Level, Market, PricePoint, Snapshot
+from btc5m.public_archive import PublicArchive, public_metadata
 from btc5m.streams import PublicStreams
 
 SOURCE = "https://data.chain.link/streams/btc-usd-twap-60s-streams"
@@ -190,6 +191,7 @@ class MarketData:
         observer: Callable[[dict[str, object]], None] | None = None,
         enhanced: bool = False,
         capture_flow: bool = False,
+        capture_archive: bool = False,
     ) -> None:
         self.config = config
         self._client = client if client is not None else AsyncPublicClient()
@@ -200,6 +202,7 @@ class MarketData:
         self._points: dict[str, dict[int, PricePoint]] = {"spot": {}, "twap60": {}}
         self._receipts: dict[str, float] = {}
         self._stream_error: dict[str, str] = {}
+        self._oracle_generation = {"spot": 0, "twap60": 0}
         self._conflicting_points: dict[str, set[int]] = {"spot": set(), "twap60": set()}
         self._rounds: dict[str, _Round] = {}
         self._retained_rounds: set[str] = set()
@@ -210,9 +213,14 @@ class MarketData:
         self._reference_poll_wakeup = asyncio.Event()
         self._history_ms = (config.strategy.volatility_long_seconds + 60) * 1000
         self._max_points = (config.strategy.volatility_long_seconds + 60) * 2 + 100
+        self.archive = PublicArchive() if capture_archive else None
         self.streams = (
             PublicStreams(
-                config, clock=clock, observer=self._stream_observation, capture_flow=capture_flow
+                config,
+                clock=clock,
+                observer=self._stream_observation,
+                capture_flow=capture_flow,
+                archive=self.archive.record if self.archive else None,
             )
             if enhanced
             else None
@@ -436,6 +444,24 @@ class MarketData:
         return int(self._clock() * 1000)
 
     def _emit(self, kind: str, **fields: object) -> None:
+        if self.archive is not None and (
+            kind
+            in (
+                "spot",
+                "twap60",
+                "price_conflict",
+                "anchor",
+                "final_reference",
+                "metadata_unavailable",
+                "metadata_rejected",
+                "metadata_tick_compatible",
+                "http_unavailable",
+                "book_unavailable",
+                "book_grid_rejected",
+            )
+            or (kind == "stream_unavailable" and fields.get("stream") in ("spot", "twap60"))
+        ):
+            self.archive.record({"kind": kind, "received_ms": self._now(), **fields})
         if self._observer is None or self._observer_failed:
             return
         now = int(str(fields.get("received_ms", self._now())))
@@ -494,6 +520,7 @@ class MarketData:
         while not self._closed:
             handle = None
             try:
+                self._oracle_generation[kind] += 1
                 async with asyncio.timeout(HTTP_TIMEOUT):
                     handle = await self._client.subscribe(spec)
                 while not self._closed:
@@ -512,7 +539,11 @@ class MarketData:
                 self._stream_error[kind] = code
                 self._receipts.pop(kind, None)
                 self._emit(
-                    "stream_unavailable", stream=kind, code=code, error_type=type(exc).__name__
+                    "stream_unavailable",
+                    stream=kind,
+                    code=code,
+                    error_type=type(exc).__name__,
+                    generation=self._oracle_generation[kind],
                 )
             finally:
                 if handle is not None:
@@ -548,7 +579,14 @@ class MarketData:
         if previous is not None:
             if previous.price != point.price:
                 self._conflicting_points[kind].add(stamp)
-                self._emit("price_conflict", stream=kind, source_ms=stamp)
+                self._emit(
+                    "price_conflict",
+                    stream=kind,
+                    source_ms=stamp,
+                    received_ms=now,
+                    price=str(point.price),
+                    captured_price=str(previous.price),
+                )
                 if kind == "twap60" and stamp % 300000 == 0:
                     state = self._rounds.get(f"btc-updown-5m-{stamp // 1000}")
                     if state is not None:
@@ -569,8 +607,13 @@ class MarketData:
         self._emit(
             kind,
             source_ms=stamp,
+            received_ms=now,
             price=str(point.price),
             source=SOURCE if kind == "twap60" else "prices.crypto.chainlink",
+            symbol=event.payload.symbol,
+            envelope_ms=int(event.timestamp.timestamp() * 1000) if event.timestamp else None,
+            window_seconds=60 if kind == "twap60" else None,
+            generation=self._oracle_generation[kind],
         )
         if kind == "twap60" and stamp % 300000 == 0:
             state = self._rounds.get(f"btc-updown-5m-{stamp // 1000}")
@@ -605,7 +648,18 @@ class MarketData:
             async with asyncio.timeout(HTTP_TIMEOUT):
                 response = await self._http.get(url, timeout=HTTP_TIMEOUT, **kwargs)
                 response.raise_for_status()
-                return _mapping(json.loads(response.text, parse_float=Decimal))
+                raw = _mapping(json.loads(response.text, parse_float=Decimal))
+                if self.archive is not None:
+                    self.archive.record(
+                        {
+                            "kind": "public_metadata",
+                            "received_ms": self._now(),
+                            "source": str(response.request.url),
+                            "timestamp_basis": "receipt_only",
+                            "payload": public_metadata(raw),
+                        }
+                    )
+                return raw
         except DataUnavailable:
             raise
         except Exception as exc:
@@ -620,6 +674,32 @@ class MarketData:
             async with asyncio.timeout(HTTP_TIMEOUT):
                 raw: OrderBook = await self._client.get_order_book(token_id=token_id)
             now = self._now()
+            if self.archive is not None:
+                self.archive.record(
+                    {
+                        "kind": "public_metadata",
+                        "received_ms": now,
+                        "source": f"{CLOB}/book?token_id={token_id}; SDK normalized",
+                        "source_ms": int(raw.timestamp.timestamp() * 1000)
+                        if raw.timestamp
+                        else None,
+                        "payload": {
+                            "asset_id": str(raw.asset_id),
+                            "market": str(raw.condition_id),
+                            "tick_size": str(raw.tick_size),
+                            "min_order_size": str(raw.min_order_size),
+                            "timestamp": str(raw.timestamp),
+                            "hash": raw.hash,
+                            "neg_risk": raw.neg_risk,
+                            "bids": [
+                                {"price": str(x.price), "size": str(x.size)} for x in raw.bids
+                            ],
+                            "asks": [
+                                {"price": str(x.price), "size": str(x.size)} for x in raw.asks
+                            ],
+                        },
+                    }
+                )
             if str(raw.asset_id) != token_id or raw.neg_risk is not False or raw.timestamp is None:
                 raise DataUnavailable("INVALID_BOOK_METADATA")
             stamp = _timestamp(int(raw.timestamp.timestamp() * 1000))
@@ -739,7 +819,10 @@ class MarketData:
 
     def _retire_rounds(self) -> None:
         now = self._now()
-        for slug, state in list(self._rounds.items()):
+        # Tape recovery inserts historical rounds after the active round. Evict
+        # by market time, so expired recovery slots leave before the count limit
+        # can discard fresh reference evidence (including sticky conflicts).
+        for slug, state in sorted(self._rounds.items(), key=lambda item: item[1].start_s):
             if slug in self._retained_rounds:
                 continue
             if now > (state.start_s + 300 + 3600) * 1000 or len(self._rounds) > 12 + len(
@@ -780,6 +863,35 @@ class MarketData:
             try:
                 async with asyncio.timeout(HTTP_TIMEOUT):
                     event = await self._client.get_event(slug=state.slug, include_chat=False)
+                if self.archive is not None:
+                    self.archive.record(
+                        {
+                            "kind": "public_metadata",
+                            "received_ms": self._now(),
+                            "source": provenance,
+                            "timestamp_basis": "receipt_only",
+                            "payload": {
+                                "slug": event.slug,
+                                "description": event.description,
+                                "resolutionSource": event.resolution.source,
+                                "startTime": event.schedule.start_time,
+                                "endDate": event.schedule.end_date,
+                                "eventMetadata": {
+                                    k: event.metadata[k]
+                                    for k in ("priceToBeat", "finalPrice")
+                                    if event.metadata and k in event.metadata
+                                },
+                                "markets": [
+                                    {
+                                        "conditionId": str(m.condition_id),
+                                        "description": m.description,
+                                        "resolutionSource": m.resolution.source,
+                                    }
+                                    for m in event.markets
+                                ],
+                            },
+                        }
+                    )
                 if (
                     event.slug != state.slug
                     or len(event.markets) != 1

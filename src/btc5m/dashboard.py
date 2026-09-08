@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import signal
 import sqlite3
 import threading
 import time
 from collections import Counter
+from dataclasses import asdict, replace
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,12 +20,14 @@ from btc5m.capture_quality import read_quality
 from btc5m.comparison import MASTER_WALLET
 from btc5m.config import STRATEGIES, Config
 from btc5m.dashboard_live import LiveDashboardReader
+from btc5m.experiment_browser import ExperimentBrowser
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.paper import PAPER_MATCHING_MODEL
 from btc5m.research import ResearchReader
 
 D = Decimal
 ASSETS = Path(__file__).with_name("dashboard_assets")
+LOG = logging.getLogger(__name__)
 
 
 def lab_profit_context(payload: dict[str, Any]) -> None:
@@ -168,8 +172,52 @@ class DashboardReader:
     def __init__(self, path: Path, config: Config) -> None:
         self.path, self.config = path.resolve(), config
         self.lock = threading.Lock()
+        self._stop = threading.Event()
+        self._worker: threading.Thread | None = None
         self.identity: tuple[int, int] | None = None
         self._reset()
+
+    def start(self) -> None:
+        """Follow the public journal independently of browser request/cache cadence."""
+        with self.lock:
+            if self._worker is None and not self._stop.is_set():
+                self._worker = threading.Thread(
+                    target=self._follow, name="paper-dashboard-history", daemon=True
+                )
+                self._worker.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._worker is not None:
+            self._worker.join()
+
+    def _follow(self) -> None:
+        failed = False
+        while not self._stop.is_set():
+            # A slow HTTP portfolio read must not keep a closing worker waiting for its lock.
+            if not self.lock.acquire(timeout=0.1):
+                continue
+            delay = 1.0
+            try:
+                if self._stop.is_set():
+                    return
+                # Only public history is pumped here, not the six portfolio journals.
+                _, maximum = self._master(limit=10000)
+                failed = False
+                if self.cursor < maximum:
+                    delay = 0.05
+            except Exception as exc:
+                if not failed and not self._stop.is_set():
+                    # Never log event payloads, filesystem paths or raw exception messages.
+                    LOG.warning(
+                        "PAPER_HISTORY_UNAVAILABLE events_loaded=%s error_type=%s",
+                        self.cursor,
+                        type(exc).__name__,
+                    )
+                failed = True
+            finally:
+                self.lock.release()
+            self._stop.wait(delay)
 
     def _reset(self) -> None:
         self.cursor = 0
@@ -292,7 +340,7 @@ class DashboardReader:
             self.incidents[key].update(last_ms=stamp)
             self.incidents[key]["count"] += 1
 
-    def _master(self) -> tuple[dict[str, Any], int]:
+    def _master(self, *, limit: int = 100000) -> tuple[dict[str, Any], int]:
         manifest_path = self.path / "paper.json"
         if manifest_path.stat().st_size > 16384:
             raise LedgerError("INVALID_PAPER_MANIFEST")
@@ -314,6 +362,7 @@ class DashboardReader:
             self.identity = identity
         master = Ledger(path, MASTER_WALLET, readonly=True)
         try:
+            master.db.set_progress_handler(lambda: int(self._stop.is_set()), 1000)
             if master.environment != "paper":
                 raise LedgerError("EXECUTION_ENVIRONMENT_MISMATCH")
             master.db.execute("BEGIN")
@@ -329,9 +378,17 @@ class DashboardReader:
                     'received_ms',at_ms,'source_ms',json_extract(data,'$.source_ms'),
                     'bid_count',json_array_length(data,'$.bids'),'ask_count',json_array_length(data,'$.asks'),
                     'best_bid',json_extract(data,'$.bids[0].price'),'best_ask',json_extract(data,'$.asks[0].price'))
-                ELSE data END FROM events WHERE id>? AND id<=? ORDER BY id LIMIT 100000"""
-            for ident, kind, stamp, raw in master.db.execute(query, (self.cursor, maximum)):
-                self._consume(kind, stamp, json.loads(raw))
+                ELSE data END FROM events WHERE id>? AND id<=? ORDER BY id LIMIT ?"""
+            for ident, kind, stamp, raw in master.db.execute(query, (self.cursor, maximum, limit)):
+                if self._stop.is_set():
+                    break
+                try:
+                    self._consume(kind, stamp, json.loads(raw))
+                except Exception:
+                    # A malformed row may have changed several aggregates before failing.
+                    # Rebuild from the journal on recovery, never retry over partial counts.
+                    self._reset()
+                    raise
                 self.cursor = ident
         finally:
             master.close()
@@ -349,6 +406,41 @@ class DashboardReader:
                 raise LedgerError("EXECUTION_ENVIRONMENT_MISMATCH")
             ledger.db.execute("BEGIN")
             summary, result = ledger.summary(), ledger.portfolio_results()[name]
+            # Match the actual per-portfolio session fingerprint before presenting
+            # current config as captured settings or deriving loss-budget headroom.
+            risk = replace(
+                self.config.risk,
+                allocation_usd=allocation,
+                daily_loss_usd=min(self.config.risk.daily_loss_usd, allocation),
+                session_loss_usd=min(self.config.risk.session_loss_usd, allocation),
+            )
+            configured = replace(
+                self.config, strategy=replace(self.config.strategy, mode=name), risk=risk
+            )
+            fingerprint = ledger.db.execute(
+                "SELECT fingerprint FROM sessions WHERE id=?", (summary.session_id,)
+            ).fetchone()
+            verified_config = fingerprint is not None and fingerprint[0] == configured.fingerprint
+            exposure = summary.position_risk + summary.risk_reserve
+            risk_budget = (
+                {
+                    "daily_loss_limit": risk.daily_loss_usd,
+                    "session_loss_limit": risk.session_loss_usd,
+                    "daily_realized_net": summary.daily_realized_net_pnl,
+                    "session_realized_net": summary.session_realized_net_pnl,
+                    "held_position_risk": summary.position_risk,
+                    "reserved_for_orders": summary.risk_reserve,
+                    "daily_remaining_before_new_order": risk.daily_loss_usd
+                    - max(D(0), -summary.daily_realized_net_pnl)
+                    - exposure,
+                    "session_remaining_before_new_order": risk.session_loss_usd
+                    - max(D(0), -summary.session_realized_net_pnl)
+                    - exposure,
+                    "configured_trade_budget": risk.trade_budget_usd,
+                }
+                if verified_config
+                else None
+            )
             orders = {
                 ident: json.loads(raw)
                 for ident, raw in ledger.db.execute("SELECT id,data FROM intents")
@@ -459,6 +551,8 @@ class DashboardReader:
             return {
                 **result,
                 "allocation": allocation,
+                "configuration": asdict(configured) if verified_config else None,
+                "risk_budget": risk_budget,
                 "cash": summary.cash,
                 "risk_reserved": summary.risk_reserve,
                 "halts": summary.halts,
@@ -513,6 +607,8 @@ class DashboardReader:
 
     def snapshot(self, *, now_ms: int | None = None) -> dict[str, Any]:
         with self.lock:
+            if self._stop.is_set():
+                raise LedgerError("DASHBOARD_READER_CLOSED")
             now = int(time.time() * 1000) if now_ms is None else now_ms
             manifest, maximum = self._master()
             selected = manifest["strategies"]
@@ -600,6 +696,7 @@ def make_server(
     if not 0 <= port <= 65535:
         raise LedgerError("INVALID_DASHBOARD_PORT")
     research = ResearchReader(reader.path)
+    experiments = ExperimentBrowser(reader)
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self) -> None:
@@ -642,6 +739,7 @@ def make_server(
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/lab.js": ("lab.js", "text/javascript; charset=utf-8"),
                 "/research.js": ("research.js", "text/javascript; charset=utf-8"),
+                "/browser.js": ("browser.js", "text/javascript; charset=utf-8"),
                 "/style.css": ("style.css", "text/css; charset=utf-8"),
                 "/icon.svg": ("icon.svg", "image/svg+xml"),
             }
@@ -653,6 +751,45 @@ def make_server(
                     payload = json.dumps(reader.snapshot(), allow_nan=False).encode()
                 except Exception:
                     self.respond(503, b'{"error":"PAPER_DATA_UNAVAILABLE"}', "application/json")
+                    return
+                self.respond(200, payload, "application/json")
+            elif path in ("/api/experiments", "/api/experiment"):
+                from urllib.parse import parse_qs
+
+                params = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                if (path == "/api/experiments" and params) or (
+                    path == "/api/experiment"
+                    and (
+                        set(params) != {"key", "cohort"}
+                        or any(len(v) != 1 for v in params.values())
+                    )
+                ):
+                    self.respond(400, b'{"error":"INVALID_EXPERIMENT_QUERY"}', "application/json")
+                    return
+                try:
+                    result = (
+                        experiments.snapshot()
+                        if path == "/api/experiments"
+                        else experiments.detail(params["key"][0], params["cohort"][0])
+                    )
+                    payload = json.dumps(result, allow_nan=False).encode()
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    ArithmeticError,
+                    sqlite3.Error,
+                    LedgerError,
+                ) as exc:
+                    invalid = isinstance(exc, ValueError) and str(exc).startswith(
+                        "UNKNOWN_EXPERIMENT"
+                    )
+                    self.respond(
+                        400 if invalid else 503,
+                        b'{"error":"EXPERIMENT_UNAVAILABLE_OR_INVALID_SELECTION"}',
+                        "application/json",
+                    )
                     return
                 self.respond(200, payload, "application/json")
             elif path == "/api/lab":
@@ -741,11 +878,19 @@ def make_server(
         do_DELETE = do_POST
         do_PATCH = do_POST
 
+    class Server(ThreadingHTTPServer):
+        def server_close(self) -> None:
+            try:
+                super().server_close()
+            finally:
+                reader.close()
+
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        server = Server(("127.0.0.1", port), Handler)
     except OSError:
         raise LedgerError("DASHBOARD_PORT_UNAVAILABLE") from None
     server.daemon_threads = True
+    reader.start()
     return server
 
 

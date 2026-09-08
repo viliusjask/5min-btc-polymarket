@@ -156,6 +156,11 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created_ms INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS intents (id TEXT PRIMARY KEY, opening_round TEXT UNIQUE, state TEXT NOT NULL, data TEXT NOT NULL, signed_payload TEXT);
+                CREATE INDEX IF NOT EXISTS unresolved_intents ON intents(state)
+                    WHERE state NOT IN ('SETTLED','REJECTED');
+                CREATE INDEX IF NOT EXISTS daily_buy_intents
+                    ON intents(json_extract(data,'$.created_ms'))
+                    WHERE json_extract(data,'$.side')='BUY';
                 CREATE TABLE IF NOT EXISTS positions (id TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS fills (chain INTEGER, tx TEXT, log INTEGER, intent_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(chain,tx,log));
                 CREATE TABLE IF NOT EXISTS accounting (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, day TEXT NOT NULL, cash TEXT NOT NULL, pnl TEXT NOT NULL, fee TEXT NOT NULL);
@@ -187,6 +192,14 @@ class Ledger:
             raise LedgerError("WALLET_MISMATCH")
         if readonly:
             self.environment = self._meta("environment") or "live"
+        # Old pinned writers and read-only historical journals may lack these indexes.
+        # Cache schema capability only; order/account data is always read transactionally.
+        self._intent_indexes = {
+            row[0]
+            for row in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='intents'"
+            )
+        }
 
     def close(self) -> None:
         self.db.close()
@@ -274,10 +287,15 @@ class Ledger:
         return _intent(row[0])
 
     def unresolved_orders(self) -> tuple[Intent, ...]:
+        # ORDER BY rowid otherwise makes SQLite prefer a full archival table scan,
+        # even when the partial index exists. Do not depend on planner statistics.
+        index = (
+            " INDEXED BY unresolved_intents" if "unresolved_intents" in self._intent_indexes else ""
+        )
         return tuple(
             _intent(row[0])
             for row in self.db.execute(
-                "SELECT data FROM intents WHERE state NOT IN ('SETTLED','REJECTED') ORDER BY rowid"
+                f"SELECT data FROM intents{index} WHERE state NOT IN ('SETTLED','REJECTED') ORDER BY rowid"
             )
         )
 
@@ -349,10 +367,13 @@ class Ledger:
         # An entry slot represents a filled round or still-possible opening,
         # not a quote that is definitively closed without a fill. Include all
         # BUY intents: a pair's later successful quote has no opening_round key.
+        index = (
+            " INDEXED BY daily_buy_intents" if "daily_buy_intents" in self._intent_indexes else ""
+        )
         daily_rounds = {
             slug
             for slug, state, quantity in self.db.execute(
-                "SELECT json_extract(data,'$.market.slug'),state,json_extract(data,'$.confirmed_quantity') FROM intents WHERE json_extract(data,'$.side')='BUY' AND json_extract(data,'$.created_ms')>=? AND json_extract(data,'$.created_ms')<?",
+                f"SELECT json_extract(data,'$.market.slug'),state,json_extract(data,'$.confirmed_quantity') FROM intents{index} WHERE json_extract(data,'$.side')='BUY' AND json_extract(data,'$.created_ms')>=? AND json_extract(data,'$.created_ms')<?",
                 (day_start, day_start + 86400000),
             )
             if state not in TERMINAL or D(quantity) > 0

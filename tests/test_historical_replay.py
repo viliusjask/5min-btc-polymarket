@@ -479,6 +479,19 @@ def test_archive_status_does_not_decode_or_scan_payload_history(tmp_path, monkey
     assert result["size_bytes"]["total"] > 0
 
 
+def test_archive_status_counts_backing_wal_when_source_is_a_symlink(tmp_path):
+    from btc5m.archive import archive_status
+
+    source, alias = tmp_path / "capture.sqlite", tmp_path / "linked.sqlite"
+    with Tape(source) as tape:
+        tape.append(BEGIN, None)
+        alias.symlink_to(source)
+        direct, linked = archive_status(source), archive_status(alias)
+        assert direct["size_bytes"]["-wal"] > 0
+        assert linked["source"] == direct["source"]
+        assert linked["size_bytes"] == direct["size_bytes"]
+
+
 def test_historical_seek_skips_old_payloads_outside_causal_warmup(tmp_path):
     async def run():
         source, runtime = tmp_path / "capture.sqlite", tmp_path / "historical"

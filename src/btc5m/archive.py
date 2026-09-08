@@ -43,6 +43,7 @@ def _bounds(db: sqlite3.Connection) -> dict[str, Any]:
 
 def archive_status(path: Path) -> dict[str, Any]:
     """Index endpoint reads and bounded metadata only; no payload/label history scan."""
+    path = path.resolve()
     with closing(_open(path)) as db:
         bounds = _bounds(db)
         quality = db.execute("SELECT value FROM meta WHERE key='capture_quality'").fetchone()

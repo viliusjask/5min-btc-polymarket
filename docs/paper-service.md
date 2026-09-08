@@ -7,8 +7,8 @@ entry-count limit (`max_entries_per_day = 0`). Loss allowances and per-entry bud
 
 ## Installed locations and controls
 
-- Collector and dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/metadata-refresh`
-  (`fix/metadata-refresh`, [PR13](https://github.com/viliusjask/5min-btc-polymarket/pull/13)).
+- Collector and dashboard code: `/home/vilius/projects/5min-btc-polymarket/.worktrees/unified-research`
+  (`feat/unified-research`; the unified monitoring follow-up to PR13).
 - The original registered lab remains on `.worktrees/experiment-lab`; the 17-variant
   order-flow study remains on `.worktrees/order-flow`. Keep these three active checkouts.
 - Data: `/home/vilius/.local/share/btc5m/paper-six-100-each` — master observations plus six SQLite journals.
@@ -121,7 +121,7 @@ until the units have been repointed after merging.
 
 ## Capture quality and experiment profit
 
-Experiments shows all realized profit, completed unflagged profit and the excluded remainder
+The unified Paper list and experiment details show all realized profit, completed unflagged profit and the excluded remainder
 together. The remainder can include realized amounts on incomplete rounds; held cost appears
 separately. Unflagged means no recorded warning, not validated profitability.
 
@@ -132,7 +132,7 @@ The bounded counter record commits atomically inside `capture.sqlite`; restarts 
 The dashboard reads it without modifying either registered study or its report. See the
 [reversal audit](research/reversal-evidence-audit.md) for the historical reconstruction.
 
-**Experiments → Strategy research** adds profit distributions, outlier/cost sensitivity,
+**Paper → an experiment → Strategy research** adds profit distributions, outlier/cost sensitivity,
 entry-condition breakdowns, hourly contributions and comparisons on the same markets for
 the existing84+17variants. It reads the journals independently of the trading workers.
 The [research guide](research/strategy-comparisons.md) explains the calculations and limits.
@@ -187,3 +187,19 @@ recorded interruption; that missing interval stays missing. The six-minute old/n
 comparison improved usable samples from 67.7% to 96.5%. This is capture evidence, not profitability
 or a promise of uninterrupted feeds. The remaining real HTTP/price outages still reject until
 fresh inputs recover. [Full verification and limits](progress.md).
+
+## Unified monitoring and history-scan repair, September 8
+
+Collector/dashboard now use the `unified-research` checkout. Paper opens one sortable,
+filterable catalog containing the original six wallets and both suites, with separate rows
+for later phases. Each row opens detailed results; comparison curves show independent
+experiments, never a fictitious combined wallet. Paper/Real remains a display-only switch.
+See [the browser guide](experiment-browser.md) and [the results audit](research/experiment-results-2026-09-08.md).
+
+The 08:33 UTC code-only restart retained all seven sessions and financial row prefixes,
+both public configuration files, both study registrations and both pinned worker processes.
+Shutdown/start took 68.499 seconds; the largest adjacent capture interval at the boundary
+was 68.069 seconds. That missing interval remains recorded. No balances, loss budgets or
+historical flags were reset. Independent integration passed 734 tests; the exact source,
+browser checks and finite collector evidence are recorded in
+[the integration review](research/unified-integration-review.md).

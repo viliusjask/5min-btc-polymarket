@@ -65,6 +65,17 @@ causes in operator-facing monitoring; JSON totals alone do not explain whether t
 Format per entry: **Symptom → root cause → how to spot it faster next time → fix.**
 Cross-project traps belong in ~/.claude/memory/debugging-traps.md instead.
 
+## 2026-09-08: Healthy HTTP requests timed out behind the synchronous observer
+
+Repeated Gamma `TimeoutError` with working fresh anonymous requests suggested a connection
+problem. But every tick's `record_observation` called `record_clock`, rereading and decoding
+10.57 MB of completed measurement history. A scratch replay of the actual public history
+reproduced a five-second HTTP timeout behind a 100-tick observer burst. Check outer versus
+transport timeout type, process logical I/O, and synchronous callback costs before rotating
+clients or extending deadlines. Query only due pending calibrations using a partial deadline
+index; test migration, exact window boundaries and rollback. Recovery of the original process
+still needs post-deployment verification; a fresh-process probe alone is insufficient.
+
 ## 2026-09-06: Optional snapshot time froze freshness across I/O
 
 A snapshot accepted a seven-second-old spot under a five-second limit when the caller supplied
@@ -315,3 +326,32 @@ when deploying collector/dashboard diagnostics.
   documented atomic venue contract. Use the pinned SDK's authoritative grid and prove the
   narrow supported coarse-to-fine compatibility mathematically; never waive token/fee/size
   checks. Verify through the real ledger filter so new diagnostic fields are not silently lost.
+
+
+## 2026-09-08: Recovery insertion order evicted a still-active round
+
+`ROUND_STATE_MISSING` with two-second-old valid metadata came from an explicit
+`reference_retired` event for the active round. Rotating old tape recovery slots
+can insert historical rounds after the current round; a count-limited cache
+cannot treat dictionary insertion order as chronological age. Inspect retirement
+events before blaming discovery and exercise restoration out of time order.
+Retire oldest market times first while preserving retained slots and the existing
+bound. Keep current reference conflicts too: deleting and rediscovering their
+state can erase a contradiction even when subsequent snapshots look healthy.
+
+## 2026-09-08: Current capture with a historical dashboard heartbeat
+
+When capture-quality timestamps advance but the dashboard heartbeat/diagnostics remain old,
+compare `events_loaded` with `events_available` before blaming collection. The comparison
+response cache also paced the reader's historical scan, so closing the browser halted recovery.
+Verify readiness with one request followed by no requests, including a later appended event;
+request-by-request tests can conceal this coupling. Reading a fresh tail alone would conceal
+incomplete cumulative counts, so keep source freshness and history completeness distinct.
+
+## 2026-09-08: Catalog reads made a current capture appear to be in the future
+
+The experiment list sampled its response clock before reading study statistics and capture
+quality. The collector could append during that work, so a valid new capture compared against
+the older clock appeared stale. Sample the comparison clock after the data read. A controlled
+clock test should cover both a concurrent current capture and a genuinely future timestamp;
+never solve this race by removing future-timestamp rejection or refreshing source timestamps.

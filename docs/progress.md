@@ -1,3 +1,79 @@
+
+# Progress: independent unified integration review
+
+2026-09-08. A separate integration agent combined the four independent fixes in
+`feat/unified-research`, preserving both appended documentation contributions at conflicts.
+The integration reproduced and corrected an incomplete HTTP lifecycle fixture and the
+catalog freshness race reported during root's browser checks. The latter samples the
+comparison clock after capture quality is read, while retaining rejection of actual
+future timestamps. No collector freshness rule, strategy or account data changed.
+
+Reviewed production source `ac3d037f681e631ddf58a3c40c02dd64e2f8621d` passed **734 tests
+in 273.90 seconds**, Ruff lint/format (72 files), mypy (34 source files), locked dependencies,
+CLI help and whitespace checks under Python 3.12.13. No blocking review finding remains.
+[Independent review and exact checks](research/unified-integration-review.md).
+Root owns final browser/probe checks, preserved service cutover and PR publication; the
+integration agent did not restart services, write runtime history or access credentials.
+
+# Progress: discovery timeout recovery
+
+2026-09-08. `fix/discovery-recovery`, isolated `.worktrees/discovery-recovery`, base `8d12573`.
+
+- Traced repeated outer HTTP timeouts to a reproducible event-loop starvation mechanism:
+  every public observation reread and decoded all historical measurement payloads. The
+  current anonymous master held 1,026 rows / 10.57 MB and no due calibration work.
+- Added an internal index for pending calibration deadlines and queried only overdue rows.
+  Existing journal initialization installs it; calibration windows, transaction semantics,
+  historical records and all HTTP/account behavior remain unchanged.
+- A deterministic failing regression caught the historical scan. Tests cover migration,
+  thousands of completed/future rows, exact deadlines, observed/missing transitions and
+  rollback/restart. The same scratch observation burst changed from a five-second HTTP
+  timeout to a successful response; expiry lookup median fell from 47.55 ms to 0.00274 ms.
+- [Diagnosis, exact evidence and limits](research/discovery-recovery.md). No production
+  write or service restart; combined review and live recovery verification remain with root.
+
+Worker validation: **716 tests passed in 195.53 seconds**, including 195 focused ledger,
+engine and market-data cases. Ruff lint/format, mypy (33 sources), locked dependencies,
+CLI help and whitespace checks passed. Root reviewed the implementation and regressions
+with no findings before the independent integration review.
+
+# Progress: dashboard history catch-up
+
+2026-09-08. `fix/dashboard-catchup`, based on `8d12573`. Historical dashboard aggregation
+advanced at most 100,000 events per request; a 30-second comparison cache stretched a
+2.36-million-event startup into roughly 12 minutes and stopped progress without a browser.
+
+- The HTTP server now owns a read-only history worker. It follows only the public journal
+  in 10,000-event batches, waits 50 ms while behind and one second when caught up or failing,
+  and shares the reader lock with consistent snapshot serialization. Portfolio/account reads
+  remain on their existing request paths. Every SQLite connection stays within its thread.
+- Server close signals and joins the worker. Event-loop checks and a SQLite progress callback
+  interrupt the active scan; SQLite connection busy waits retain the existing five-second
+  timeout. The shutdown measurement below is observed latency, not a hard I/O deadline.
+- Malformed events surface a sanitized `PAPER_HISTORY_UNAVAILABLE` warning and the existing
+  HTTP 503 response. In-memory aggregates reset before retrying a partially applied event;
+  recovery reconstructs original cumulative counts. Journal replacement and truncation also
+  rebuild state. Source timestamps, financial rows and source events remain unchanged.
+- Five regressions first failed against the base. They cover one HTTP request followed by
+  independent catch-up and later appends, active-batch shutdown, failure/recovery without
+  duplicate counts, replacement and truncation. Lab/research route tests now use real readers
+  and synthetic paper runtimes while retaining their no-Real-account assertions.
+
+Read-only runtime measurement against `paper-six-100-each`: first snapshot loaded
+100,000 / 2,366,487 events in 2.168 seconds; the worker reached 540,000 at 12.252 seconds,
+1,120,000 at 22.292 seconds and 1,690,000 at 32.370 seconds. At 41.282 seconds, the final
+validation snapshot reported 2,366,697 / 2,366,697, `caught_up=true` and `status=running`.
+Only the initial and final snapshots ran; intervening progress checks inspected the cursor.
+The worker stopped in 0.001 seconds. No collector restart, runtime write, funded call,
+dependency change or API schema change occurred. Integration/browser QA remains with root.
+
+Verification: all 40 selected dashboard/history/Live/lab/research cases have passing results.
+The broad run passed 39 cases and exposed the lab fixture's already-created capture database;
+after restoring its intended legacy-runtime setup, all three lab cases passed in 6.75 seconds.
+Ruff lint/format (68 files), mypy (33 sources), locked dependencies and whitespace checks pass.
+The task-scoped production review found no blocking issue; full combined checks remain with root.
+
+
 # Progress: metadata refresh and book recovery
 
 2026-09-08 (Kyiv). `fix/metadata-refresh`, isolated `.worktrees/metadata-refresh`,
@@ -641,3 +717,30 @@ entry/exit parameters and confirmation remain hypotheses. A bounded funded exper
 existing journal; constructing a separate paper platform is not required. Preserve the dedicated
 wallet/journal and resolve discrepancies before further entries. Manual claiming remains external.
 Branches and worktrees stay preserved; no upstream push or merge is part of this development run.
+
+## Unified experiment browser, September 8
+
+The Paper landing view now lists original portfolios and both study suites across phases, with
+numeric sorting, search, cohort/sample filters, individual context curves and selected highlights.
+Details retain research and execution evidence; [the browser guide](experiment-browser.md) defines
+cohort denominators, historical risk rejections, report/journal boundaries and bounded read caches.
+Read-only runtime checks found 108 distinct source/phase rows, including the newly registered
+single-control later-data phase. Desktop and 390-pixel browser checks cover list, filters, phase
+identity, detail/cohort navigation, no overflow and zero Paper-triggered Real requests. Collector
+history catch-up and final integration are reviewed separately; this change does not restart a service.
+
+The browser branch's final validation passed 720 tests, Ruff checks/formatting, mypy and the
+locked dependency check under Python 3.12.13. Independent and author Chrome checks both passed;
+the author run showed five experiment rows on the initial 1600×1050 screen, 108 unique phase-aware
+rows, a 30-completed-round filter, later-phase detail, cohort switching and 390-pixel containment.
+
+### Unified monitoring root acceptance, September8
+
+Independent integration source ac3d037 passed734 tests and all existing static/dependency
+gates. Actual Chrome desktop/mobile checks passed against8765 without any Real request.
+The anonymous three-round probe recorded797/876 usable frames with no snapshot HTTP failure,
+but retained short stale-input gaps and unresolved simulated settlement at bounded shutdown.
+The code-only service cutover retained seven account sessions/financial prefixes and both
+pinned studies; usable production capture resumed. Details and precise limits are in
+`docs/research/unified-integration-review.md`. The user's subsequent archive/history request
+is being implemented in separate feature worktrees so this running source stays stable.

@@ -739,7 +739,10 @@ class MarketData:
 
     def _retire_rounds(self) -> None:
         now = self._now()
-        for slug, state in list(self._rounds.items()):
+        # Tape recovery inserts historical rounds after the active round. Evict
+        # by market time, so expired recovery slots leave before the count limit
+        # can discard fresh reference evidence (including sticky conflicts).
+        for slug, state in sorted(self._rounds.items(), key=lambda item: item[1].start_s):
             if slug in self._retained_rounds:
                 continue
             if now > (state.start_s + 300 + 3600) * 1000 or len(self._rounds) > 12 + len(

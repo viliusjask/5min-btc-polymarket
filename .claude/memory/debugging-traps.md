@@ -315,3 +315,12 @@ when deploying collector/dashboard diagnostics.
   documented atomic venue contract. Use the pinned SDK's authoritative grid and prove the
   narrow supported coarse-to-fine compatibility mathematically; never waive token/fee/size
   checks. Verify through the real ledger filter so new diagnostic fields are not silently lost.
+
+## 2026-09-08: Current capture with a historical dashboard heartbeat
+
+When capture-quality timestamps advance but the dashboard heartbeat/diagnostics remain old,
+compare `events_loaded` with `events_available` before blaming collection. The comparison
+response cache also paced the reader's historical scan, so closing the browser halted recovery.
+Verify readiness with one request followed by no requests, including a later appended event;
+request-by-request tests can conceal this coupling. Reading a fresh tail alone would conceal
+incomplete cumulative counts, so keep source freshness and history completeness distinct.

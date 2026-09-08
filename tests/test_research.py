@@ -8,10 +8,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import pytest
+from test_dashboard import runtime
 from test_strategy import make_snapshot
 
 from btc5m.config import Config
-from btc5m.dashboard import make_server
+from btc5m.dashboard import DashboardReader, make_server
 from btc5m.lab_replay import Replay
 from btc5m.lab_tape import Frame
 from btc5m.lab_variants import Valuations, Variant
@@ -229,12 +230,13 @@ def test_reader_matches_settled_accounting_without_mutating_journal(study):
         read_rounds(study.path, study.ident, "value", {**study.phase, "start_ms": 300000}, "tape")
 
 
-def test_research_api_validates_selection_and_never_opens_account(tmp_path, study):
+def test_research_api_validates_selection_and_never_opens_account(tmp_path, study, monkeypatch):
     class NoAccount:
         def snapshot(self):
             pytest.fail("research attempted to access Real account")
 
-    server = make_server(SimpleNamespace(path=tmp_path), port=0, live=NoAccount())
+    root = runtime(tmp_path, monkeypatch)
+    server = make_server(DashboardReader(root, Config()), port=0, live=NoAccount())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"

@@ -18,26 +18,34 @@ class PublicArchive:
 
     def record(self, record: dict[str, Any]) -> None:
         self.sequence += 1
+        if self.gap is not None:
+            self._drop(record["received_ms"], self.gap["code"])
+            return
         # JSON detaches mutable exchange dictionaries and retains Decimal exactly.
-        encoded = json.dumps(record, default=str, separators=(",", ":"), allow_nan=False)
+        try:
+            encoded = json.dumps(record, default=str, separators=(",", ":"), allow_nan=False)
+        except (ValueError, TypeError, OverflowError, RecursionError):
+            # A malformed public field must not change trading eligibility or leave
+            # an unexplained sequence hole. Omit the remaining batch visibly.
+            self._drop(record["received_ms"], "ARCHIVE_SERIALIZATION_FAILED")
+            return
         size = len(encoded.encode()) + 32
-        if (
-            self.gap
-            or size + self.buffered_bytes > self.max_bytes
-            or len(self.events) >= self.max_records
-        ):
-            if self.gap is None:
-                self.gap = {
-                    "code": "ARCHIVE_BUFFER_OVERFLOW",
-                    "first_sequence": self.sequence,
-                    "first_received_ms": record["received_ms"],
-                    "dropped_records": 0,
-                }
-            self.gap.update(last_sequence=self.sequence, received_ms=record["received_ms"])
-            self.gap["dropped_records"] += 1
+        if size + self.buffered_bytes > self.max_bytes or len(self.events) >= self.max_records:
+            self._drop(record["received_ms"], "ARCHIVE_BUFFER_OVERFLOW")
             return
         self.events.append({**json.loads(encoded), "sequence": self.sequence})
         self.buffered_bytes += size
+
+    def _drop(self, received_ms: int, code: str) -> None:
+        if self.gap is None:
+            self.gap = {
+                "code": code,
+                "first_sequence": self.sequence,
+                "first_received_ms": received_ms,
+                "dropped_records": 0,
+            }
+        self.gap.update(last_sequence=self.sequence, received_ms=received_ms)
+        self.gap["dropped_records"] += 1
 
     def drain(self) -> dict[str, Any]:
         events, gap = self.events, self.gap

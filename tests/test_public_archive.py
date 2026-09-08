@@ -243,3 +243,50 @@ def test_binance_archive_preserves_multiple_ticks_inside_the_sampling_bucket():
     events = archive.drain()["events"]
     assert [event["payload"]["p"] for event in events] == ["79000.001", "79000.002"]
     assert [event["payload"]["a"] for event in events] == [1, 2]
+
+
+@pytest.mark.parametrize("stream", ["market", "exchange"])
+def test_malformed_provider_timestamp_cannot_poison_the_archive_receipt_envelope(tmp_path, stream):
+    archive = PublicArchive()
+    feed = PublicStreams(Config(), clock=lambda: NOW / 1000, archive=archive.record)
+    feed.tokens, feed.condition_id = ("up", "down"), "condition"
+    malformed = {"received_ms": "bad provider field"}
+    event = (
+        {**book(), "timestamp": malformed}
+        if stream == "market"
+        else {"e": "aggTrade", "s": "BTCUSDT", "T": malformed, "p": "79000", "a": 1}
+    )
+    with pytest.raises(StreamError, match="INVALID_TIMESTAMP"):
+        (feed.ingest_market if stream == "market" else feed.ingest_exchange)(event)
+    feed.invalidate_market("BOOK_STREAM_DISCONNECTED")
+    batch = archive.drain()
+    assert batch["events"][0]["source_ms"] is None
+    key = "timestamp" if stream == "market" else "T"
+    assert batch["events"][0]["payload"][key] == malformed
+    with Tape(tmp_path / "capture.sqlite") as tape:
+        tape.append(NOW, None, archive=batch)
+        assert next(tape.read_after(0)).archive == batch
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_public_field_records_archive_gap_without_changing_book_eligibility(
+    tmp_path, invalid
+):
+    archive = PublicArchive()
+    feed = PublicStreams(Config(), clock=lambda: NOW / 1000, archive=archive.record)
+    feed.tokens, feed.condition_id = ("up", "down"), "condition"
+    feed.ingest_market({**book(), "fee_rate_bps": invalid})
+    assert feed.books["up"].asks[0].price == 0.5
+    batch = archive.drain()
+    assert batch["events"] == []
+    assert batch["gap"]["code"] == "ARCHIVE_SERIALIZATION_FAILED"
+    assert batch["gap"]["first_sequence"] == batch["gap"]["last_sequence"] == 1
+    assert batch["gap"]["dropped_records"] == 1
+    with Tape(tmp_path / "capture.sqlite") as tape:
+        tape.append(NOW, None, archive=batch)
+        feed.ingest_market(book())
+        recovery = archive.drain()
+        assert recovery["events"][0]["sequence"] == 2
+        assert recovery["gap"] is None
+        tape.append(NOW, None, archive=recovery)
+        assert [frame.archive for frame in tape.read_after(0)] == [batch, recovery]

@@ -10,6 +10,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+from btc5m.config import STRATEGIES
 from btc5m.service import atomic_json
 from btc5m.storage import (
     StorageError,
@@ -21,23 +22,115 @@ from btc5m.storage import (
 )
 
 
+def _contained(path: Path, runtime: Path) -> Path:
+    if not path.resolve().is_relative_to(runtime):
+        raise StorageError("STORAGE_PATH_OUTSIDE_RUNTIME")
+    return path
+
+
+def _document(path: Path, runtime: Path, code: str) -> dict[str, Any]:
+    _contained(path, runtime)
+    try:
+        if path.stat().st_size > 16 * 1024 * 1024:
+            raise StorageError(code)
+        document = json.loads(path.read_text())
+        if not isinstance(document, dict):
+            raise StorageError(code)
+        return document
+    except (OSError, ValueError) as exc:
+        raise StorageError(code) from exc
+
+
+def _study_journals(root: Path, runtime: Path) -> list[Path]:
+    """Registration authorizes paths; disposable reports and directory names do not."""
+    _contained(root, runtime)
+    if not root.exists():
+        return []
+    manifest = _document(root / "study.json", runtime, "STORAGE_STUDY_REGISTRATION_INVALID")
+    variants = manifest.get("variants")
+    if (
+        type(manifest.get("version")) is not int
+        or manifest["version"] != 1
+        or manifest.get("environment") != "paper-lab"
+        or not isinstance(variants, list)
+        or not variants
+    ):
+        raise StorageError("STORAGE_STUDY_REGISTRATION_INVALID")
+    registered = set()
+    for variant in variants:
+        ident = variant.get("ident") if isinstance(variant, dict) else None
+        if (
+            not isinstance(ident, str)
+            or not re.fullmatch(r"[0-9a-f]{20}", ident)
+            or ident in registered
+        ):
+            raise StorageError("STORAGE_STUDY_VARIANT_INVALID")
+        registered.add(ident)
+    catalog = _contained(root / "study.sqlite", runtime)
+    paths: list[Path] = []
+    try:
+        # Missing, damaged or oversized phase catalogs must not silently narrow the
+        # maintenance scope. A new study still initializing can retry next invocation.
+        with closing(
+            sqlite3.connect(catalog.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+        ) as db:
+            db.execute("BEGIN")
+            phases = db.execute("SELECT id,data FROM phases ORDER BY rowid LIMIT 4097")
+            count = 0
+            for phase_id, raw in phases:
+                count += 1
+                if count > 4096 or not isinstance(raw, str) or len(raw) > 1024 * 1024:
+                    raise StorageError("STORAGE_STUDY_PHASE_CATALOG_TOO_LARGE")
+                phase = json.loads(raw)
+                if (
+                    not isinstance(phase_id, str)
+                    or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", phase_id)
+                    or not isinstance(phase, dict)
+                    or phase.get("id") != phase_id
+                ):
+                    raise StorageError("STORAGE_STUDY_PHASE_INVALID")
+                ids = phase.get("variant_ids")
+                if (
+                    not isinstance(ids, list)
+                    or not ids
+                    or any(not isinstance(ident, str) or ident not in registered for ident in ids)
+                    or len(set(ids)) != len(ids)
+                ):
+                    raise StorageError("STORAGE_STUDY_PHASE_VARIANTS_INVALID")
+                paths.extend(root / phase_id / ident / "ledger.sqlite" for ident in ids)
+            if not count:
+                raise StorageError("STORAGE_STUDY_PHASE_CATALOG_EMPTY")
+    except (sqlite3.Error, json.JSONDecodeError, OSError) as exc:
+        raise StorageError("STORAGE_STUDY_PHASE_CATALOG_INVALID") from exc
+    return paths
+
+
 def paper_journals(runtime: Path) -> list[Path]:
     """Only known paper roots; never recursively discover a funded account or backup."""
     runtime = runtime.resolve()
-    manifest = json.loads((runtime / "paper.json").read_text())
-    if manifest.get("environment") != "paper" or manifest.get("version") != 1:
+    manifest = _document(runtime / "paper.json", runtime, "PAPER_RUNTIME_REQUIRED")
+    strategies = manifest.get("strategies")
+    if (
+        manifest.get("environment") != "paper"
+        or type(manifest.get("version")) is not int
+        or manifest["version"] != 1
+        or not isinstance(strategies, list)
+        or not strategies
+        or any(not isinstance(name, str) or name not in STRATEGIES for name in strategies)
+        or len(set(strategies)) != len(strategies)
+    ):
         raise StorageError("PAPER_RUNTIME_REQUIRED")
-    paths = [runtime / "observations.sqlite", *runtime.glob("*/ledger.sqlite")]
+    paths = [
+        runtime / "observations.sqlite",
+        *(runtime / name / "ledger.sqlite" for name in strategies),
+    ]
     for name in ("lab", "order-flow-lab"):
-        root = runtime / name
-        if root.is_dir():
-            paths.extend(root.glob("*/*/ledger.sqlite"))
+        paths.extend(_study_journals(runtime / name, runtime))
     result = []
     for path in sorted(set(paths)):
+        _contained(path, runtime)
         if not path.is_file():
             continue
-        if not path.resolve().is_relative_to(runtime):
-            raise StorageError("STORAGE_PATH_OUTSIDE_RUNTIME")
         result.append(path)
     return result
 

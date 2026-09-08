@@ -106,3 +106,12 @@ original source retains them. Guarded preparation leaves no write-prohibiting gu
 compact database. Existing callers that do not opt in continue using strict full-prefix verification.
 All successful sync results include an ordered-event digest; guarded results identify the verification
 mode as `guarded-prefix-and-tail` so the online preflight is explicit in deployment evidence.
+
+Runtime-wide maintenance selects journals from registrations, never from directory globbing.
+`paper.json` must name a nonempty, unique subset of the six supported strategies. The only study
+roots are `lab` and `order-flow-lab`; their `study.json` registers variant identifiers, and their
+readonly `study.sqlite` phase catalog selects the phase/variant combinations. Reports do not
+authorize maintenance. Backup folders, unselected strategies, unregistered variants and unrelated
+phase folders are ignored. Malformed/missing registrations, duplicate or unknown variant IDs,
+invalid phase names and paths escaping the selected runtime fail visibly before any maintenance
+mutation. A study still being initialized can be retried after its registration is complete.

@@ -42,3 +42,9 @@ verification after BUILD review is authoritative. Fix failures; never suppress r
 Return only the required structured result at completion. Reviewer evidence must use the
 exact reviewed_head and reviewed_base supplied by the launcher. No runtime integration with
 Alpha-Sentry is authorized; only the model-runner helpers and verification semaphore are shared.
+
+Authors reuse their conversation for correction rounds within a stage. New stages and large
+contexts start fresh from a concise briefing. Reviewers remain separate fresh sessions and
+review the cumulative current change before approval. Bounded subagent delegation is allowed;
+never delegate author work from the read-only reviewer role. No blanket prohibition on
+subagents is intended. Avoid repeated research and image inspection without a new reason.

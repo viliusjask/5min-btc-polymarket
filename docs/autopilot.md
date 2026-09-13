@@ -73,3 +73,11 @@ they do not silently select fork/main or require a human checkpoint. The author 
 relevant existing work into its assigned branch, records exact evidence in
 `.autopilot/wip-dispositions.json`, and revises the plan for fresh Astra review. Original
 worktrees and runtime data remain intact. New source work is still gated by plan approval.
+
+Author conversations persist through correction/quota rounds using a stable stage key in
+`.autopilot/author-session-stage.json`; timestamped log names do not create new author
+conversations. PLAN, BUILD and INTEGRATION authors have distinct stage keys. The shared
+runner binds sessions to worktree, branch, model and effort and rotates overly large contexts.
+Resumed prompts carry current findings and task changes. Reviewers always start separately
+and freshly; every approving review covers the cumulative current change. Subagent delegation
+remains allowed. Stage/session records and old transcripts are retained for recovery.

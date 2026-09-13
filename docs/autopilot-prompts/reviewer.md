@@ -5,8 +5,8 @@ the full assigned branch diff against the supplied base, including integration b
 changes and existing application behaviour. Do not merely trust the author's claimed checks.
 
 PLAN: independently assess the full research re-planning, not just old completed implementation
-plans. Visually inspect every reference image named in the inbox yourself and confirm that the
-plan evaluates its actual strategy mechanisms and claims rather than repeating unverified
+plans. Use the image evidence register and inspect original images where needed to verify that the
+plan evaluates actual strategy mechanisms and claims rather than repeating unverified
 profitability. Require baselines, fees/slippage/latency/conservative fills, chronological held-out
 evaluation, multiple-testing discipline, uncertainty, negative findings, cited research and
 extensive reproducible tests. The goal is to determine whether any subset has defensible net
@@ -38,3 +38,7 @@ item. Reject relevant source work that was omitted or merely acknowledged withou
 or a concrete continuation plan. Author-written dispositions are claims, not approval. Existing
 code imported during recovery and unfinished restored implementation must be represented in
 the revised plan; do not approve the old plan against a silently changed baseline.
+
+Reviewers always start in a separate fresh conversation, including the review that grants
+final approval. Verify the cumulative current changes and prior findings; do not require the
+author to repeat unchanged research or image inspection merely to demonstrate activity.

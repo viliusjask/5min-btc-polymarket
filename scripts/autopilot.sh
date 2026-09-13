@@ -7,7 +7,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE="$ROOT/.autopilot"
 SESSION=btc5m-autopilot
 SOURCE="${AUTOPILOT_HOME:-$HOME/projects/autopilot}"
-PIN="${AUTOPILOT_RUNTIME_PIN:-5fe3e3da13cbe6670cd5f2f14d33d56405100f1b}"
+PIN="${AUTOPILOT_RUNTIME_PIN:-7eb74868bcab3c7b7d1e288d64211219513fa30c}"
 BRANCH=chore/btc-autopilot
 BASE=main
 export GH_REPO=viliusjask/5min-btc-polymarket
@@ -23,7 +23,7 @@ preflight() {
     command -v "$item" >/dev/null || { echo "Missing executable: $item" >&2; return 1; }
   done
   python3 -c 'import sys; assert sys.version_info >= (3, 10)' || return 1
-  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py; do
+  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py; do
     git -C "$SOURCE" cat-file -e "$PIN:$item" || return 1
   done
   git -C "$ROOT" rev-parse --verify "fork/$BASE" >/dev/null || return 1
@@ -85,7 +85,7 @@ mkdir -p "$STATE"/{logs,prompts,briefing,runtime/prompts,runtime/scripts}
 exec 9>"$STATE/runner.lock"
 flock -n 9 || { echo 'Another runner owns this project state.' >&2; exit 1; }
 printf '%s\n' "$$" > "$STATE/pid"
-for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py; do
+for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py; do
   git -C "$SOURCE" show "$PIN:$item" > "$STATE/runtime/$item.tmp" \
     && mv "$STATE/runtime/$item.tmp" "$STATE/runtime/$item" || exit 1
 done
@@ -198,6 +198,18 @@ while [ ! -f "$STATE/STOP" ]; do
     runner=run_claude; CLAUDE_MODEL="$OPUS_MODEL"; CLAUDE_EFFORT=xhigh
   elif [ "$mode" = INTEGRATION ] && [ "$stage" = reviewer ] && [ "$(cat "$STATE/integration-reviewer" 2>/dev/null || echo fable)" = fable ]; then
     runner=run_claude; CLAUDE_MODEL="$FABLE_MODEL"; CLAUDE_EFFORT=high
+  fi
+  AUTHOR_SESSION_KEY=''
+  AUTHOR_CORRECTION_PROMPT=''
+  if [ "$stage" = author ]; then
+    AUTHOR_SESSION_KEY=$(python3 "$ROOT/scripts/autopilot_result.py" author-key \
+      "$STATE/author-session-stage.json" "$mode") || break
+    AUTHOR_CORRECTION_PROMPT="Continue the same $mode author stage on $BRANCH. Current head=$head, base=$base. Preserve interrupted edits. Address the current independent findings and verification feedback; inspect affected code and changed sections. Do not repeat completed research or reread unchanged photos. Update evidence/briefing, verify the affected work, commit and push before handoff. Delegation to bounded subagents remains allowed; retain independent author/reviewer roles."
+    [ ! -s "$STATE/review.json" ] || AUTHOR_CORRECTION_PROMPT+=$'\n'"Latest review (check its head/stage before treating it as current): $(cat "$STATE/review.json")"
+    AUTHOR_CORRECTION_PROMPT+=$'\n'"Current task/authority: $STATE/INBOX.md. Gate feedback: $STATE/gate-failure.log. Briefing: $BRIEF. Return the current structured result contract; reviewed_head=$head reviewed_base=$base."
+    if [ "$wip_recovery" = 1 ]; then
+      AUTHOR_CORRECTION_PROMPT+=$'\n'"Startup recovery is active: inspect $STATE/wip-inventory.json; reconcile new items, preserve known prior dispositions, then refresh and record exact dispositions after your final commit/push using $DIR/scripts/wip_preflight.py. Do not redo unchanged completed recovery work."
+    fi
   fi
   routed_model="$CODEX_MODEL/$CODEX_EFFORT"
   [ "$runner" != run_claude ] || routed_model="$CLAUDE_MODEL/$CLAUDE_EFFORT"

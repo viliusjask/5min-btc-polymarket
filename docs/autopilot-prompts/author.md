@@ -4,8 +4,9 @@ Never discard existing edits. Fetch fork/main and merge it into the assigned fea
 when it is not already an ancestor of HEAD; resolve conflicts preserving both changes. This
 authorizes updating the feature branch only, never merging a PR or writing main. A fresh reviewer independently checks each plan and build.
 
-PLAN: start with full research re-planning, even though historical implementation plans are
-complete. Visually inspect every reference image named in the inbox; compare its actual claims
+PLAN: the initial pass performs research re-planning, even though historical implementation
+plans are complete. Inspect each reference image once and record its evidence; reinspect only
+changed images or details implicated by a finding. Compare its actual claims
 with current code, earlier research and independently checked evidence. Produce or update a
 concrete implementation plan for the authorized research objective,
 with bounded scope, risks, acceptance checks and integration verification. Address every prior
@@ -55,3 +56,12 @@ scan a fresh inventory, record every required disposition, and check it. Amend t
 plan for the recovered baseline and explicitly identify remaining unfinished implementation.
 This bounded reconciliation is authorized during PLAN recovery; new feature implementation
 still waits for independent PLAN approval. Existing prior review approval does not cover it.
+
+CORRECTION ROUNDS: continue the same author conversation within the stage. Address the latest
+findings and affected sections; retain established research, image notes and completed checks.
+Do not repeat full research or reopen every image because a revision was requested. Rerun
+checks justified by the changes. Before a context reset, maintain a concise briefing of the
+current decisions, unresolved findings and next action. After a reset recover from that
+briefing and inspect original evidence selectively. A new stage gets a new conversation.
+Delegating bounded tasks to subagents is allowed; require concise results and preserve the
+independent review boundary. Subagent work is not a substitute for reviewer approval.

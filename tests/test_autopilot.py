@@ -95,3 +95,23 @@ def test_startup_inventory_controls_replanning_before_model_calls(tmp_path, chec
     assert run.returncode == (2 if check_status == 2 else 0)
     assert (state / "mode").read_text().strip() == ("PLAN" if check_status == 3 else "BUILD")
     assert (state / "stage").read_text().strip() == ("author" if check_status == 3 else "reviewer")
+
+
+def test_author_session_key_survives_retries_and_rotates_at_stage_boundaries(tmp_path):
+    path = tmp_path / "state" / "author-session-stage.json"
+    plan = MODULE.author_session_key(path, "PLAN")
+    assert MODULE.author_session_key(path, "PLAN") == plan
+    build = MODULE.author_session_key(path, "BUILD")
+    assert build != plan
+    assert MODULE.author_session_key(path, "BUILD") == build
+    integration = MODULE.author_session_key(path, "INTEGRATION")
+    assert integration not in {plan, build}
+    assert MODULE.author_session_key(path, "PLAN") not in {plan, build, integration}
+
+
+def test_invalid_stage_cannot_replace_saved_author_session(tmp_path):
+    path = tmp_path / "stage.json"
+    plan = MODULE.author_session_key(path, "PLAN")
+    with pytest.raises(ValueError, match="invalid author stage"):
+        MODULE.author_session_key(path, "reviewer")
+    assert MODULE.author_session_key(path, "PLAN") == plan

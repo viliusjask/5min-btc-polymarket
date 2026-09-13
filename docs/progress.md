@@ -1,3 +1,54 @@
+# Progress: research re-plan, revision 6 against the recovered baseline
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage reopened by the local-work recovery.
+The revision 5 approval (`f775fc2`) predates the merge of `feat/history-storage` and the
+online-backup fix (`1d3b4df`) and the restored dataset increment (`4fdc0e1`), so the plan
+was re-planned against that baseline rather than resumed. fork/main (`cb7827b`) is an
+ancestor; nothing new was merged from it.
+
+What revision 6 of [the plan](plans/profitable-subset-research.md) adds:
+
+- **Reconciliation record.** Every outstanding inventory item has a disposition with
+  re-runnable evidence: the ten history/storage commits and the online-backup fix are adopted
+  (storage.py byte-identical to the dirty worktree file; the test file differs only by Ruff
+  wrapping); `fix/dashboard-catchup` is deferred as redundant because its complete source and
+  test patch reverse-applies cleanly at HEAD; the root checkout's untracked photos and Serena
+  metadata are inputs and tool state, not application work. Dispositions are in the ignored
+  `.autopilot/wip-dispositions.json` and are checked by the pinned preflight tool.
+- **Strategy audit.** Each of the six production strategies, the lab families and the lab
+  selection rule is audited against the goal with the recorded numbers and file:line
+  citations. The audit's conclusion is that the existing evidence cannot answer the goal
+  for reasons that are not the strategies themselves: the USD 10 loss allowances stop
+  observation after two losses (1,022 and 682 repeated `LOSS_LIMIT` checks), holding-path
+  oracle staleness of 5.03 to 5.43 s flags rounds that had a fresh exit book, two flagged
+  4 to 5 cent entries carry 94% of the reversal family's realized profit, and the pair
+  strategies rest on maker-queue assumptions no taker evaluator can score.
+- **Seven bounded fixes or reporting additions (F1 to F7)** with tests: exit-form validity
+  (an exit needs a valid book, not a valid oracle point, matching the live broker and the
+  recovered replay fix `f600d1f`); a `budget_blocked` reporting column; the five existing
+  rules registered as fixed trials E1 to E5 with valuation columns added to the dataset and a
+  `model` exit; `STOP_UNREACHABLE` for stops below a rule's ask band; `stale_margin_rejections`.
+  The fixed-rule grid is now 29 trials plus H6. The pinned lab's gap classifier is not changed.
+- **B1 status.** `freeze`, `build`, `build-holdout`, the selection record and content hash
+  exist with 14 tests. Remaining: an interrupted-build test, external provenance and the F3
+  columns in the manifest and `ticks`, and the real-archive acceptance build. The build is
+  atomic rather than cursor-resumable; the plan now says so.
+- **B6 rewritten.** The PMXT probe is replaced by one bounded run of the recovered OutcomeTick
+  importer over the already-downloaded September 4 files (six hours, terms profile stated,
+  output only under the worktree's ignored `work/`), extracted and evaluated as an external
+  development set that is never a holdout. The runtime's two incomplete September 8 import
+  destinations are left untouched.
+
+Runtime read-only readings at 20:49 UTC are in the evidence register: tape high-water
+505,209 frames; directional lab at cursor 255,554 (3.3 days behind); best variant 27 clean
+rounds; the holdout phase still holds only the control. All ten reference photos were
+re-inspected (sixth time); the register records one wording ambiguity in the screenshot
+rule and no new mechanism. Author gate through the shared semaphore: 894 passed, Ruff lint
+and format clean, mypy clean. No code, runtime data, service or credential was touched.
+
+Next: independent PLAN review of revision 6 (Astra), including the dispositions; then BUILD
+resumes B1 with the remaining items above, starting with the real-archive freeze record.
+
 # Progress: recover outstanding local work before continuing research
 
 2026-09-13. The original autopilot startup checked fork/main but did not reconcile other

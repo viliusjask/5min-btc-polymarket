@@ -1,16 +1,86 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
-> Reopened for Fable/Astra review after local-work reconciliation on 2026-09-13.
-> The earlier approval predates the recovered history/storage implementation.
-> Reassess reuse and acceptance checks before further BUILD work; see docs/progress.md.
-
-2026-09-13, revision 5. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
+2026-09-13, revision 6. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)
 and [the photo register](../research/reference-photos-2026-09-13.md). Revision 1 (`08fbf74`)
 received seven findings, revision 2 (`6b7de88`) six, revision 3 (`f9bcc48`) three and
 revision 4 (`23167db`) two from the independent PLAN review; every one is answered below and
-the affected sections were rewritten.
+the affected sections were rewritten. Revision 5 (`f775fc2`) was approved with no findings.
+That approval predates the local-work reconciliation of `1d3b4df` and `4fdc0e1`, so revision
+6 reopens the plan against the recovered baseline: it records what was merged, audits the
+existing strategies and their recorded experiments against the research goal, restates B1
+as partly implemented, and replaces the external-history probe with the importer that now
+exists. The decision rule, the freeze sequence, the fill model and the registered grid are
+unchanged unless a section below says otherwise.
+
+## Revision 6: the recovered baseline
+
+### What was reconciled and how it is evidenced
+
+The startup inventory (`.autopilot/wip-inventory.json`, checked by the pinned
+`wip_preflight.py`) listed 33 local branches and two dirty worktrees. Dispositions are in
+`.autopilot/wip-dispositions.json`; the private per-branch audit is
+`.autopilot/local-wip-audit.md`. Summary, with the evidence a reviewer can re-run:
+
+| Item | Disposition | Evidence |
+|---|---|---|
+| `feat/history-storage` (ten commits, tip `8f8172d`) and its identical-tip alias `feat/replay-execution-followup` | adopted by merge `1d3b4df` | `git log --oneline 43d0d4a..8f8172d` lists the ten commits; `git merge-base --is-ancestor 8f8172d HEAD` holds |
+| Uncommitted online-backup fix in `.worktrees/online-backup-fix` (`src/btc5m/storage.py`, `tests/test_storage.py`) | adopted in `1d3b4df`; the source worktree is untouched | `storage.py` at HEAD is byte-identical to the dirty file (SHA-256 `33f3e3f1...`); `tests/test_storage.py` differs only by Ruff line wrapping, and both new tests (`test_online_copy_finishes_during_wal_appends_then_guarded_sync_keeps_exact_tail`, `test_interrupted_online_copy_releases_source_snapshot_and_preserves_original`) are present |
+| `fix/dashboard-catchup` (`47ae0cc`, not an ancestor) | deferred as redundant | the output of `git diff 47ae0cc~1 47ae0cc -- src tests` passes `git apply --check -R` at HEAD, so the complete implementation and test patch is already present by content; only its progress and memory lines differ |
+| Root checkout untracked `.local/*.jpg` and `.serena/` | deferred as non-application inputs | the ten photos are the inbox's reference images, summarised in the photo register and never copied into the repository; `.serena/` is editor tool metadata |
+| Interrupted Opus dataset increment (B1) | adopted as resumed unfinished work in `4fdc0e1` | `src/btc5m/dataset.py` (580 lines) and `tests/test_dataset.py` (14 tests); its status is stated below |
+| All other branches | included by ancestry or patch equivalence | `git cherry HEAD <tip>` has no `+` entries, as listed in the private audit |
+
+### What the recovered work changes in this plan
+
+| Recovered capability | Where it lives | Effect on this plan |
+|---|---|---|
+| OutcomeTick importer with explicit `HistoricalTerms`, modeled Binance latency and modeled resolution availability | `src/btc5m/history_import.py`, `btc5m history import-outcometick`, [external history](../external-history.md) | B6 no longer probes PMXT. It completes one bounded import of the already-downloaded September 4 release into a fresh destination under the ignored `work/` directory and runs the same dataset extraction and fixed-rule evaluation on that tape as an **external development set**. It is never a holdout. See [B6](#increment-b6-external-history-evaluation-bounded). |
+| Compressed paper journals, guarded copies, online-backup snapshot pinning, registered-journal maintenance | `src/btc5m/storage.py`, `storage_runtime.py`, [storage](../storage.md) | None on the dataset layer: it reads `capture.sqlite`, whose format is unchanged. The one tape change in the merge (`8f8172d`) raises the zlib level for new frames from 1 to 6; `Tape.read_after` decodes both, and the freeze record's high-water is a frame ident, not a byte offset. |
+| Historical replay attaches `PublicStreams` to every policy and lets an exit use a fresh independent book while the oracle snapshot is stale (`f600d1f`) | `src/btc5m/lab_replay.py` | The evaluator's exit validity is aligned with this (next section): an exit attempt needs a valid book, not a valid oracle snapshot. Pinned lab studies keep their old behaviour; their 107 uncertain rounds for `momentum-20-90-150` are not re-labelled. |
+| Follow-up evidence of September 8 | [promising follow-up](../research/promising-followup-2026-09-08.md) | Four findings shape the audit below: session and daily loss limits stopped apparent winners from trading (682 `LOSS_LIMIT` checks for the USD 10 lead); every one of the USD 20 candidate's later rounds was flagged by a spot or TWAP source age of 5.03 to 5.43 s; both later positive subtotals turn negative after an extra one cent per share or without the largest winner; a fixed five-policy shortlist was defined but never run on a frozen forward period. |
+| Pinned-storage launcher | `scripts/pinned_storage_launcher.py` | No effect; it serves the running services, which this plan does not touch. |
+
+### Existing strategies audited against the research goal
+
+The goal is a subset of automated short-horizon strategies with defensible positive net
+results. The six production strategies and the 84-variant lab grid were audited from the
+code and from the recorded experiments; the table names each finding, the evidence, and the
+fix or test this plan schedules. None of these fixes is a claim that any strategy is
+profitable; they remove reasons why the existing evidence cannot answer the question.
+
+| Strategy or family (code name) | Rule as implemented | Recorded evidence (all paper, all pinned implementations) | Why that evidence cannot answer the goal | What this plan does |
+|---|---|---|---|---|
+| `momentum`, default `recent_continuation` (`src/btc5m/strategy.py:415`, `config.py:31-40`) | 30 s spot move with `z >= 0.5` against short sigma; 90 to 150 s remaining; ask 0.70 to 0.95; stop 0.08, target bid 0.98, time exit 20 s | Frozen causal comparison on frames to 44,752: 66 candidates, 3 filled rounds, 0 clean, net USD -5.96, and 1,022 repeated `LOSS_LIMIT` rejections ([policy audit](../research/strategy-policy-audit.md)); original portfolio USD -5.86 over 20 rounds; current-engine control in the September 8 replay 11 eligible, 6 filled, USD +0.22, USD -0.45 after one extra cent | After two USD 5 losses the USD 10 session and daily allowances (`config.py:83-84`, `ledger.py:537`) block every later entry, so the sample measures the budget, not the rule; every completed round is flagged | Registered as existing rule **E1** with the production exits, scored on independent rounds without a loss allowance; the report adds a `budget_blocked` column (below) so the difference is visible |
+| `momentum` with `opening_lead` (lab family `momentum-<lead>-<window>`, `lab_variants.py:165-179`) | spot minus opening reference at or above USD 10 to 100; same windows, band and exits | The USD 20 lead: 9 clean of 48 completed at USD +3.42 on September 8, then 5 later rounds all flagged, USD +0.54, USD -0.03 after one extra cent, USD -1.14 without the largest win ([follow-up](../research/promising-followup-2026-09-08.md)); today 15 clean of 85 completed with 108 uncertain rounds | The uncertain rounds come from spot or TWAP source ages of 5.03 to 5.43 s during the holding path while a fresh exit book existed in all 18 reconstructed cases; the clean subset is a selection on data quality, not on the rule | Family **H1** (leads 20, 30, 50, 70) with the exit form of validity, so a stale oracle point no longer removes a round; `budget_blocked` reported |
+| `value`, `model_exit`, `fast_value` (`strategy.py:328-358`, `:573`, `engine.py:661`) | buy when the conservative scenario floor exceeds executable cost plus fees and a 0.02 surplus; ask at most 0.92; `model_exit` adds a `MODEL` sale when net proceeds beat the ceiling by 0.01; `fast_value` bridges spot by the aligned Binance return | Original portfolios USD -0.20, USD -0.15 and USD -3.50 over 2 rounds each; 67 first-eligible rounds gave 4 confirmed buys and 1 fill; Value held to settlement USD +2.80 over two markets; the model is worse than the market by 0.0097 squared error on 168 matched rounds ([results](../research/experiment-results-2026-09-08.md), [policy audit](../research/strategy-policy-audit.md)); 74.5% of final-minute screens had an empty book side ([execution audit](../research/execution-and-entry-audit.md)) | Two rounds per policy say nothing; the surplus condition almost never holds, and where the model is confident the books are empty | Registered as **E2** (`value`), **E3** (`fast_value`) and **E4** (`model_exit`) with per-tick floors, ceilings and the fast reference stored in the dataset; the final-minute family **H3** tests the model where it claims certainty, with fill availability as its first falsifier |
+| `passive_pairs`, `inventory_pairs` (`pairing.py:48-101`, `engine.py:408-523`) | post-only five-share quote below modeled value, then hedge the other token so the pair costs at most 0.97; 5 s quote life, 30 s unmatched timeout, 24 orders per round | USD -5.99 over 26 and USD -9.31 over 16 rounds; 49 of 51 opening quotes sat below the best bid with a median gap of 0.12; 56 completed passive orders; the queue defect fixed on September 7 turned 3 of 55 unfilled orders into fills ([execution audit](../research/execution-and-entry-audit.md)) | Every maker fill is a queue-position assumption on sampled books; no taker-only evaluator can score it, and a paper queue cannot be validated without venue fills | Not a candidate in this plan. **H7** re-reports the recorded results under maker-rebate economics; any further evidence needs the simulator plus a funded trial, which is not authorized |
+| lab `reversal` (`lab_variants.py:238-250`, ask floor 0.05) | buy the side against a 10 to 60 s move at `z` 0.5 or 1 | USD +208.33 realized of which USD +195.15 came from two flagged 4 to 5 cent entries; the unflagged subset is USD -2.52 over 4 of 26 completed rounds; the 8 cent absolute stop cannot protect a 5 cent entry ([reversal audit](../research/reversal-evidence-audit.md)) | Two events dominate, both inside recorder gaps of 11.4 s and 20.4 s; the stop rule is undefined below its own size | Family **H4** (hold to settlement, 2 trials, falsifier "fewer than four rounds carry the result"); the evaluator refuses a stop policy whose stop lies below zero for the rule's ask band (`STOP_UNREACHABLE`) instead of silently holding |
+| lab `continuation` 60 s (`lab_variants.py:238-250`) | follow the 60 s move at `z` 0.5 or 1, ask 0.05 to 0.95 | USD +33.64 realized, USD -3.55 unflagged; later 7 rounds USD +8.68, USD -4.09 without the largest win | The largest winner decides the sign; no clean sample | Registered as existing rule **E5** (60 s, `z` 0.5, production exits) so the lab's leading realized result is scored with preserved rounds and the outlier criterion |
+| order-flow suite (`flow_signals.py:16-118`) | absorption against imbalance, flow continuation with it, pressure-gated pairs, split-then-sell | Every absorption and flow-continuation setting lost USD 5.70 to 7.18; split-sell USD -3.13 unflagged over 20 rounds with 122 maker fills of 687 attempts; the flow model beats nothing (squared error +0.0037 versus the market on 137 rounds) | Negative on every setting; the pair variants depend on maker fills | No flow trial is registered. Signed flow stays a feature of **H6** only; the negative result is recorded in the B4 report |
+| lab selection (`lab.py:711-722`, `lab_report.py:27-36`) | promote the top three variants with at least 30 clean completed rounds, positive clean net and no unresolved round; a round without a lab record is uncertain by default | Both automatic holdouts selected the control only; the directional worker is 3.3 days behind the tape; the best variant has 27 clean rounds after seven days | The rule cannot fire at current entry rates and lag, and a "clean" round is defined by the recorder, not by the strategy | Bypassed by the dataset layer; the pinned lab keeps running untouched as the path-faithful simulator |
+
+Fixes and reporting additions that follow from the audit (each is bounded and tested):
+
+| Id | Change | Where | Test |
+|---|---|---|---|
+| F1 | Exit-form validity: an exit attempt needs a valid book, not a valid oracle point | B2 execution validity | the four exit-form fixtures |
+| F2 | `budget_blocked` reporting column: for each entered round, whether the production USD 10 daily allowance (`max(0, -day realized net) + 5 > 10`, `src/btc5m/ledger.py:537`) would have blocked it, computed from the rule's own prior rounds that UTC day in stressed-net order. Reporting only; the decision rule ignores it | B2 `summarize` | a fixture with three USD -4 losses on one day marks the third and fourth rounds blocked and leaves the totals unchanged |
+| F3 | Existing rules E1 to E5 registered as fixed trials; `ticks` gains `up_floor`, `down_floor`, `up_ceiling`, `down_ceiling`, `probability_up`, `fast_up_floor`, `fast_down_floor` and `fast_reason`, computed by `fair_value` under the default and the `fast_value` configurations; the exit set gains `model` (sell when net proceeds exceed the held side's ceiling plus 0.01, the engine's `model_exit_surplus`) | B1 (columns), B2 (exit set), B3 (grid) | floors and ceilings on a hand-computed tick equal `fair_value`'s; `fast_reason` is `FAST_STALE` when the exchange tick is 1,600 ms old; a `model` exit fires on the first tick whose bid proceeds beat the ceiling by 0.01 and not on one that beats it by 0.005 |
+| F4 | `STOP_UNREACHABLE`: a rule whose ask band's upper edge is at or below its stop size cannot register a stop policy | B3 rules file validation | a rule with ask 0.05 to 0.10 and stop 0.08 is refused; the same rule with hold is accepted |
+| F5 | Residual inventory below the five-share minimum is flagged `residual_below_minimum` and settles by label (already in revision 5) | B2 | existing fixture |
+| F6 | The pinned lab's gap classifier and its uncertain-by-default rule are **not** changed; the seven test cases the follow-up enumerated remain a separate objective | Deferred | none |
+| F7 | `stale_margin_rejections`: count of entry decisions rejected by `STALE_DATA` whose oldest stamp was within 500 ms of `max_price_age_ms`, reported per rule so a five-second limit that is barely missed is visible | B2 report | a fixture with a 5,200 ms spot point counts one; a 6,000 ms point counts none |
+
+### Runtime state at the time of this revision
+
+Read-only readings at 20:49 UTC (details in the evidence register): tape high-water 505,209
+frames from September 7 07:26 UTC; the directional lab worker is at cursor 255,554, about
+3.3 days behind; no variant has 30 clean completed rounds (`momentum-settlement` leads with
+27 clean of 29, clean net USD +5.69); the holdout phase still holds only the Value control at
+USD -5.16 on two rounds. The September 4 OutcomeTick and Binance files are downloaded, but
+both September 8 conversion attempts are incomplete and no external tape was published.
 
 ## Answers to the review of revision 4
 
@@ -100,6 +170,17 @@ The thresholds are author-chosen operating thresholds and are stated as such.
   a zero fee (`src/btc5m/paper.py:217`). That flag identifies maker legs for H7.
 - The lab, historical replay and experiment browser stay as they are. They remain the
   path-faithful simulator for policies with exits and for maker queues.
+
+- Recovered on September 13: `history_import.import_outcometick` converts the OutcomeTick
+  gzip files (markets, books, best bid/ask, last trade price, Chainlink spot and TWAP60) and
+  an optional Binance aggregate-trade ZIP into the same `Tape` format, with an explicit
+  `HistoricalTerms` profile (tick, minimum, fee formula), `binance_latency_ms`,
+  `resolution_delay_ms`, per-file SHA-256 hashes, a code fingerprint, and
+  `research.external_history` provenance on every frame (`src/btc5m/history_import.py`,
+  `src/btc5m/lab_replay.py:345` rejects frames whose provenance is malformed). B6 reuses it.
+- Recovered on September 13: `storage.compact_copy`, `prepare_guarded_sync` and
+  `maintain_storage` manage the observations journal. The dataset layer never opens that
+  journal, so nothing here depends on them.
 
 The new layer does not replace the simulator. It answers the first question quickly
 (which rules survive costs on non-overlapping rounds) so that the slow simulator is spent
@@ -200,9 +281,34 @@ writes one SQLite file with:
   high-water at build, code identity hash, build time, row counts per split, and the count of
   rounds without a label per split.
 
-Rules: read-only source; bounded memory through cursor batches; resumable by cursor; never
-interpolates across gaps; never derives a label from spot. Every derived number is computed
-by the same functions the engine uses so the dataset cannot silently disagree with it.
+Rules: read-only source; bounded memory through cursor batches; atomic output (the build
+writes `dataset.sqlite.building` and renames it on success, so an interrupted build leaves
+no dataset file and a rerun starts clean; revision 5 said "resumable by cursor", which the
+restored implementation replaced with this simpler guarantee); never interpolates across
+gaps; never derives a label from spot. Every derived number is computed by the same
+functions the engine uses so the dataset cannot silently disagree with it.
+
+Status after recovery (`4fdc0e1`, `src/btc5m/dataset.py`, `tests/test_dataset.py`): `freeze`,
+`build` and `build-holdout` exist with the CLI dispatch; the freeze record has the fields and
+self-hash above; `build` opens the tape with `label_highwater` equal to the freeze high-water
+so post-freeze labels are never decoded (`src/btc5m/dataset.py:304`); the `ticks`, `rounds`,
+`flow` and `manifest` tables match the columns above except that `flow` has no trader
+identifiers (the manifest records `flow_trader_ids: false`); `build-holdout` refuses without a
+selection record whose self-hash and freeze hash match; `selection_record` and
+`content_hash` exist. Fourteen tests cover the freeze boundary, split assignment with purge
+bands, determinism across a tape extension, identity and tampering refusals, rejection
+without a fabricated book, hand-computed depth and sigma, signed flow, holdout isolation and
+CLI dispatch. Remaining for B1: an interrupted-build test (kill after the first batch; no
+`dataset.sqlite`; the rerun's content hash equals an uninterrupted build); manifest
+provenance for external tapes (copy `research.external_history` from the first frame that
+carries it, else null, with a test on a synthetic external frame); the F3 valuation columns
+(`up_floor`, `down_floor`, `up_ceiling`, `down_ceiling`, `probability_up` from `fair_value`
+under the default configuration, and `fast_up_floor`, `fast_down_floor`, `fast_reason` under
+a `fast_value` configuration, all null when `fair_value` fails and `fast_reason` carrying its
+`FAST_*` reason); the `evaluate` refusal
+of a dataset without a freeze record (implemented with B2's evaluator); and the acceptance
+build on the real archive with its counts in progress. The real-archive freeze is still
+the first BUILD action and has not been run.
 
 `btc5m dataset build-holdout` (step 4) is the same extractor with the opposite bounds: frames
 with ident above the freeze high-water, rounds starting at or after `holdout_start_ms`,
@@ -232,8 +338,9 @@ and a holdout file can never be scored as development (the manifest names its ow
 set and the evaluator checks it).
 A rule is a pure function over one round's tick sequence up to a decision time, returning at
 most one entry (side, decision time, size in USD) and an exit policy from a fixed set: hold
-to settlement, fixed stop and target, or time exit. The rule sees only ticks with receipt at
-or before its decision time.
+to settlement, fixed stop and target, time exit, or (revision 6) the production combination
+of stop, target and time exit with an optional `model` sale (F3). The rule sees only ticks
+with receipt at or before its decision time.
 
 ### Fills walk the full ladder
 
@@ -270,7 +377,8 @@ entry deadline is tighter than the paper broker's execution-gap limit of `max_bo
 that a live order would not have obtained.
 
 The evaluator applies five tests to each candidate frame of an attempt, in this order, and
-records the first failure as the reason:
+records the first failure as the reason. Test 3 has an entry form and an exit form; the
+other four are the same for both:
 
 1. **Window**: `activation_ms <= now_ms <= deadline_ms`.
 2. **Same round**: the frame has a snapshot and its market slug equals the round's slug. A
@@ -288,6 +396,16 @@ records the first failure as the reason:
    (`src/btc5m/strategy.py:86`). `PaperBroker._book` applies the same age, future and
    crossed tests (`src/btc5m/paper.py:80`). The dataset's `ticks.rejection` column holds the
    same value for screening, but the evaluator never reads it for a fill.
+   **Exit form (revision 6).** An exit attempt does not need a valid oracle snapshot; a live
+   sell order does not consult our spot feed. It needs the frame's market to be active and
+   accepting orders, the round unexpired, and the consumed token's book to pass exactly the
+   checks `PaperBroker._book` applies: both stamps within `[now_ms - max_book_age_ms,
+   now_ms + future_tolerance_ms]`, the token id matching the market, and no crossed book.
+   A stale spot or TWAP point does not block an exit. This follows the live paper broker and
+   the recovered replay fix (`f600d1f`, `src/btc5m/lab_replay.py:362`), and it answers the
+   September 8 finding that all 18 first-flag cases of the USD 20 candidate had a fresh
+   independent exit book while the oracle point was 5.03 to 5.43 s old. Entries keep the
+   full form, because a decision needs the oracle. Reason codes are the same names.
 4. **Book activation**: the book of the token being consumed satisfies
    `min(book.timestamp_ms, book.received_ms) >= activation_ms`. This is the lower bound
    `PaperBroker._immediate` applies before it walks a book (`src/btc5m/paper.py:245`). Test 3
@@ -327,7 +445,12 @@ an empty bid side on an exit (`MISSING_BOOK_SIDE`); a book received 1,000 ms in 
 (`FUTURE_DATA`); a frame without a snapshot (`NO_SNAPSHOT`). A frame whose `ticks.rejection`
 was hand-edited to null is still rejected because the reason is recomputed from the tape; a
 frame whose `rejection` was hand-edited to `STALE_DATA` still fills when the tape frame is
-valid. The earlier fixtures stay: an outage spanning the entry window yields no position; the
+valid. Exit-form fixtures: a stop trigger followed by a frame whose spot point is 5,200 ms
+old but whose bid book is stamped 400 ms ago fills the exit at that book; the same frame
+with the book stamped 5,200 ms old does not (`STALE_DATA`); the same frame with the
+market's `accepting_orders` false does not (`MARKET_NOT_ACCEPTING`); and an entry decision
+on the stale-spot frame is rejected (`STALE_DATA`), so the two forms are demonstrably
+different on one frame. The earlier fixtures stay: an outage spanning the entry window yields no position; the
 fee on a 0.90 fill equals 0.0063 per share; a 750 ms latency picks a later frame with a
 worse price; the same rule on the same dataset gives identical output twice.
 
@@ -495,14 +618,15 @@ is deliberately small; every cell counts as a trial.
 | H3 final-minute lock-in (new) | with 15 to 60 s remaining, the conservative scenario probability from the observed TWAP integral is at least 0.97 and the ask is at most 0.95; hold (thresholds 0.95/0.97/0.99 by windows 15 to 30 and 30 to 60 s: 6 trials) | fills are unavailable in the last minute, or net is not positive after the stressed model |
 | H4 cheap reversal held (secondary) | ask at most 0.10 on the side against a 60 s move above 1 sigma, 60 to 150 s remaining; hold (2 trials) | positive net depends on fewer than four rounds |
 | H5 favorite bands | buy the favorite at T-60 only when the ask is in 0.90 to 0.95 or 0.95 to 0.99; hold (2 trials) | realized win rate below the fee break-even for the band |
+| E1 to E5 existing rules (revision 6) | E1 `momentum` recent continuation (30 s, `z` 0.5, ask 0.70 to 0.95, 90 to 150 s); E2 `value` (floor minus ask minus fee per share minus 0.01 allowance above 0.02, ask at most 0.92, 60 to 180 s); E3 `fast_value` (E2 on the fast floors, skipped when `fast_reason` is set); E4 `model_exit` (E2 entry with the `model` exit); E5 lab continuation (60 s, `z` 0.5, ask 0.05 to 0.95). E1, E2, E3 and E5 use the production exits: stop 0.08 below the gross entry price, target bid 0.98, time exit at 20 s remaining (5 trials) | net per entered round not above the market-favorite baseline on the same rounds, or not positive after the stressed model; these are the strategies the bot runs today, so a negative result here is itself a deliverable |
 
-Fixed-rule trials in the overfitting grid: 24. H6 below is the 25th registered trial but is
-evaluated by its own protocol. The evaluator refuses a rules file whose trial count differs
+Fixed-rule trials in the overfitting grid: 29 (24 hypothesis cells plus the five existing
+rules). H6 below is the 30th registered trial but is evaluated by its own protocol. The evaluator refuses a rules file whose trial count differs
 from its registered header.
 
 ### Overfitting estimate for the fixed-rule grid
 
-Implement combinatorially symmetric cross-validation in pure Python over the 24 fixed
+Implement combinatorially symmetric cross-validation in pure Python over the 29 fixed
 rules. Split train plus validation rounds into 16 chronological blocks; for each of the
 12,870 half-splits, rank trials by net per entered round in-sample and record the
 out-of-sample rank of the in-sample best. The probability of backtest overfitting is the
@@ -667,13 +791,49 @@ listed in progress). No rule change after reading the holdout is allowed without
 registered rules file, a new selection record and a new freeze record, and any such restart
 uses a holdout that begins after the new freeze.
 
-## Increment B6: external history probe (bounded, optional)
+## Increment B6: external history evaluation (bounded)
 
-Download one PMXT hourly file for a chosen hour, check whether the BTC five-minute tokens of
-that hour appear, and measure gap counts. Record the result. If coverage is good, propose a
-later increment that evaluates only market-price rules (H5 and the market baselines) over
-months, with official labels from the public Gamma API. Spot-versus-reference rules cannot
-use that source because it has no opening reference. No bulk import in this plan.
+The importer exists and the September 4 source files are on disk (evidence register), so
+the PMXT probe of revision 5 is replaced by one bounded run of what is already built.
+
+1. Convert with the existing command, reading the downloaded files in place and writing
+   only under the worktree's ignored `work/history/outcometick-2026-09-04/`:
+
+   ```bash
+   uv run --locked btc5m history import-outcometick \
+     --markets .../BTC-5m-markets-2026-09-04.jsonl.gz --books .../BTC-5m-book-2026-09-04.jsonl.gz \
+     --spot .../BTCUSD-prices-2026-09-04.csv.gz --twap60 .../BTCUSD-twap60s-prices-2026-09-04.csv.gz \
+     --trades .../BTC-5m-last_trade_price-2026-09-04.jsonl.gz --best-bid-ask .../BTC-5m-best_bid_ask-2026-09-04.jsonl.gz \
+     --binance .../BTCUSDT-aggTrades-2026-09-04.zip --binance-latency-ms 100 \
+     --tick-size 0.001 --min-order-size 5 --fee-rate 0.07 --fee-exponent 1 --resolution-delay-ms 1000 \
+     --start 2026-09-04T00:00:00Z --end 2026-09-04T06:00:00Z --destination work/history/outcometick-2026-09-04
+   ```
+
+   The terms profile repeats the September 8 attempt except the tick, which that attempt
+   set to 0.01 while the current Gamma record reports `orderPriceMinTickSize` 0.001; the
+   import manifest records whichever value is used, and the September 4 market records
+   are checked for a stated tick before the run. The window is six hours, not the full
+   day, because the earlier full-day attempts did not finish; if the six-hour conversion
+   exceeds one hour of wall clock it is stopped and the duration recorded. The source
+   directories under the runtime are read only; the two incomplete September 8 destinations
+   are left as they are.
+2. `dataset freeze` and `dataset build` against the imported tape into
+   `work/history/dataset-external/`. The freeze record is committed like the live one, with
+   `external` in its file name. The manifest carries the tape's `external_history`
+   provenance and its `limitations` list (B1 remaining work). No `build-holdout` is ever
+   run against an external tape; a test asserts `build-holdout` refuses a manifest whose
+   provenance is external (`EXTERNAL_TAPE_NOT_HOLDOUT`).
+3. `dataset evaluate --split train` over the registered fixed-rule grid and the baselines on
+   that dataset. The report is a separate section of the B4 deliverable headed with the
+   provenance limitations (sampled books, modeled receipts, assumed terms, modeled
+   resolution availability). Its rows count as **additional development evidence** for the
+   same 29 registered trials, not as new trials and not as holdout. `label_received_ms` on
+   an external tape is a modeled time; the report says so, and the H6 fold protocol is not
+   run on it.
+
+Falsifier for the increment itself: fewer than 40 rounds with an official label and at
+least one valid frame in the entry windows, in which case the external set is reported as
+insufficient and no rule table is drawn from it. A second day is not imported in this plan.
 
 ## Deferred and out of scope
 
@@ -684,6 +844,11 @@ use that source because it has no opening reference. No bulk import in this plan
   paper's finding that fifteen-minute contracts show little settlement manipulation makes it
   worth a future comparison.
 - Memecoin, launchpad and token-launch mechanisms from the reference photos are rejected.
+- The PMXT archive probe of revision 5 is deferred: the local OutcomeTick files cover the
+  same need for one day with an opening reference, which PMXT lacks.
+- Re-labelling the pinned lab studies' uncertain rounds under the recovered replay fix is
+  not done: those studies run pinned implementations by design, and the dataset layer
+  re-evaluates the same rules on the tape instead.
 - A language model in the trading loop, latency engineering and a Rust rewrite are not
   research questions and stay out.
 - No funded trial, credential access, service restart or runtime write occurs. The lab
@@ -691,7 +856,7 @@ use that source because it has no opening reference. No bulk import in this plan
 
 ## Risks and how the plan handles them
 
-- **Selection bias from many trials**: fixed grid of 24 rules plus one fitted model, trial
+- **Selection bias from many trials**: fixed grid of 29 rules plus one fitted model, trial
   count in the file, overfitting estimate, H6 fold protocol, one holdout read gated by a
   committed selection record.
 - **Optimistic fills**: taker only, full-ladder walk from checksummed frames, a 2,000 ms
@@ -710,6 +875,9 @@ use that source because it has no opening reference. No bulk import in this plan
   approximated.
 - **Sample size**: at current entry rates the holdout may take weeks. The plan returns
   `waiting` rather than lowering thresholds.
+- **Import assumptions**: an external tape's fills rest on sampled books, vendor receipt
+  times and declared terms. Its results are labelled with the provenance limitations, never
+  merged with live-tape rows, and never used as holdout.
 - **Rebate economics at small size**: a USD 5 maker fill at 0.50 is 10 shares with a
   fee-equivalent of USD 0.175 (10 x 0.07 x 0.5 x 0.5) and a hypothetical rebate of USD
   0.035, so about 29 such fills a day are needed to reach the USD 1 payout minimum. H7
@@ -719,8 +887,10 @@ use that source because it has no opening reference. No bulk import in this plan
 
 Each increment runs `bash scripts/autopilot-gate.sh` through the shared verification
 semaphore: lock check, full pytest, Ruff lint and format, mypy and shell syntax. Reviewers
-also expect: no file under `/home/vilius/.local/share/btc5m` modified (compare modification
-times before and after a real-archive build), no new runtime dependency in `pyproject.toml`,
+also expect: no file under `/home/vilius/.local/share/btc5m` modified, including `history/`
+and `storage-migrations/` (compare modification times before and after a real-archive build
+or an import; imports write only under the worktree's ignored `work/`), no new runtime
+dependency in `pyproject.toml`,
 a committed freeze record before the first real-archive build, a committed selection record
 before any holdout read, and a progress entry with the manifest counts for every
 real-archive run.

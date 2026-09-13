@@ -69,3 +69,34 @@ Read-only readings of `/home/vilius/.local/share/btc5m/paper-six-100-each/` at a
   order-flow study; positive means the market is better).
 
 These readings define the plan's first problem: evidence throughput, not a shortage of ideas.
+
+## Internal evidence after local-work recovery (September 13, 20:49 UTC reading)
+
+Read-only readings taken by the revision 6 PLAN author after the ten history/storage commits
+and the online-backup fix were merged (`1d3b4df`) and the interrupted dataset increment was
+restored (`4fdc0e1`). No runtime file was modified; the four user services stayed running.
+
+- Tape: `capture.sqlite` 11.7 GB, high-water **505,209** frames, first frame 2026-09-07
+  07:26 UTC, last frame 2026-09-13 20:49 UTC, identity `580e84ec...`.
+- Directional lab report: generated 2026-09-13 20:49 UTC but `as_of` **2026-09-10 12:57
+  UTC** at cursor **255,554** of 505,239; 84 variants; the worker is now about 3.3 days behind
+  the tape (it was 248,506 of 442,086 at the 10:45 UTC reading). The holdout phase
+  `test-1a44ea4f216f` still holds only the Value control: 2 completed rounds, 0 clean, net
+  USD -5.16.
+- No variant has 30 clean completed rounds. Leaders by clean rounds (exploratory phase, all
+  from pinned implementations, not comparable as a portfolio): `momentum-settlement` 27 clean
+  of 29 completed (14 uncertain), clean net USD +5.69, realized USD +6.76;
+  `momentum-20-90-150` 15 clean of 85 completed (108 uncertain), clean net USD +1.57, realized
+  USD -5.92; `momentum-30-90-150` 14 clean of 63 (88 uncertain), clean net USD -0.30. Every
+  other variant has 12 or fewer clean rounds.
+- External history: the September 4 OutcomeTick release (markets, books, best bid/ask, last
+  trade price, Chainlink spot and TWAP60 CSVs) and the Binance `BTCUSDT-aggTrades-2026-09-04`
+  ZIP (checksum verified) are downloaded under the runtime's `history/` directory with dated
+  download manifests. Two conversion attempts on September 8 exist under
+  `history/imported/`: one `failed` with `KeyboardInterrupt`, one left in status
+  `converting` with partial tape files. **No completed external tape exists.** The importer's
+  publication rule (a failed or interrupted import never publishes) held. These directories
+  are user-owned runtime artifacts and are not touched by this plan; any new import writes to
+  a fresh destination outside the runtime.
+- Storage migration artifacts from September 8 (`storage-migrations/20260908-compact-v1/`)
+  exist; they concern the observations journal, not the capture tape the dataset layer reads.

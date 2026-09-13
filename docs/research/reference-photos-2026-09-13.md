@@ -94,3 +94,19 @@ revision 5 changes (a stressed exit timeline with its own valid first fill, and 
 entered counts for the bootstrap) come from the independent review of the plan, not from
 the photos. Nothing in any photo bears on exit retry timing or on how unlabeled rounds are
 counted, so no photo decision changed.
+
+## Sixth inspection, plan revision 6 after local-work recovery (September 13)
+
+All ten files opened and were legible again. No new mechanism or claim appeared. One
+wording detail was re-read because revision 6 registers the screenshot baseline against a
+larger evidence base: the gus post says "check that BTC has already moved between $70 and
+$100 during that interval", and every PowerShell row in `5K48FChw.jpg` prints the move as
+"BTC +$78 in window". Both phrasings admit two readings: the move since the round opened,
+or the move inside the final two-minute window. The baseline keeps the opening-reference
+reading, because each log row shows one number per round and the tutorial thread speaks of
+the round's direction being "well defined" by then. The final-window reading is already
+covered by the existing 60-second continuation family in the lab (`momentum` recent-move
+policy), so it is not registered as a second baseline; the plan states the reading it uses.
+The revision 6 changes (recovered importer, storage and replay work; the strategy audit;
+book-only exit validity) come from the reconciled local branches and the September 8
+research, not from the photos, so no photo decision changed.

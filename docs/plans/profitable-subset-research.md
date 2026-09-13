@@ -1,11 +1,19 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
-2026-09-13, revision 4. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
+2026-09-13, revision 5. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)
 and [the photo register](../research/reference-photos-2026-09-13.md). Revision 1 (`08fbf74`)
-received seven findings, revision 2 (`6b7de88`) six and revision 3 (`f9bcc48`) three from the
-independent PLAN review; every one is answered below and the affected sections were rewritten.
+received seven findings, revision 2 (`6b7de88`) six, revision 3 (`f9bcc48`) three and
+revision 4 (`23167db`) two from the independent PLAN review; every one is answered below and
+the affected sections were rewritten.
+
+## Answers to the review of revision 4
+
+| Finding | Where it is answered | What changed |
+|---|---|---|
+| P2 the stressed exit fixture reused the standard timeline's first sale at `T + 600`, which under 750 ms latency precedes activation (`T + 750`) and carries a book stamped `T + 500` that fails book activation, so the second attempt at `T + 1,350` and the five-share residual could not occur | [Entry and exit transitions](#entry-and-exit-transitions-residual-inventory-and-attempts) | The stressed fixture has its own timeline. The `T + 600` frame yields nothing under stress (frame before activation and book before activation); the first sale is a `T + 900` frame with a book stamped `T + 850`; attempt 2 activates at `T + 1,650`; the remainder sells on the `T + 2,300` frame. The same six frames under standard latency sell at `T + 600` and complete at `T + 900`, which is the paired proof that stress delays the first attempt and the completion. The failing variant's book is now stamped `T + 1,600`, below the recomputed activation. Expected values (`exit_delay_ms` 900 versus 600, `exit_completion_ms` 2,300 versus 900) are stated for both runs. |
+| P2 `day_bootstrap` had to report `partially_labeled` days but received only observed rows and the set of traded days, so a day holding labeled and unlabeled entered rounds was indistinguishable from a fully labeled day | [Day-block bootstrap](#day-block-bootstrap-new-function) | The `traded_days` set is replaced by `entered_by_day`, a mapping from UTC day to the number of entered rounds that day, which `summarize` already has. A day whose row count in the population is below its entered count is `partially_labeled`; a day with entered rounds and no rows is `unlabeled_only`; a day with more rows than entered rounds, or rows on a day absent from the mapping, raises `BOOTSTRAP_ROWS_MISMATCH`. `expected_rows` stays and must equal the sum of the mapping in the decision run. Paired fixture: adding one unresolved trade to an already traded day leaves the observed rows, `expected_rows`, coverage and included days unchanged and flips `partially_labeled` from 0 to 1; the same change in the decision run adds one full-loss row and leaves `partially_labeled` at 0. |
 
 ## Answers to the review of revision 3
 
@@ -13,7 +21,7 @@ independent PLAN review; every one is answered below and the affected sections w
 |---|---|---|
 | P1 a frame inside the window could carry the decision-time book and pass the five-second freshness test, crediting liquidity a live order would never have seen | [Execution validity](#execution-validity) | Every order is a sequence of attempts with an `activation_ms`. A new fifth test, **book activation**, requires the consumed token's book to satisfy `min(timestamp_ms, received_ms) >= activation_ms`, the same lower bound `PaperBroker._immediate` applies (`src/btc5m/paper.py:245`). Freshness relative to the frame (test 3) is no longer enough. Failure reason `BOOK_BEFORE_ACTIVATION`; an entry whose whole window carries pre-activation books is `unfilled_book_before_activation` and counted. Fixtures: three frames carrying the decision-time book give no entry; the same followed by a genuinely newer, worse book fills at the worse price; the same with the newer book after the deadline gives no entry; a book with one stamp before activation fails; the stressed latency moves the boundary. |
 | P2 exits had to be inside `decision + 2000` and also retry until expiry, which no frame could satisfy | [Execution validity](#execution-validity), [Entry and exit transitions](#entry-and-exit-transitions-residual-inventory-and-attempts) | Entry and exit timing are now separate rows of one table. An entry has one attempt, window `[decision + latency, decision + 2000]`. An exit's first attempt activates at `trigger + latency` and every later attempt (one per fill event) activates at the previous fill frame's `now_ms + latency`, paying latency again; the deadline of every exit attempt is the last frame before `end_s`. `exit_delayed` means the first fill came after `trigger + 2000` (or never); `exit_delay_ms`, `exit_completion_ms` and `exit_attempts` are recorded on every exited round. The book-activation test replaces the separate depth-consumption rule, because a retry's activation lies after the previous fill frame. Fixtures: a first exit fill at 2,400 ms; a 7-of-12 sale at 600 ms whose remainder sells at 2,300 ms without the delayed flag. |
-| P2 the descriptive bootstrap received labeled rows but the row-count check used the entered count | [Day-block bootstrap](#day-block-bootstrap-new-function) | `day_bootstrap(rows, *, coverage, traded_days, expected_rows)`. The decision run passes every entered round with `expected_rows = entered`; the descriptive run passes labeled entered rounds with `expected_rows = labeled`. A day in `traded_days` that has no row in the descriptive population is `unlabeled_only`: excluded and counted, neither a zero nor missing. The adapter asserts the decision run's `expected_rows` equals the decision table's `entered`. Fixtures: the mixed five-round fixture run through both calls (4 rows and 3 rows), a wrong count raising, and a day holding only unresolved trades. |
+| P2 the descriptive bootstrap received labeled rows but the row-count check used the entered count | [Day-block bootstrap](#day-block-bootstrap-new-function) | `day_bootstrap(rows, *, coverage, traded_days, expected_rows)` (revision 5 replaced `traded_days` with `entered_by_day`; see the table above). The decision run passes every entered round with `expected_rows = entered`; the descriptive run passes labeled entered rounds with `expected_rows = labeled`. A day in `traded_days` that has no row in the descriptive population is `unlabeled_only`: excluded and counted, neither a zero nor missing. The adapter asserts the decision run's `expected_rows` equals the decision table's `entered`. Fixtures: the mixed five-round fixture run through both calls (4 rows and 3 rows), a wrong count raising, and a day holding only unresolved trades. |
 
 ## Answers to the review of revision 2
 
@@ -364,10 +372,26 @@ Tests, all with standard latency unless stated, `T` the trigger tick's `now_ms`:
   bid book stamped `T - 100`; the first fresh book (stamped `T + 2,350`) arrives on a frame at
   `T + 2,400` and holds the whole inventory. Expected: one fill event, one attempt,
   `exit_delayed` true, `exit_delay_ms` 2,400, `exit_completion_ms` 2,400.
-- Remainder after the deadline under stress (latency 750): the first fixture's second
-  attempt activates at `T + 1,350`; the `T + 2,300` frame still fills; a variant whose fresh
-  book is stamped `T + 1,300` on that frame does not, and the 5 shares are
-  `exit_forced_settlement` if no later frame qualifies.
+- Stress delays the first attempt and the completion (latency 750, activation `T + 750`):
+  a 12-share position and six frames. Frame `T + 600` carries a bid book stamped `T + 500`
+  showing 7: nothing sells, because the frame precedes activation and the book fails test 4.
+  Frame `T + 900` carries a book stamped `T + 850` showing 7: sells 7 (attempt 1). Attempt 2
+  activates at `T + 1,650`. Frame `T + 1,200` carries the same `T + 850` book: nothing
+  (`BOOK_BEFORE_ACTIVATION`). Frame `T + 2,300` carries a book stamped `T + 2,200` showing 5:
+  sells the remaining 5. Expected under stress: two fill events, `exit_attempts` 2,
+  `exit_delay_ms` 900, `exit_completion_ms` 2,300, `exit_delayed` false, proceeds equal to
+  both walks minus both fees minus one cent per share on each leg, inventory 0. The same
+  six frames under standard latency (activation `T + 250`) sell 7 on the `T + 600` frame,
+  activate attempt 2 at `T + 850`, and sell the remaining 5 on the `T + 900` frame because
+  its book stamp `T + 850` reaches that activation: `exit_delay_ms` 600,
+  `exit_completion_ms` 900, `exit_attempts` 2. The fixture asserts both runs side by side;
+  latency is the only input that differs.
+- Remainder held under stress: the stressed timeline above with the `T + 2,300` frame's book
+  stamped `T + 1,600` instead of `T + 2,200` does not sell (activation `T + 1,650`); if no
+  later frame qualifies, the 5 shares are `exit_forced_settlement`, `exit_attempts` 2,
+  `exit_delay_ms` 900, `exit_completion_ms` 900 and `exit_delayed` false. Under standard
+  latency the same variant completes at `T + 900` as before, so the forced settlement is
+  caused by the stress model alone.
 - Residual below minimum: a 12-share position into depth of 9 leaves 3 shares
   (`residual_below_minimum`, `exit_attempts` 1), and the net is checked under a matching label
   (payout 3.00), a losing label (0) and no label (observed null, sensitivity payout 0).
@@ -433,7 +457,8 @@ adapter, both in a new module `src/btc5m/rule_eval.py`:
   `research.usable` keeps them. Not-entered rounds never reach `performance`. The same
   adapter makes both `day_bootstrap` calls: the decision call with the sensitivity rows and
   `expected_rows = entered`, the descriptive call with the labeled rows and
-  `expected_rows = labeled`, both with the same `coverage` and `traded_days`.
+  `expected_rows = labeled`, both with the same `coverage` and the same `entered_by_day`
+  (the count of entered rounds per UTC day, which `summarize` computes from its own rows).
 - The decision table shows `sensitivity.net / entered` (the strict form) beside
   `observed.net / labeled`.
 - Costs are applied once. The stressed run is produced by the evaluator (750 ms latency plus
@@ -518,29 +543,35 @@ freeze high-water.
 
 ### Day-block bootstrap (new function)
 
-`research.day_bootstrap(rows, *, coverage, traded_days, expected_rows)` where `rows` are
+`research.day_bootstrap(rows, *, coverage, entered_by_day, expected_rows)` where `rows` are
 `(utc_day, net)` pairs, `coverage` maps UTC day to the number of observed round slots that
-day, `traded_days` is the set of UTC days holding at least one entered round, and
-`expected_rows` is the count the rows must add up to. The adapter in `rule_eval.summarize`
-calls it twice per rule, with different populations and different expected counts:
+day, `entered_by_day` maps UTC day to the number of entered rounds that day (days with no
+entered round are absent), and `expected_rows` is the count the rows must add up to. The
+function compares each day's row count with its entered count, which is how it tells a
+fully labeled day from a partly labeled one without seeing the unlabeled rows themselves.
+The adapter in `rule_eval.summarize` calls it twice per rule, with different populations
+and different expected counts:
 
-| Run | Rows | `expected_rows` | A day in `traded_days` with no row in this population |
+| Run | Rows | `expected_rows` | Day in `entered_by_day` with fewer rows than entered rounds |
 |---|---|---|---|
-| Decision (sensitivity) | every entered round with its `sensitivity_net` | `summarize().entered` | cannot occur; every entered round has a sensitivity net, and the adapter asserts the two counts agree |
-| Descriptive (observed) | every labeled entered round with its `observed_net` | `summarize().labeled` | `unlabeled_only`: excluded from the population and counted in the output; it is neither a genuine zero nor a missing day |
+| Decision (sensitivity) | every entered round with its `sensitivity_net` | `summarize().entered` | cannot occur; every entered round has a sensitivity net, so every day's row count equals its entered count and the function raises `BOOTSTRAP_ROWS_MISMATCH` if `expected_rows` differs from the sum of `entered_by_day` |
+| Descriptive (observed) | every labeled entered round with its `observed_net` | `summarize().labeled` | zero rows: `unlabeled_only`, excluded from the population and counted; some rows: `partially_labeled`, included with its labeled rows and counted; neither is a genuine zero nor a missing day |
 
 - Unit: UTC day. Every day with at least one row is **included**, whatever its coverage;
   such a day with fewer than 144 observed slots is flagged `low_coverage_traded` and counted,
-  and its rows stay in the population. A day with no entered round (not in `traded_days`) is
-  included as net 0, count 0 only if the capture observed at least 144 of its 288 slots;
-  otherwise it is **missing**, excluded and counted. The coverage rule therefore decides only
-  whether a zero is a genuine zero. A day in `traded_days` without rows is `unlabeled_only`
-  (descriptive run only), excluded and counted; a day with both labeled and unlabeled entered
-  rounds is included with its labeled rows and flagged `partially_labeled`.
+  and its rows stay in the population. A day with no entered round (absent from
+  `entered_by_day`) is included as net 0, count 0 only if the capture observed at least 144
+  of its 288 slots; otherwise it is **missing**, excluded and counted. The coverage rule
+  therefore decides only whether a zero is a genuine zero. For a day present in
+  `entered_by_day`, let `r` be its row count and `e` its entered count: `r == 0` makes it
+  `unlabeled_only` (excluded and counted); `0 < r < e` makes it `partially_labeled`
+  (included with its rows and counted); `r == e` is fully labeled; `r > e` raises
+  `BOOTSTRAP_ROWS_MISMATCH`. Rows on a day absent from `entered_by_day` also raise.
 - Invariant: `len(rows) == expected_rows`, or the function raises `BOOTSTRAP_ROWS_MISMATCH`.
   The adapter passes `entered` for the decision run and `labeled` for the descriptive run,
   and a test asserts that the decision run's `rows` output equals the decision table's
-  `entered` count, so the decision population and the decision table cannot differ.
+  `entered` count and the sum of `entered_by_day`, so the decision population, the decision
+  table and the per-day counts cannot differ.
 - Statistic: total net divided by the number of rows over the resampled days. A resample
   with zero rows counts as at or below zero.
 - 2,000 seeded resamples of the included days with replacement.
@@ -566,8 +597,19 @@ spread over three days with the unlabeled entry alone on its day) is run through
 the decision call with `expected_rows` 4 includes three days and reports `rows` 4; the
 descriptive call with `expected_rows` 3 includes two days and reports `unlabeled_only` 1 and
 `rows` 3; the descriptive call with `expected_rows` 4 raises `BOOTSTRAP_ROWS_MISMATCH`; a
-variant where the unlabeled day is that of a labeled loss reports `partially_labeled` 1; and
-in the sensitivity population the unlabeled day's rounds carry their full-loss nets.
+variant where the unlabeled entry is moved to the day of the labeled loss reports
+`partially_labeled` 1, `unlabeled_only` 0 and two included days; and in the sensitivity
+population the unlabeled day's rounds carry their full-loss nets. Paired fixture for the
+flag: start from the mixed fixture's descriptive call (three rows on two days, `expected_rows`
+3, `entered_by_day` `{A: 2, B: 1, C: 1}`, result `partially_labeled` 0, `unlabeled_only` 1).
+Add one unresolved entered round to day A, so `entered_by_day` becomes `{A: 3, B: 1, C: 1}`
+while the rows, `expected_rows`, `coverage` and included days are unchanged: the result is
+`partially_labeled` 1, `unlabeled_only` 1, `rows` 3, the same included days and the same
+percentiles for the same seed. The same added round in the decision call changes the rows
+(five, with the new round at its full-loss net) and `expected_rows` (5) and leaves
+`partially_labeled` 0. A descriptive call with `entered_by_day` `{A: 1, B: 1, C: 1}` against
+the same three rows raises `BOOTSTRAP_ROWS_MISMATCH` (day A has more rows than entered
+rounds), as does a row on a day the mapping does not contain.
 
 ### H7 maker rebate sensitivity (not a trial)
 

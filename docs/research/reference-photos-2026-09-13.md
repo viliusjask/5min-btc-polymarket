@@ -86,3 +86,11 @@ entry and exit timing, two bootstrap populations) come from the independent revi
 plan, not from the photos. The gus thread's "last two minutes" and "0.80 to 0.99" entry
 band remain the only executable details in any BTC photo, and they are already the
 screenshot-literal baseline.
+
+## Fifth inspection, plan revision 5 (September 13)
+
+All ten files opened and were legible again. No new mechanism or claim appeared. The
+revision 5 changes (a stressed exit timeline with its own valid first fill, and per-day
+entered counts for the bootstrap) come from the independent review of the plan, not from
+the photos. Nothing in any photo bears on exit retry timing or on how unlabeled rounds are
+counted, so no photo decision changed.

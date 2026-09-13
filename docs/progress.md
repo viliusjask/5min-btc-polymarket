@@ -1,3 +1,31 @@
+# Progress: research re-plan, revision 5 after the fourth independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `23167db`
+requested changes on two findings. Revision 5 of [the plan](plans/profitable-subset-research.md)
+answers both in a table at the top:
+
+- The stressed exit fixture had reused the standard timeline's first sale at `T + 600`. With
+  750 ms latency that frame precedes activation (`T + 750`) and its book stamp (`T + 500`)
+  fails book activation, so the second attempt could not start at `T + 1,350`. The stressed
+  fixture now has its own six-frame timeline: nothing at `T + 600`; 7 shares at `T + 900` on
+  a book stamped `T + 850`; attempt 2 activates at `T + 1,650`; the `T + 1,200` frame with
+  the same book yields nothing; 5 shares at `T + 2,300`. The same frames under standard
+  latency sell at `T + 600` and complete at `T + 900`, so one fixture shows stress delaying
+  both the first attempt (600 to 900 ms) and completion (900 to 2,300 ms). The held-remainder
+  variant stamps the last book `T + 1,600`, below the recomputed activation.
+- `research.day_bootstrap` could not report `partially_labeled` days from observed rows plus
+  a set of traded days. The set is replaced by `entered_by_day`, the count of entered rounds
+  per UTC day, which `summarize` already has. A day with fewer rows than entered rounds is
+  `partially_labeled`; none is `unlabeled_only`; more rows than entered rounds, or rows on a
+  day absent from the mapping, raise `BOOTSTRAP_ROWS_MISMATCH`. A paired fixture adds one
+  unresolved trade to an already traded day: the descriptive rows, `expected_rows`, coverage
+  and included days stay the same and the flag goes from 0 to 1; in the decision run the
+  same change adds a full-loss row and the flag stays 0.
+
+All ten reference photos were inspected a fifth time; nothing new (register updated). No
+code changed; no runtime file, service, credential or funded action was touched. Next:
+independent PLAN review of revision 5.
+
 # Progress: research re-plan, revision 4 after the third independent review
 
 2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `f9bcc48`

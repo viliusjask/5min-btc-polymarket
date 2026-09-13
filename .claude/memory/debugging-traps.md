@@ -383,3 +383,5 @@ Use the separately recorded, fresh execution book while continuing to block new 
 entries. Missing frame/stream continuity still invalidates execution. Regression evidence
 must include a completed SELL after restart, not merely a STOP intent. Preserve old study
 identities and uncertainty flags; compare the corrected implementation in a new study.
+
+- 2026-09-13: Startup from fork/main missed local history/storage commits and dirty backup work. Inventory all branches/worktrees and compare patch content before planning. Integrate relevant WIP and independently review dispositions; reopen plan approval against the recovered baseline.

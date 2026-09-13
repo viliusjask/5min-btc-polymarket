@@ -1,5 +1,9 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
+> Reopened for Fable/Astra review after local-work reconciliation on 2026-09-13.
+> The earlier approval predates the recovered history/storage implementation.
+> Reassess reuse and acceptance checks before further BUILD work; see docs/progress.md.
+
 2026-09-13, revision 5. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)

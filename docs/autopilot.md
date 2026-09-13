@@ -66,3 +66,10 @@ multiple-testing discipline, uncertainty and negative results. Historical implem
 paper profits are not proof of profitability. Public data and synthetic account fixtures only;
 no live-funded trading, service changes or credential access is authorized. The exact working
 objective is in ignored `.autopilot/INBOX.md`.
+
+Startup inventories all local branches and dirty worktrees through the pinned shared
+`scripts/wip_preflight.py`. Missing or stale dispositions reopen PLAN recovery automatically;
+they do not silently select fork/main or require a human checkpoint. The author reconciles
+relevant existing work into its assigned branch, records exact evidence in
+`.autopilot/wip-dispositions.json`, and revises the plan for fresh Astra review. Original
+worktrees and runtime data remain intact. New source work is still gated by plan approval.

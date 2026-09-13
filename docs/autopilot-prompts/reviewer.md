@@ -31,3 +31,10 @@ are supplied as local snapshots. Identify material gaps even if individual BUILD
 approved earlier increments. Astra fixes are followed by a separate fresh Astra review,
 repeated until no blocking findings remain. Check claims against held-out evidence and costs;
 negative results are valid. Do not certify profitability from implementation or paper PnL alone.
+
+PLAN recovery also requires independent review of .autopilot/wip-inventory.json and
+wip-dispositions.json. Inspect the actual branch/patch evidence for every deferred or adopted
+item. Reject relevant source work that was omitted or merely acknowledged without integration
+or a concrete continuation plan. Author-written dispositions are claims, not approval. Existing
+code imported during recovery and unfinished restored implementation must be represented in
+the revised plan; do not approve the old plan against a silently changed baseline.

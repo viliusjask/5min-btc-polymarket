@@ -311,9 +311,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         allow_abbrev=False,
         help="offline round-dataset extraction on the recorded tape; no account or network",
     )
-    data.add_argument("dataset_action", choices=("freeze",))
+    data.add_argument("dataset_action", choices=("freeze", "build", "build-holdout"))
     data.add_argument("--source", type=Path, help="existing capture.sqlite; opened read-only")
     data.add_argument("--output", type=Path, help="freeze record path, or dataset directory")
+    data.add_argument("--freeze", type=Path, dest="freeze_file", help="committed freeze record")
+    data.add_argument(
+        "--selection", type=Path, help="committed selection record; required for build-holdout"
+    )
+    data.add_argument(
+        "--train-end",
+        type=_historical_time,
+        help="train/validation boundary override; defaults to the fixed plan boundary",
+    )
     for name in (
         "observe",
         "doctor",

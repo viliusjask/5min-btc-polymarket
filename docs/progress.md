@@ -1,3 +1,38 @@
+# Progress: recover outstanding local work before continuing research
+
+2026-09-13. The original autopilot startup checked fork/main but did not reconcile other
+local branches. An audit of all 33 local branch tips found ten missing history/storage
+commits and one uncommitted online-backup fix. They are now incorporated on chore/btc-autopilot
+in merge checkpoint 1d3b4df, preserving the original commits and source worktrees. The CLI
+conflict was resolved by retaining DatasetError, StorageError and TapeError handling.
+Other branches were already included by ancestry or equivalent patches. The apparent
+missing dashboard-catchup commit was verified present by reverse-applying its complete
+implementation/test patch and checking its documentation additions.
+
+The combined history/storage and backup checkpoint passed 881 tests, Ruff and mypy.
+It includes external-history import, journal compression, pinned-worker compatibility,
+registered-journal maintenance, capture compression and a replay execution-book repair.
+The backup fix pins a consistent SQLite read snapshot so concurrent collector writes cannot
+continually restart the copy; it releases that snapshot before compression and preserves
+the subsequent tail through guarded synchronization. Tests exercise concurrent writes and
+interruption. No live/paper runtime data or service configuration was changed.
+
+Final combined recovery verification: 894 tests passed, Ruff lint/format and mypy passed.
+The restored dataset increment now dispatches build/build-holdout CLI commands and prevents
+development extraction from decoding post-freeze frames or labels. Selection/rules-file
+commit binding remains a review item; this checkpoint is not completed research validation.
+
+The interrupted dataset author's edits were preserved in a recovery stash and restored
+on top of the combined branch. They remain an unfinished B1 increment requiring independent
+review, not evidence of completed strategy improvements. The original backup worktree and
+all local branches remain intact. Private per-branch evidence is in .autopilot/local-wip-audit.md.
+
+Startup now inventories local branches and dirty worktrees and automatically reopens PLAN
+recovery when source work is unaccounted for. Relevant patches must be incorporated or given
+an evidence-backed disposition. Astra must independently assess those decisions before BUILD
+continues. The prior research-plan approval is being reopened against the recovered baseline,
+including reuse of the already-implemented external-history importer and compressed tape.
+
 # Progress: research re-plan, revision 5 after the fourth independent review
 
 2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `23167db`

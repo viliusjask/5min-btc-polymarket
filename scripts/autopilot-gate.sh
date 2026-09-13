@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export PATH="$HOME/.local/bin:$PATH"
 bash -n scripts/autopilot.sh
+bash -n scripts/autopilot-wip.sh
 bash -n scripts/autopilot-gate.sh
 uv lock --check
 uv run --locked --python 3.12 pytest -q

@@ -60,3 +60,38 @@ def test_author_cannot_approve(tmp_path):
 
 def test_external_wait_allowed_for_author(tmp_path):
     assert MODULE.stage_status(result(tmp_path, status="waiting"), "author", "", "") == ("waiting")
+
+
+@pytest.mark.parametrize("check_status", [0, 3, 2])
+def test_startup_inventory_controls_replanning_before_model_calls(tmp_path, check_status):
+    import os
+    import subprocess
+
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "mode").write_text("BUILD\n")
+    (state / "stage").write_text("reviewer\n")
+    # Inventory itself is tested in the pinned shared harness. Exercise the actual
+    # BTC transition with successful, outstanding-work and failed-inventory results.
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    executable = fake / "python3"
+    executable.write_text(f"#!/bin/sh\nexit {check_status}\n")
+    executable.chmod(0o755)
+    helper = SCRIPT.parent / "autopilot-wip.sh"
+    run = subprocess.run(
+        ["bash", "-c", 'source "$HELPER"; log() { :; }; btc_wip_startup'],
+        env=dict(
+            os.environ,
+            PATH=str(fake) + os.pathsep + os.environ["PATH"],
+            HELPER=str(helper),
+            STATE=str(state),
+            ROOT=str(tmp_path),
+            DIR=str(tmp_path),
+        ),
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == (2 if check_status == 2 else 0)
+    assert (state / "mode").read_text().strip() == ("PLAN" if check_status == 3 else "BUILD")
+    assert (state / "stage").read_text().strip() == ("author" if check_status == 3 else "reviewer")

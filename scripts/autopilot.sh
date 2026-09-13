@@ -7,7 +7,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE="$ROOT/.autopilot"
 SESSION=btc5m-autopilot
 SOURCE="${AUTOPILOT_HOME:-$HOME/projects/autopilot}"
-PIN="${AUTOPILOT_RUNTIME_PIN:-405ae9d2c1f3808af7c773ebb8880e88283f1207}"
+PIN="${AUTOPILOT_RUNTIME_PIN:-5fe3e3da13cbe6670cd5f2f14d33d56405100f1b}"
 BRANCH=chore/btc-autopilot
 BASE=main
 export GH_REPO=viliusjask/5min-btc-polymarket
@@ -23,7 +23,7 @@ preflight() {
     command -v "$item" >/dev/null || { echo "Missing executable: $item" >&2; return 1; }
   done
   python3 -c 'import sys; assert sys.version_info >= (3, 10)' || return 1
-  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh; do
+  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py; do
     git -C "$SOURCE" cat-file -e "$PIN:$item" || return 1
   done
   git -C "$ROOT" rev-parse --verify "fork/$BASE" >/dev/null || return 1
@@ -85,7 +85,7 @@ mkdir -p "$STATE"/{logs,prompts,briefing,runtime/prompts,runtime/scripts}
 exec 9>"$STATE/runner.lock"
 flock -n 9 || { echo 'Another runner owns this project state.' >&2; exit 1; }
 printf '%s\n' "$$" > "$STATE/pid"
-for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh; do
+for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py; do
   git -C "$SOURCE" show "$PIN:$item" > "$STATE/runtime/$item.tmp" \
     && mv "$STATE/runtime/$item.tmp" "$STATE/runtime/$item" || exit 1
 done
@@ -132,6 +132,12 @@ return_author() {
 [ -f "$STATE/mode" ] || printf '%s\n' PLAN > "$STATE/mode"
 [ -f "$STATE/stage" ] || return_author
 [ -f "$STATE/reviewed-head" ] || git -C "$ROOT" rev-parse HEAD > "$STATE/reviewed-head"
+# Every process start reconciles the whole local repository, not only fork/main.
+# A recovery author may merge relevant existing branches into this assigned branch.
+# Its dispositions are bound to the final snapshot; previous plan approval cannot
+# authorize implementation against a newly discovered code baseline.
+source "$ROOT/scripts/autopilot-wip.sh"
+btc_wip_startup || exit $?
 failures=0
 stalled=0
 while [ ! -f "$STATE/STOP" ]; do
@@ -150,6 +156,15 @@ while [ ! -f "$STATE/STOP" ]; do
     return_author
     continue
   fi
+  wip_review_snapshot=''
+  if [ "$mode" = PLAN ] && [ "$stage" = reviewer ] && [ -f "$STATE/wip-dispositions.json" ]; then
+    if ! btc_wip_check; then
+      wip_recovery=1
+      return_author
+      continue
+    fi
+    wip_review_snapshot=$(btc_wip_digest) || break
+  fi
   if [ "$stage" = reviewer ]; then
     git -C "$ROOT" diff --no-ext-diff "$base...$head" > "$STATE/review.diff" || break
     git -C "$ROOT" log --format='%h %s' "$base..$head" > "$STATE/review-commits.txt" || break
@@ -163,7 +178,11 @@ while [ ! -f "$STATE/STOP" ]; do
   output="$STATE/logs/$name.last.txt"
   prompt=$(cat "$ROOT/docs/autopilot-prompts/$stage.md")
   prompt+=$'\n'"Mode: $mode. Assigned branch: $BRANCH. Base branch: $BASE."
+  if [ "$wip_recovery" = 1 ]; then
+    prompt+=$'\n'"LOCAL WORK RECOVERY REQUIRED. Read $STATE/wip-inventory.json. Reconcile every outstanding local branch and dirty worktree under the author recovery rules. Use python3 $DIR/scripts/wip_preflight.py scan/check/record; target HEAD, manifest $STATE/wip-dispositions.json. After your final commit and push, scan a fresh inventory and record exact dispositions. Reassess the research plan against the recovered implementation. The wrapper will not advance to review until check passes."
+  fi
   prompt+=$'\n'"reviewed_head=$head reviewed_base=$base"
+  prompt+=$'\n'"Local work inventory and author dispositions: $STATE/wip-inventory.json, $STATE/wip-dispositions.json. Independently verify inclusion and any deferrals during PLAN review."
   prompt+=$'\n'"Prior review if present: $STATE/review.json. Wrapper snapshots of exact commits: $STATE/review.diff, $STATE/review-commits.txt, $STATE/pr-review-context.json. Output artifact: $result."
   printf '%s\n' "running $mode $stage" > "$STATE/status"
   prompt+=$'\n'"Objective: $STATE/INBOX.md. Verification feedback if present: $STATE/gate-failure.log. Briefing: $STATE/BRIEFING.md."
@@ -216,6 +235,16 @@ while [ ! -f "$STATE/STOP" ]; do
     if (( failures >= 3 )); then idle 'repeatedly uncommitted stage output' || break; failures=0; fi
     pause 30 || break; continue
   fi
+  if [ "$wip_recovery" = 1 ]; then
+    if ! btc_wip_check; then
+      log 'Local work remains unreconciled; repeat PLAN recovery with refreshed inventory'
+      return_author
+      pause 30 || break
+      continue
+    fi
+    wip_recovery=0
+    log 'Local work inventory reconciled; independent plan review is still required'
+  fi
   current=$(git -C "$ROOT" rev-parse HEAD)
   if [ "$stage" = author ] && [ "$status" = waiting ] && [ "$current" = "$head" ]; then
     cp "$result" "$STATE/author.json"
@@ -236,6 +265,14 @@ while [ ! -f "$STATE/STOP" ]; do
     fi
   elif [ "$stage" = author ]; then
     stalled=0
+  fi
+  if [ -n "$wip_review_snapshot" ]; then
+    if ! btc_wip_check || [ "$(btc_wip_digest)" != "$wip_review_snapshot" ]; then
+      log 'Local work or dispositions changed during PLAN review; approval invalidated'
+      wip_recovery=1
+      return_author
+      continue
+    fi
   fi
   if [ "$stage" = reviewer ] && [ "$current" != "$head" ]; then
     idle 'reviewer changed HEAD; review evidence invalid' || break; continue

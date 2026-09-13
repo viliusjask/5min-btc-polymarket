@@ -38,3 +38,20 @@ INTEGRATION: you are the Astra fixer, not the initial implementation author. Res
 material final review finding across the full cumulative branch, preserving approved scope.
 Checkpoint and push fixes, rerun appropriate checks, and return for a fresh independent Astra
 review. A reasoned disagreement must itself be independently accepted before completion.
+
+LOCAL WORK RECOVERY: when the wrapper supplies an inventory, inspect all outstanding branches
+and dirty worktrees read-only before new implementation. Read relevant diffs and history;
+ancestry alone can miss cherry-picked or superseded patches. Merge relevant committed work
+into the assigned feature branch without rewriting history, then resolve and verify it.
+Preserve uncommitted source work in its original worktree; copy a verified patch into the
+assigned branch when it belongs to the objective. Never switch or clean another worktree,
+commit unrelated files, or silently omit work. If another writer is active, coordinate or wait
+for its stable checkpoint; do not race it. Review scratch, supplied images and local tool state
+are not application changes, but record their purpose and preserved location.
+Record adopt only with concrete incorporated-commit/patch evidence or ownership of resumed
+unfinished work. Record defer only for evidence-backed redundant, unrelated, or externally
+owned work, with a reason and owner; not merely to pass the check. After the final commit/push,
+scan a fresh inventory, record every required disposition, and check it. Amend the research
+plan for the recovered baseline and explicitly identify remaining unfinished implementation.
+This bounded reconciliation is authorized during PLAN recovery; new feature implementation
+still waits for independent PLAN approval. Existing prior review approval does not cover it.

@@ -1,3 +1,65 @@
+# Progress: research re-plan, revision 2 after independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `08fbf74`
+requested changes on seven findings. Revision 2 of [the plan](plans/profitable-subset-research.md)
+answers each in a table at the top and rewrites the affected sections:
+
+- A committed freeze record (`btc5m dataset freeze`) is the single split boundary: cutoff at
+  the next round boundary after the tape's last frame, a 30-minute purge on each side,
+  validation capped by round start, frame cursor and label receipt. Tests cover capture
+  advancing between freeze, extraction and selection.
+- Fills walk the complete price/size ladders read from the checksummed tape frame by ident;
+  depth summaries are screening only and are tested to have no effect on fills. Baselines walk
+  their own outcome token's ladder.
+- Execution validity: a live window from decision plus latency to decision plus 2,000 ms,
+  fresh books only, no fills after expiry, partial-depth handling, delayed or forced exits,
+  every entered round preserved, and a full-loss sensitivity for unlabeled entries that the
+  decision rule must pass.
+- A new `research.day_bootstrap` with a traded-round denominator, observed no-trade days as
+  zeros, missing days excluded and counted, a six-day minimum and an explicit
+  insufficient-evidence status.
+- H6 leaves the combinatorial cross-validation grid (now 24 fixed rules) and gets five
+  expanding chronological folds with fold-local standardization and fitting.
+- The screenshot hedge variant is deferred: both photos leave its trigger and size undefined
+  (the sentence is truncated; one log row shows a USD 1.69 hedge on a 48-share fill). The
+  no-hedge baseline is labeled an approximation.
+- H7 credits a hypothetical rebate only on passive (maker) fills, using the official pool
+  formula (20% of crypto taker fees, pro rata by fee-equivalent, USD 1 daily minimum), kept
+  apart from paper cash. The evidence register was corrected to the pool description.
+
+All ten reference photos were inspected again. No code changed; no runtime file, service,
+credential or funded action was touched. Next: independent PLAN review of revision 2.
+
+# Progress: research re-plan for a profitable subset
+
+2026-09-13. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base `cb7827b`.
+PLAN stage of the unattended runner. No code changed; three documents were added.
+
+- [The plan](plans/profitable-subset-research.md) defines the question, a six-part decision
+  rule, a fast round-level dataset and rule evaluator on the existing archive, four baselines,
+  25 registered trials in six families plus one sensitivity, a chronological train/validation/
+  holdout protocol with a 30-minute purge, a pure-Python probability-of-backtest-overfitting
+  estimate, and six bounded increments. It reuses `Tape`, `research.py`, `strategy.py` and
+  `lab_scoring.py`; the lab and historical replay remain the path-faithful simulator.
+- [The evidence register](research/profitability-evidence-2026-09-13.md) rechecks the live
+  settlement rule (Chainlink 60-second TWAP confirmed on market 4493717), fees (crypto taker
+  0.07, 20% maker rebate), and records four 2026 papers: five-minute prices are calibrated
+  about a minute before close; settlement-time spot manipulation was measurable in near-even
+  cycles under the earlier endpoint rule; more than 24% of filled orders reverted at peak
+  hours in a reversion study; a v1 trade archive exists without books.
+- [The photo register](research/reference-photos-2026-09-13.md) inspected all ten reference
+  images. The BTC ideas (gus rule, Daniro pairing) were already assessed on September 6; the
+  literal gus rule becomes a registered baseline and maker economics a sensitivity. The
+  memecoin and hiring posts are rejected with reasons.
+- Read-only runtime readings: the directional lab report is dated September 10 11:42 UTC at
+  cursor 248,506 of high-water 442,086 (about three days behind); both automatic holdouts
+  selected nothing; no variant has 30 clean completed rounds; `momentum-settlement` has 14
+  uncertain rounds over 483 while `momentum-20-90-150` has 107, so uncertainty is policy
+  dependent. These readings motivate the plan's first increment.
+
+No runtime file, service, credential or funded action was touched. Next: independent PLAN
+review, then BUILD increment B1 (dataset extraction with synthetic tests and a read-only
+real-archive build recorded here).
 
 # Progress: independent unified integration review
 

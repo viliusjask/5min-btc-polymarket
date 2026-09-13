@@ -1,3 +1,33 @@
+# Progress: research re-plan for a profitable subset
+
+2026-09-13. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base `cb7827b`.
+PLAN stage of the unattended runner. No code changed; three documents were added.
+
+- [The plan](plans/profitable-subset-research.md) defines the question, a six-part decision
+  rule, a fast round-level dataset and rule evaluator on the existing archive, four baselines,
+  25 registered trials in six families plus one sensitivity, a chronological train/validation/
+  holdout protocol with a 30-minute purge, a pure-Python probability-of-backtest-overfitting
+  estimate, and six bounded increments. It reuses `Tape`, `research.py`, `strategy.py` and
+  `lab_scoring.py`; the lab and historical replay remain the path-faithful simulator.
+- [The evidence register](research/profitability-evidence-2026-09-13.md) rechecks the live
+  settlement rule (Chainlink 60-second TWAP confirmed on market 4493717), fees (crypto taker
+  0.07, 20% maker rebate), and records four 2026 papers: five-minute prices are calibrated
+  about a minute before close; settlement-time spot manipulation was measurable in near-even
+  cycles under the earlier endpoint rule; more than 24% of filled orders reverted at peak
+  hours in a reversion study; a v1 trade archive exists without books.
+- [The photo register](research/reference-photos-2026-09-13.md) inspected all ten reference
+  images. The BTC ideas (gus rule, Daniro pairing) were already assessed on September 6; the
+  literal gus rule becomes a registered baseline and maker economics a sensitivity. The
+  memecoin and hiring posts are rejected with reasons.
+- Read-only runtime readings: the directional lab report is dated September 10 11:42 UTC at
+  cursor 248,506 of high-water 442,086 (about three days behind); both automatic holdouts
+  selected nothing; no variant has 30 clean completed rounds; `momentum-settlement` has 14
+  uncertain rounds over 483 while `momentum-20-90-150` has 107, so uncertainty is policy
+  dependent. These readings motivate the plan's first increment.
+
+No runtime file, service, credential or funded action was touched. Next: independent PLAN
+review, then BUILD increment B1 (dataset extraction with synthetic tests and a read-only
+real-archive build recorded here).
 
 # Progress: independent unified integration review
 

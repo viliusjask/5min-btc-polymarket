@@ -1,19 +1,27 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
-2026-09-13, revision 3. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
+2026-09-13, revision 4. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)
 and [the photo register](../research/reference-photos-2026-09-13.md). Revision 1 (`08fbf74`)
-received seven findings and revision 2 (`6b7de88`) six findings from the independent PLAN
-review; every one is answered below and the affected sections were rewritten.
+received seven findings, revision 2 (`6b7de88`) six and revision 3 (`f9bcc48`) three from the
+independent PLAN review; every one is answered below and the affected sections were rewritten.
+
+## Answers to the review of revision 3
+
+| Finding | Where it is answered | What changed |
+|---|---|---|
+| P1 a frame inside the window could carry the decision-time book and pass the five-second freshness test, crediting liquidity a live order would never have seen | [Execution validity](#execution-validity) | Every order is a sequence of attempts with an `activation_ms`. A new fifth test, **book activation**, requires the consumed token's book to satisfy `min(timestamp_ms, received_ms) >= activation_ms`, the same lower bound `PaperBroker._immediate` applies (`src/btc5m/paper.py:245`). Freshness relative to the frame (test 3) is no longer enough. Failure reason `BOOK_BEFORE_ACTIVATION`; an entry whose whole window carries pre-activation books is `unfilled_book_before_activation` and counted. Fixtures: three frames carrying the decision-time book give no entry; the same followed by a genuinely newer, worse book fills at the worse price; the same with the newer book after the deadline gives no entry; a book with one stamp before activation fails; the stressed latency moves the boundary. |
+| P2 exits had to be inside `decision + 2000` and also retry until expiry, which no frame could satisfy | [Execution validity](#execution-validity), [Entry and exit transitions](#entry-and-exit-transitions-residual-inventory-and-attempts) | Entry and exit timing are now separate rows of one table. An entry has one attempt, window `[decision + latency, decision + 2000]`. An exit's first attempt activates at `trigger + latency` and every later attempt (one per fill event) activates at the previous fill frame's `now_ms + latency`, paying latency again; the deadline of every exit attempt is the last frame before `end_s`. `exit_delayed` means the first fill came after `trigger + 2000` (or never); `exit_delay_ms`, `exit_completion_ms` and `exit_attempts` are recorded on every exited round. The book-activation test replaces the separate depth-consumption rule, because a retry's activation lies after the previous fill frame. Fixtures: a first exit fill at 2,400 ms; a 7-of-12 sale at 600 ms whose remainder sells at 2,300 ms without the delayed flag. |
+| P2 the descriptive bootstrap received labeled rows but the row-count check used the entered count | [Day-block bootstrap](#day-block-bootstrap-new-function) | `day_bootstrap(rows, *, coverage, traded_days, expected_rows)`. The decision run passes every entered round with `expected_rows = entered`; the descriptive run passes labeled entered rounds with `expected_rows = labeled`. A day in `traded_days` that has no row in the descriptive population is `unlabeled_only`: excluded and counted, neither a zero nor missing. The adapter asserts the decision run's `expected_rows` equals the decision table's `entered`. Fixtures: the mixed five-round fixture run through both calls (4 rows and 3 rows), a wrong count raising, and a day holding only unresolved trades. |
 
 ## Answers to the review of revision 2
 
 | Finding | Where it is answered | What changed |
 |---|---|---|
-| P1 H6 coefficients were due before a cutoff that passes at the start of B1; B1 extracted holdout rows before B4 forbade reading them | [Freeze record and sequence](#the-freeze-record-and-the-four-step-sequence), [B1](#increment-b1-round-dataset-extraction), [B4](#increment-b4-selection-on-the-fixed-development-dataset), [B5](#increment-b5-holdout-verdict-may-wait) | The freeze fixes what development may see (frame high-water, cutoff); it sets no deadline for any later step. `dataset build` writes train and validation rows only and stops at the freeze high-water. Holdout rows are extracted only by `dataset build-holdout`, which refuses to run without a committed selection record. Selection, including H6's final coefficients, runs on the fixed development dataset at any later time. Tests: development builds at freeze time and after 200 more rounds have the same SQLite content hash and row counts; holdout extraction is refused before the selection record and afterwards contains only rounds at or after `holdout_start_ms`; the freeze command refuses to overwrite; a selection made three days after the cutoff equals one made one minute after. |
+| P1 H6 coefficients were due before a cutoff that passes at the start of B1; B1 extracted holdout rows before B4 forbade reading them | [Freeze record and sequence](#the-freeze-record-and-the-four-step-sequence), [B1](#increment-b1-round-dataset-extraction), [B4](#increment-b4-chronological-protocol-and-the-first-report), [B5](#increment-b5-holdout-verdict-may-wait) | The freeze fixes what development may see (frame high-water, cutoff); it sets no deadline for any later step. `dataset build` writes train and validation rows only and stops at the freeze high-water. Holdout rows are extracted only by `dataset build-holdout`, which refuses to run without a committed selection record. Selection, including H6's final coefficients, runs on the fixed development dataset at any later time. Tests: development builds at freeze time and after 200 more rounds have the same SQLite content hash and row counts; holdout extraction is refused before the selection record and afterwards contains only rounds at or after `holdout_start_ms`; the freeze command refuses to overwrite; a selection made three days after the cutoff equals one made one minute after. |
 | P1 fill eligibility omitted source age, the validity flag, crossed books and markets not accepting orders | [Execution validity](#execution-validity) | A fill frame must pass the engine's own `strategy._safety_reason` recomputed from the tape frame at fill time, plus the window, same-round and ladder-side tests. That function rejects stale or future source and receipt stamps for both books and both prices, inactive or non-accepting markets, wrong or expired rounds, token mismatch, a missing side and a crossed book. The `ticks.rejection` column is screening only. Fixtures: one valid decision followed by each of ten invalid execution snapshots, plus a hand-edited `rejection` column that changes nothing. |
-| P1 partial depth left exit residuals, retries, proceeds and settlement undefined | [Entry and exit transitions](#entry-and-exit-transitions-residual-inventory-and-depth-consumption) | Entry is one attempt. An exit sells what the bid ladder shows, keeps the residual as inventory, retries only on a frame whose book source timestamp is newer than the last consumed one, holds a residual below the five-share minimum to settlement, and accumulates proceeds. Net equals proceeds plus settlement payout minus cost basis; share conservation is asserted. Fixtures: 7 of 12 then 5; 9 of 12 with a 3-share residual under a matching label, a losing label and no label; an unchanged book yields no second fill. |
+| P1 partial depth left exit residuals, retries, proceeds and settlement undefined | [Entry and exit transitions](#entry-and-exit-transitions-residual-inventory-and-attempts) | Entry is one attempt. An exit sells what the bid ladder shows, keeps the residual as inventory, retries only on a frame whose book source timestamp is newer than the last consumed one, holds a residual below the five-share minimum to settlement, and accumulates proceeds. Net equals proceeds plus settlement payout minus cost basis; share conservation is asserted. Fixtures: 7 of 12 then 5; 9 of 12 with a 3-share residual under a matching label, a losing label and no label; an unchanged book yields no second fill. |
 | P2 `RoundResult`/`performance` cannot carry a null net or count no-trade rows | [Result rows and the adapter](#result-rows-and-the-adapter-to-performance) | New `EvaluatedRound` rows with `observed_net: Decimal | None` and `sensitivity_net: Decimal`. `summarize` builds two `RoundResult` lists (labeled entered rounds; all entered rounds at sensitivity net) and passes only entered rounds to `performance`; not-entered rounds are counted apart. Costs are applied once inside the evaluator; the decision rule reads only the stressed run. One fixture holds a labeled win, a labeled loss, an unlabeled entry, a no-trade round and a partially exited round. |
 | P1 H6 training admitted labels received after the fold's fitting cutoff | [H6 protocol](#h6-fitted-combination-separate-leakage-free-protocol) | Each fold has `fit_cutoff_ms` equal to its start minus the 30-minute purge. A round trains fold k only if it ended and its `label_received_ms` is at or before that cutoff; standardization uses the same set; late labels enter later folds. Test: a pre-fold round whose label arrived after the cutoff can have its label flipped without changing fold k's model, and the same flip changes fold k+1. |
 | P2 the day bootstrap dropped traded low-coverage days | [Day-block bootstrap](#day-block-bootstrap-new-function) | Every day with an entered round is included whatever its coverage; the 144-slot rule decides only whether a day with no entered round is a genuine zero or missing. The bootstrap's entered-round total must equal the decision table's count (the function raises otherwise). The decision run uses sensitivity nets; the observed-only run is descriptive. Fixture: a 100-slot day holding one USD -4.50 loss is included and raises `negative_fraction`. |
@@ -22,9 +30,9 @@ review; every one is answered below and the affected sections were rewritten.
 
 | Finding | Where it is answered | What changed |
 |---|---|---|
-| P1 holdout begins before validation ends; no approval commit exists | [Freeze record](#the-freeze-record-one-persisted-boundary), [B4](#increment-b4-chronological-protocol-and-the-first-report) | One persisted freeze record, written by the first BUILD action, defines the cutoff. Validation is capped strictly before the purged cutoff by round start, frame cursor and label receipt. Tests cover capture advancing between freeze, extraction and selection. |
+| P1 holdout begins before validation ends; no approval commit exists | [Freeze record](#the-freeze-record-and-the-four-step-sequence), [B4](#increment-b4-chronological-protocol-and-the-first-report) | One persisted freeze record, written by the first BUILD action, defines the cutoff. Validation is capped strictly before the purged cutoff by round start, frame cursor and label receipt. Tests cover capture advancing between freeze, extraction and selection. |
 | P1 depth summaries cannot reconstruct USD-sized book walks | [B1 ticks](#increment-b1-round-dataset-extraction), [B2 fill walk](#fills-walk-the-full-ladder) | Fills read the full price/size ladders from the checksummed tape frame through a verified route (tape identity, frame ident, frame checksum). Summary columns are for screening only and are tested to have no effect on fills. Each baseline walks its own outcome token's ladder. |
-| P1 no decision-to-fill deadline, stale books, expiry, partial depth, residual positions | [B2 execution validity](#execution-validity) | An order is live from decision plus latency to decision plus 2,000 ms, only on fresh books of the same market before expiry. Unfilled orders leave no position. Every entered round is preserved: delayed exits fill at the next valid frame or hold to settlement. Unlabeled entered rounds enter a full-loss sensitivity that the decision rule must pass. |
+| P1 no decision-to-fill deadline, stale books, expiry, partial depth, residual positions | [B2 execution validity](#execution-validity) | An entry order is live from decision plus latency to decision plus 2,000 ms, only on fresh books of the same market before expiry; exit orders have their own attempt timing (revision 4). Unfilled entries leave no position. Every entered round is preserved: delayed exits fill at the next valid frame or hold to settlement. Unlabeled entered rounds enter a full-loss sensitivity that the decision rule must pass. |
 | P2 `research.block_sensitivity` cannot supply the day-block statistic | [Day-block bootstrap](#day-block-bootstrap-new-function) | A new `research.day_bootstrap` with a traded-round denominator, observed no-trade days as zeros, missing days excluded and counted, a six-day minimum, an explicit insufficient-evidence status, and sparse-day and missing-day fixtures. |
 | P1 H6 fitted on train, then ranked in cross-validation over train plus validation | [B3 H6](#h6-fitted-combination-separate-leakage-free-protocol) | H6 leaves the combinatorial cross-validation matrix. It is evaluated by expanding chronological folds with fold-local standardization and fitting. A test changes an out-of-fold label and asserts identical coefficients. |
 | P2 the hedge variant of the screenshot baseline cannot be represented | [Baselines](#baselines-registered-with-every-run) | The hedge variant is deferred with the evidence that its size is undefined (the sentence is truncated in the photo). The remaining baseline is labeled an approximation without the hedge. A bounded interpretation is recorded for a later, separately registered trial. |
@@ -232,12 +240,27 @@ manifest identity differs from the tape is refused.
 
 ### Execution validity
 
-A fill frame is chosen from the tape, never from the `ticks` summaries. The evaluator applies
-four tests to each candidate frame, in this order, and records the first failure as the
-reason:
+A fill frame is chosen from the tape, never from the `ticks` summaries. Every order is a
+sequence of **attempts**. An entry order has exactly one attempt. An exit order has one
+attempt per fill event (the next section explains how a partial sale opens the next one).
+Each attempt has an `activation_ms`, the earliest instant a venue order could act on a book,
+and a `deadline_ms`, the latest frame it may consider:
 
-1. **Window**: `decision_ms + latency_ms <= now_ms <= decision_ms + 2000`. Latency is 250 ms
-   (standard) or 750 ms (stressed).
+| Order | Attempt | `activation_ms` | `deadline_ms` |
+|---|---|---|---|
+| Entry | the only one | `decision_ms + latency_ms` | `decision_ms + 2000` |
+| Exit | first | `trigger_ms + latency_ms`, where `trigger_ms` is the `now_ms` of the tick that fired the stop, target or time rule | the last frame with `now_ms < end_s * 1000` |
+| Exit | each later one | the previous fill frame's `now_ms + latency_ms` | the same |
+
+Latency is 250 ms (standard) or 750 ms (stressed) and is paid again on every attempt. The
+entry deadline is tighter than the paper broker's execution-gap limit of `max_book_age_ms`
+(5,000 ms, `src/btc5m/paper.py:241`); the evaluator prefers a not-entered round to a fill
+that a live order would not have obtained.
+
+The evaluator applies five tests to each candidate frame of an attempt, in this order, and
+records the first failure as the reason:
+
+1. **Window**: `activation_ms <= now_ms <= deadline_ms`.
 2. **Same round**: the frame has a snapshot and its market slug equals the round's slug. A
    frame without a snapshot fails with `NO_SNAPSHOT`.
 3. **Engine safety**: `strategy._safety_reason(snapshot, config)` returns `None`, computed
@@ -253,13 +276,28 @@ reason:
    (`src/btc5m/strategy.py:86`). `PaperBroker._book` applies the same age, future and
    crossed tests (`src/btc5m/paper.py:80`). The dataset's `ticks.rejection` column holds the
    same value for screening, but the evaluator never reads it for a fill.
-4. **Ladder side**: the side being consumed (asks for a buy, bids for a sell) has at least
+4. **Book activation**: the book of the token being consumed satisfies
+   `min(book.timestamp_ms, book.received_ms) >= activation_ms`. This is the lower bound
+   `PaperBroker._immediate` applies before it walks a book (`src/btc5m/paper.py:245`). Test 3
+   only proves the book is less than five seconds old relative to the frame. A frame at
+   `decision_ms + 750` can still carry the book that was displayed at `decision_ms`, and
+   that liquidity may be gone by the time an order arrives; crediting it would understate
+   slippage. A book with either stamp before activation fails with `BOOK_BEFORE_ACTIVATION`.
+   Because each later exit attempt activates after the previous fill frame's `now_ms`, and
+   the book sold into on that frame has stamps at or below that `now_ms`, this test also
+   guarantees that a retry consumes a strictly newer book. Two frames carrying the same book
+   therefore yield one fill.
+5. **Ladder side**: the side being consumed (asks for a buy, bids for a sell) has at least
    one level.
 
-A frame failing any test is skipped and the next frame in the window is tried. If no frame
-passes, an entry is `unfilled` with the reason `unfilled_no_frame` (no frame at all in the
-window) or `unfilled_<last reason>`, the round is reported as not entered, and an exit is
-delayed (next section).
+A frame failing any test is skipped and the next frame at or before the deadline is tried.
+If no frame passes, an entry is `unfilled` with the reason `unfilled_no_frame` (no frame at
+all in the window) or `unfilled_<last reason>` (for example `unfilled_book_before_activation`
+when every frame in the window carried a pre-activation book), and the round is reported as
+not entered. An exit attempt with no passing frame before `end_s` leaves the remaining
+inventory to settlement (next section). Every report counts not-entered reasons separately,
+because skipping rounds whose book did not refresh within two seconds selects on liquidity
+activity and that selection must stay visible.
 
 | Cost item | Standard | Stressed |
 |---|---|---|
@@ -281,16 +319,30 @@ valid. The earlier fixtures stay: an outage spanning the entry window yields no 
 fee on a 0.90 fill equals 0.0063 per share; a 750 ms latency picks a later frame with a
 worse price; the same rule on the same dataset gives identical output twice.
 
-### Entry and exit transitions, residual inventory and depth consumption
+Book-activation fixtures, all with one valid decision at `D` (90 s remaining) and standard
+latency (activation `D + 250`): frames at `D + 300`, `D + 900` and `D + 1,500` whose up
+book carries source and receipt stamps equal to `D` (the book never changed) give no entry
+and the reason `unfilled_book_before_activation`, although every frame passes test 3; the
+same three frames followed by a frame at `D + 1,800` whose up book is stamped `D + 1,700`
+with a best ask one tick worse fill at that worse price, and the fill record names the frame
+ident and both book stamps; the same frames with the fresh book on a frame at `D + 2,100`
+give no entry (`unfilled_book_before_activation`, since the last frame fails the window
+first and the recorded reason is the last frame inside the window); a frame at `D + 600`
+whose up book has `received_ms` `D + 400` but `timestamp_ms` `D - 100` fails test 4 (both
+stamps must reach activation); under the stressed model (activation `D + 750`) a frame at
+`D + 800` carrying a book stamped `D + 700` fails and a frame at `D + 900` carrying a book
+stamped `D + 850` fills.
+
+### Entry and exit transitions, residual inventory and attempts
 
 | Transition | Rule |
 |---|---|
-| Entry | One order, one live window, at most one fill frame. Walk the asks level by level until the USD budget is spent; the quantity at each level is rounded down to whole shares. If the total is below `min_order_size` (5 shares) the entry is `unfilled_thin` and the round is not entered. Otherwise the position is the walked quantity; if the ladder ran out before the budget did, the round is flagged `partial`. There is no entry retry. Cost basis = principal + entry fees. |
-| Exit trigger | The stop, target or time rule is tested on every valid tick after the fill. The first trigger opens one exit order for the whole remaining inventory. Hold-to-settlement policies open no exit order. |
-| Exit fill | At the first passing frame, walk the bids: sell whole shares level by level until the inventory or the displayed depth is exhausted. Fees per level through `fee_for`. Proceeds accumulate. Inventory decreases by the shares sold. |
-| Residual | If inventory remains and is at least 5 shares, the exit order stays open and retries. If it is below 5 shares, no venue order can sell it: it is flagged `residual_below_minimum` and holds to settlement. |
-| Depth consumption | A retry may fill only on a frame whose book source `timestamp_ms` for the sold token is strictly greater than the source timestamp of the book consumed by the previous sale. Two frames carrying the same book yield one fill. Any one frame yields at most one fill event per order. |
-| Retry end | Retries continue at every later passing frame until the round's `end_s`. Inventory remaining at `end_s` holds to settlement, flagged `exit_forced_settlement`. An exit whose first fill lies after its own live window is flagged `exit_delayed` with the delay in ms. |
+| Entry | One order, one attempt, at most one fill frame. Walk the asks level by level until the USD budget is spent; the quantity at each level is rounded down to whole shares. If the total is below `min_order_size` (5 shares) the entry is `unfilled_thin` and the round is not entered. Otherwise the position is the walked quantity; if the ladder ran out before the budget did, the round is flagged `partial`. There is no entry retry. Cost basis = principal + entry fees. |
+| Exit trigger | The stop, target or time rule is tested on every valid tick after the entry fill frame. The first trigger opens one exit order for the whole inventory; `trigger_ms` is that tick's `now_ms`. Hold-to-settlement policies open no exit order. |
+| Exit fill | The first attempt activates at `trigger_ms + latency_ms`. At the first frame passing all five tests, walk the bids: sell whole shares level by level until the inventory or the displayed depth is exhausted. Fees per level through `fee_for`. Proceeds accumulate. Inventory decreases by the shares sold. One frame yields at most one fill event. |
+| Residual | If inventory remains and is at least 5 shares, the next attempt starts, activating at the fill frame's `now_ms + latency_ms`. It pays latency again and can fill only on a book whose stamps reach that activation (test 4), so it never sells into the ladder it already consumed. If inventory is below 5 shares, no venue order can sell it: it is flagged `residual_below_minimum` and holds to settlement. |
+| Exit end | Attempts continue until the last frame before `end_s`. Inventory remaining then holds to settlement, flagged `exit_forced_settlement`. Exits have no 2,000 ms deadline; that number only defines whether the exit was prompt. |
+| Exit timing record | Every exited round records `exit_attempts`, `exit_delay_ms = first_fill.now_ms - trigger_ms` and `exit_completion_ms = last_fill.now_ms - trigger_ms` (both null when nothing sold). `exit_delayed` is true when the first fill's `now_ms` exceeds `trigger_ms + 2000` or when no fill occurred before `end_s`. A later attempt that fills after `trigger_ms + 2000` does not set the flag by itself; its lateness is visible in `exit_completion_ms` and the report lists the distribution of both durations. |
 | Settlement | Held inventory (forced, residual or hold-to-settlement) pays 1.00 per share if the official label matches the held side and 0 otherwise. With no label, the round's observed net is null and its sensitivity net treats the held inventory as paying 0. |
 | Net | `observed_net = proceeds + settlement payout - cost basis`; `sensitivity_net` is the same with payout 0 when unlabeled. Both are `Decimal`. |
 | Conservation | `entry_shares == sold_shares + settled_shares` on every round. The evaluator asserts it and every fixture checks it. |
@@ -299,18 +351,38 @@ Every entered round is therefore present in the result table exactly once. Nothi
 is dropped for a gap, an outage or an expiry. Flags describe path quality; the decision rule
 uses all entered rounds.
 
-Tests: a 12-share position exits into bid depth of 7, then a later frame with a newer book
-shows 5: two fill events, proceeds equal the sum of both walks minus both fees, inventory 0,
-`exit_delayed` with the measured delay; a 12-share position into depth of 9 leaves 3 shares
-(`residual_below_minimum`), and the net is checked under a matching label (payout 3.00), a
-losing label (0) and no label (observed null, sensitivity payout 0); two consecutive frames
-with identical book source timestamps produce one fill event; an outage lasting to `end_s`
-after a partial sale yields `exit_forced_settlement` with the residual settled by label; a
-USD 20 entry into a three-level ladder showing 12 shares yields a 12-share `partial` entry
-whose cost basis equals the hand-computed walk; a ladder showing 4 shares yields
-`unfilled_thin`; an outage during a stop trigger yields a delayed exit at a worse bid; a
-labeled loss is a full loss; an unlabeled entered round is counted and its sensitivity net
-equals minus its cost basis; share conservation holds on every fixture above.
+Tests, all with standard latency unless stated, `T` the trigger tick's `now_ms`:
+
+- Two attempts, prompt first fill: a 12-share position; a frame at `T + 600` with a bid book
+  stamped `T + 500` showing 7 shares sells 7 (attempt 1); attempt 2 activates at `T + 850`;
+  a frame at `T + 1,200` carrying the same book (stamps `T + 500`) yields nothing
+  (`BOOK_BEFORE_ACTIVATION`); a frame at `T + 2,300` with a book stamped `T + 2,200` showing
+  5 sells the remaining 5 after the two-second mark. Expected: two fill events,
+  `exit_attempts` 2, `exit_delay_ms` 600, `exit_completion_ms` 2,300, `exit_delayed` false,
+  proceeds equal to both walks minus both fees, inventory 0.
+- First fill after two seconds: frames at `T + 400`, `T + 1,200` and `T + 1,900` all carry a
+  bid book stamped `T - 100`; the first fresh book (stamped `T + 2,350`) arrives on a frame at
+  `T + 2,400` and holds the whole inventory. Expected: one fill event, one attempt,
+  `exit_delayed` true, `exit_delay_ms` 2,400, `exit_completion_ms` 2,400.
+- Remainder after the deadline under stress (latency 750): the first fixture's second
+  attempt activates at `T + 1,350`; the `T + 2,300` frame still fills; a variant whose fresh
+  book is stamped `T + 1,300` on that frame does not, and the 5 shares are
+  `exit_forced_settlement` if no later frame qualifies.
+- Residual below minimum: a 12-share position into depth of 9 leaves 3 shares
+  (`residual_below_minimum`, `exit_attempts` 1), and the net is checked under a matching label
+  (payout 3.00), a losing label (0) and no label (observed null, sensitivity payout 0).
+- Same book twice: two consecutive frames with identical book stamps after one sale produce
+  one fill event.
+- Outage to expiry: an outage lasting to `end_s` after a partial sale yields
+  `exit_forced_settlement`, `exit_delayed` false (the first fill was prompt), and the residual
+  settled by label.
+- Entry depth: a USD 20 entry into a three-level ladder showing 12 shares yields a 12-share
+  `partial` entry whose cost basis equals the hand-computed walk; a ladder showing 4 shares
+  yields `unfilled_thin`.
+- Outage at the trigger: an outage during a stop trigger yields a delayed exit at a worse bid
+  with `exit_delayed` true.
+- A labeled loss is a full loss; an unlabeled entered round is counted and its sensitivity
+  net equals minus its cost basis; share conservation holds on every fixture above.
 
 ### Baselines registered with every run
 
@@ -348,15 +420,20 @@ adapter, both in a new module `src/btc5m/rule_eval.py`:
 
 - `EvaluatedRound`: slug, `start_ms`, split, rule id, cost model, `entered` (bool),
   `not_entered_reason`, `decision_ms`, side, entry fill (frame ident, shares, principal,
-  fees), exit fill events (list), `settled_shares`, label, `observed_net: Decimal | None`,
-  `sensitivity_net: Decimal`, total fees, and flags (`partial`, `exit_delayed`,
+  fees), `trigger_ms`, exit fill events (list, each with frame ident, both book stamps,
+  shares, principal, fees), `exit_attempts`, `exit_delay_ms`, `exit_completion_ms`,
+  `settled_shares`, label, `observed_net: Decimal | None`, `sensitivity_net: Decimal`, total
+  fees, and flags (`partial`, `exit_delayed`,
   `exit_forced_settlement`, `residual_below_minimum`, `unlabeled`).
 - `summarize(rows)` returns counts (`rounds`, `entered`, `not_entered` by reason, `labeled`,
   `unlabeled`, each flag) and two `performance` results: `observed`, from `RoundResult` rows
   of labeled entered rounds with `net = observed_net`, and `sensitivity`, from `RoundResult`
   rows of all entered rounds with `net = sensitivity_net`. `RoundResult.uncertain` is set for
   flagged rounds; `used`, `complete` and `observed` are true for every adapted row so
-  `research.usable` keeps them. Not-entered rounds never reach `performance`.
+  `research.usable` keeps them. Not-entered rounds never reach `performance`. The same
+  adapter makes both `day_bootstrap` calls: the decision call with the sensitivity rows and
+  `expected_rows = entered`, the descriptive call with the labeled rows and
+  `expected_rows = labeled`, both with the same `coverage` and `traded_days`.
 - The decision table shows `sensitivity.net / entered` (the strict form) beside
   `observed.net / labeled`.
 - Costs are applied once. The stressed run is produced by the evaluator (750 ms latency plus
@@ -441,29 +518,40 @@ freeze high-water.
 
 ### Day-block bootstrap (new function)
 
-`research.day_bootstrap(rows, *, coverage, entered)` where `rows` are `(utc_day, net)`
-pairs for the entered rounds of one rule (the adapter supplies sensitivity nets for the
-decision run and observed nets for the descriptive run), `coverage` maps UTC day to the
-number of observed round slots that day, and `entered` is the `summarize` count the rows
-must add up to.
+`research.day_bootstrap(rows, *, coverage, traded_days, expected_rows)` where `rows` are
+`(utc_day, net)` pairs, `coverage` maps UTC day to the number of observed round slots that
+day, `traded_days` is the set of UTC days holding at least one entered round, and
+`expected_rows` is the count the rows must add up to. The adapter in `rule_eval.summarize`
+calls it twice per rule, with different populations and different expected counts:
 
-- Unit: UTC day. Every day with at least one entered round is **included**, whatever its
-  coverage; such a day with fewer than 144 observed slots is flagged `low_coverage_traded`
-  and counted, and its rounds stay in the population. A day with no entered round is
+| Run | Rows | `expected_rows` | A day in `traded_days` with no row in this population |
+|---|---|---|---|
+| Decision (sensitivity) | every entered round with its `sensitivity_net` | `summarize().entered` | cannot occur; every entered round has a sensitivity net, and the adapter asserts the two counts agree |
+| Descriptive (observed) | every labeled entered round with its `observed_net` | `summarize().labeled` | `unlabeled_only`: excluded from the population and counted in the output; it is neither a genuine zero nor a missing day |
+
+- Unit: UTC day. Every day with at least one row is **included**, whatever its coverage;
+  such a day with fewer than 144 observed slots is flagged `low_coverage_traded` and counted,
+  and its rows stay in the population. A day with no entered round (not in `traded_days`) is
   included as net 0, count 0 only if the capture observed at least 144 of its 288 slots;
-  otherwise it is **missing**, excluded and counted. The coverage rule therefore decides
-  only whether a zero is a genuine zero.
-- Invariant: the number of rows equals `entered`, or the function raises
-  `BOOTSTRAP_ROWS_MISMATCH`. The bootstrap population and the decision table cannot differ.
-- Statistic: total net divided by total entered rounds over the resampled days. A resample
-  whose entered-round count is zero counts as at or below zero.
+  otherwise it is **missing**, excluded and counted. The coverage rule therefore decides only
+  whether a zero is a genuine zero. A day in `traded_days` without rows is `unlabeled_only`
+  (descriptive run only), excluded and counted; a day with both labeled and unlabeled entered
+  rounds is included with its labeled rows and flagged `partially_labeled`.
+- Invariant: `len(rows) == expected_rows`, or the function raises `BOOTSTRAP_ROWS_MISMATCH`.
+  The adapter passes `entered` for the decision run and `labeled` for the descriptive run,
+  and a test asserts that the decision run's `rows` output equals the decision table's
+  `entered` count, so the decision population and the decision table cannot differ.
+- Statistic: total net divided by the number of rows over the resampled days. A resample
+  with zero rows counts as at or below zero.
 - 2,000 seeded resamples of the included days with replacement.
-- Output: included days, `low_coverage_traded` days, missing days, entered rounds, mean per
-  entered round, the 2.5th and 97.5th percentile of the statistic, `negative_fraction`, and
-  a status that is `descriptive` only when at least six days are included and at least 60
-  rounds were entered; otherwise `insufficient_evidence`, which fails the decision criterion.
-- The decision criterion reads the run on sensitivity nets, where an unlabeled entered round
-  pays nothing at settlement. The run on observed nets is printed beside it as descriptive.
+- Output: included days, `low_coverage_traded` days, missing days, `unlabeled_only` days,
+  `partially_labeled` days, `rows` (entered rounds for the decision run, labeled rounds for
+  the descriptive run), mean per row, the 2.5th and 97.5th percentile of the statistic,
+  `negative_fraction`, and a status that is `descriptive` only when at least six days are
+  included and `rows` is at least 60; otherwise `insufficient_evidence`, which fails the
+  decision criterion. The two runs may have different statuses.
+- The decision criterion reads only the decision run, where an unlabeled entered round pays
+  nothing at settlement. The descriptive run is printed beside it.
 
 Tests: a fixture where a day with 100 observed slots holds one entered round with net -4.50
 and five full-coverage days hold small wins: the low-coverage day is included and flagged,
@@ -471,9 +559,15 @@ the population contains the -4.50, and `negative_fraction` exceeds the value for
 fixture with that round removed; a sparse fixture (nine days, three with one trade each)
 reports the traded-round denominator and `insufficient_evidence`; a missing-day fixture with
 no trade and 100 observed slots excludes that day and counts it; a row count that differs
-from `entered` raises; an all-negative fixture gives `negative_fraction` 1.0; a fixed seed
-reproduces the percentiles; an included no-trade day lowers the mean per day but not the
-mean per entered round.
+from `expected_rows` raises; an all-negative fixture gives `negative_fraction` 1.0; a fixed
+seed reproduces the percentiles; an included no-trade day lowers the mean per day but not
+the mean per row. The mixed `summarize` fixture (five rounds, four entered, three labeled,
+spread over three days with the unlabeled entry alone on its day) is run through both calls:
+the decision call with `expected_rows` 4 includes three days and reports `rows` 4; the
+descriptive call with `expected_rows` 3 includes two days and reports `unlabeled_only` 1 and
+`rows` 3; the descriptive call with `expected_rows` 4 raises `BOOTSTRAP_ROWS_MISMATCH`; a
+variant where the unlabeled day is that of a labeled loss reports `partially_labeled` 1; and
+in the sensitivity population the unlabeled day's rounds carry their full-loss nets.
 
 ### H7 maker rebate sensitivity (not a trial)
 
@@ -554,10 +648,11 @@ use that source because it has no opening reference. No bulk import in this plan
 - **Selection bias from many trials**: fixed grid of 24 rules plus one fitted model, trial
   count in the file, overfitting estimate, H6 fold protocol, one holdout read gated by a
   committed selection record.
-- **Optimistic fills**: taker only, full-ladder walk from checksummed frames, live windows
-  with a 2,000 ms deadline, fresh-book requirement, latency, extra slippage, no maker
-  credit, preservation of every entered round with delayed or forced exits, a full-loss
-  sensitivity for unlabeled entries, and a live-stage risk register covering ghost reverts
+- **Optimistic fills**: taker only, full-ladder walk from checksummed frames, a 2,000 ms
+  entry deadline, latency paid on every attempt, a book-activation bound on every fill,
+  extra slippage, no maker credit, preservation of every entered round with delayed or
+  forced exits, a full-loss sensitivity for unlabeled entries, and a live-stage risk register
+  covering ghost reverts
   (more than 24% of filled orders reverted at peak hours in the cited study).
 - **Label leakage**: labels come only from official final references; labels received after
   the freeze are invisible to train and validation; the H3 rule is tested against a leaked

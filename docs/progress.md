@@ -1,3 +1,40 @@
+# Progress: research re-plan, revision 4 after the third independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `f9bcc48`
+requested changes on three findings. Revision 4 of [the plan](plans/profitable-subset-research.md)
+answers each in a table at the top and rewrites the execution-validity, transition and
+day-bootstrap sections:
+
+- Every order is a sequence of attempts with an `activation_ms`. A fifth fill test, book
+  activation, requires the consumed token's book to satisfy
+  `min(timestamp_ms, received_ms) >= activation_ms`, the lower bound `PaperBroker._immediate`
+  already applies (`src/btc5m/paper.py:245`). Freshness relative to the frame (five seconds)
+  is no longer enough on its own. Failure reason `BOOK_BEFORE_ACTIVATION`; an entry whose
+  whole window carries pre-activation books is `unfilled_book_before_activation` and counted
+  so the liquidity selection stays visible. Fixtures: repeated decision-time books give no
+  entry; a newer, worse book fills at the worse price; a newer book after the deadline gives
+  no entry; one stamp before activation fails; stressed latency moves the boundary.
+- Entry and exit timing are separate. An entry has one attempt with the 2,000 ms deadline.
+  An exit's first attempt activates at `trigger_ms + latency`; each later attempt (one per
+  fill event) activates at the previous fill frame's `now_ms + latency` and pays latency
+  again; every exit attempt may run to the last frame before `end_s`. `exit_delayed` means
+  the first fill came after `trigger_ms + 2000` or never; `exit_delay_ms`,
+  `exit_completion_ms` and `exit_attempts` are recorded. The activation bound replaces the
+  separate depth-consumption rule. Fixtures: 7 of 12 at 600 ms with the remainder at 2,300 ms
+  (not flagged); a first fill at 2,400 ms (flagged); the stressed variant.
+- `research.day_bootstrap(rows, *, coverage, traded_days, expected_rows)`. The decision run
+  gets every entered round with `expected_rows = entered`; the descriptive run gets labeled
+  entered rounds with `expected_rows = labeled`. A traded day without a row in the
+  descriptive population is `unlabeled_only`, excluded and counted. The adapter asserts the
+  decision run's count equals the decision table's `entered`. Fixtures: the mixed five-round
+  fixture through both calls (4 rows, 3 rows), a wrong count raising, a day with only
+  unresolved trades.
+- Two anchors in the earlier answer tables pointed at renamed headings and were corrected.
+
+All ten reference photos were inspected a fourth time; nothing new (register updated). No
+code changed; no runtime file, service, credential or funded action was touched. Next:
+independent PLAN review of revision 4.
+
 # Progress: research re-plan, revision 3 after the second independent review
 
 2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `6b7de88`

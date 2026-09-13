@@ -77,3 +77,12 @@ consecutive rounds with seven wins, and sizes each trade at roughly half the sho
 (260 x 0.95 = USD 247 of a USD 455 balance). This strengthens the rejection of the log as
 evidence and confirms why the plan applies `fee_for` on every executed leg and keeps a
 per-round USD budget rather than a balance fraction.
+
+## Fourth inspection, plan revision 4 (September 13)
+
+All ten files opened and were legible again. No new mechanism or claim appeared beyond
+what the sections above record. The revision 4 changes (per-attempt activation, separate
+entry and exit timing, two bootstrap populations) come from the independent review of the
+plan, not from the photos. The gus thread's "last two minutes" and "0.80 to 0.99" entry
+band remain the only executable details in any BTC photo, and they are already the
+screenshot-literal baseline.

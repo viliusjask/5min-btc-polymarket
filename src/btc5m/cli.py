@@ -26,6 +26,7 @@ from polymarket.models.clob import ApiKeyCreds
 from btc5m.broker import Broker, BrokerError, create_secure_client
 from btc5m.config import STRATEGIES, Config, load_config
 from btc5m.credentials import CredentialError
+from btc5m.dataset import DatasetError
 from btc5m.domain import Snapshot
 from btc5m.engine import Engine
 from btc5m.execution_types import SnapshotInput
@@ -156,7 +157,14 @@ async def configure_credentials(args: argparse.Namespace) -> int:
 
 def safe_reason(exc: BaseException) -> str:
     if isinstance(
-        exc, CLIError | CredentialError | BrokerError | LedgerError | RPCError | DataUnavailable
+        exc,
+        CLIError
+        | CredentialError
+        | BrokerError
+        | LedgerError
+        | RPCError
+        | DataUnavailable
+        | DatasetError,
     ):
         code = str(exc)
         if re.fullmatch(r"[A-Z][A-Z0-9_]{0,100}", code):
@@ -260,6 +268,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="explicitly create trading credentials if needed; no wallet or order actions",
     )
+    data = commands.add_parser(
+        "dataset",
+        allow_abbrev=False,
+        help="offline round-dataset extraction on the recorded tape; no account or network",
+    )
+    data.add_argument("dataset_action", choices=("freeze",))
+    data.add_argument("--source", type=Path, help="existing capture.sqlite; opened read-only")
+    data.add_argument("--output", type=Path, help="freeze record path, or dataset directory")
     for name in (
         "observe",
         "doctor",
@@ -968,6 +984,10 @@ async def async_main(args: argparse.Namespace) -> int:
         return await run_lab(args)
     if args.command == "credentials":
         return await configure_credentials(args)
+    if args.command == "dataset":
+        from btc5m.dataset import run_dataset
+
+        return run_dataset(args, emit)
     if args.command == "dashboard":
         from btc5m.dashboard import serve_dashboard
         from btc5m.dashboard_live import LiveDashboardReader

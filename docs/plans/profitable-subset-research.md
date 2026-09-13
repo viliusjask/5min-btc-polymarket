@@ -1,11 +1,22 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
-2026-09-13, revision 2. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
+2026-09-13, revision 3. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)
 and [the photo register](../research/reference-photos-2026-09-13.md). Revision 1 (`08fbf74`)
-received seven findings from the independent PLAN review; every one is answered below and
-the affected sections were rewritten.
+received seven findings and revision 2 (`6b7de88`) six findings from the independent PLAN
+review; every one is answered below and the affected sections were rewritten.
+
+## Answers to the review of revision 2
+
+| Finding | Where it is answered | What changed |
+|---|---|---|
+| P1 H6 coefficients were due before a cutoff that passes at the start of B1; B1 extracted holdout rows before B4 forbade reading them | [Freeze record and sequence](#the-freeze-record-and-the-four-step-sequence), [B1](#increment-b1-round-dataset-extraction), [B4](#increment-b4-selection-on-the-fixed-development-dataset), [B5](#increment-b5-holdout-verdict-may-wait) | The freeze fixes what development may see (frame high-water, cutoff); it sets no deadline for any later step. `dataset build` writes train and validation rows only and stops at the freeze high-water. Holdout rows are extracted only by `dataset build-holdout`, which refuses to run without a committed selection record. Selection, including H6's final coefficients, runs on the fixed development dataset at any later time. Tests: development builds at freeze time and after 200 more rounds have the same SQLite content hash and row counts; holdout extraction is refused before the selection record and afterwards contains only rounds at or after `holdout_start_ms`; the freeze command refuses to overwrite; a selection made three days after the cutoff equals one made one minute after. |
+| P1 fill eligibility omitted source age, the validity flag, crossed books and markets not accepting orders | [Execution validity](#execution-validity) | A fill frame must pass the engine's own `strategy._safety_reason` recomputed from the tape frame at fill time, plus the window, same-round and ladder-side tests. That function rejects stale or future source and receipt stamps for both books and both prices, inactive or non-accepting markets, wrong or expired rounds, token mismatch, a missing side and a crossed book. The `ticks.rejection` column is screening only. Fixtures: one valid decision followed by each of ten invalid execution snapshots, plus a hand-edited `rejection` column that changes nothing. |
+| P1 partial depth left exit residuals, retries, proceeds and settlement undefined | [Entry and exit transitions](#entry-and-exit-transitions-residual-inventory-and-depth-consumption) | Entry is one attempt. An exit sells what the bid ladder shows, keeps the residual as inventory, retries only on a frame whose book source timestamp is newer than the last consumed one, holds a residual below the five-share minimum to settlement, and accumulates proceeds. Net equals proceeds plus settlement payout minus cost basis; share conservation is asserted. Fixtures: 7 of 12 then 5; 9 of 12 with a 3-share residual under a matching label, a losing label and no label; an unchanged book yields no second fill. |
+| P2 `RoundResult`/`performance` cannot carry a null net or count no-trade rows | [Result rows and the adapter](#result-rows-and-the-adapter-to-performance) | New `EvaluatedRound` rows with `observed_net: Decimal | None` and `sensitivity_net: Decimal`. `summarize` builds two `RoundResult` lists (labeled entered rounds; all entered rounds at sensitivity net) and passes only entered rounds to `performance`; not-entered rounds are counted apart. Costs are applied once inside the evaluator; the decision rule reads only the stressed run. One fixture holds a labeled win, a labeled loss, an unlabeled entry, a no-trade round and a partially exited round. |
+| P1 H6 training admitted labels received after the fold's fitting cutoff | [H6 protocol](#h6-fitted-combination-separate-leakage-free-protocol) | Each fold has `fit_cutoff_ms` equal to its start minus the 30-minute purge. A round trains fold k only if it ended and its `label_received_ms` is at or before that cutoff; standardization uses the same set; late labels enter later folds. Test: a pre-fold round whose label arrived after the cutoff can have its label flipped without changing fold k's model, and the same flip changes fold k+1. |
+| P2 the day bootstrap dropped traded low-coverage days | [Day-block bootstrap](#day-block-bootstrap-new-function) | Every day with an entered round is included whatever its coverage; the 144-slot rule decides only whether a day with no entered round is a genuine zero or missing. The bootstrap's entered-round total must equal the decision table's count (the function raises otherwise). The decision run uses sensitivity nets; the observed-only run is descriptive. Fixture: a 100-slot day holding one USD -4.50 loss is included and raises `negative_fraction`. |
 
 ## Answers to the review of revision 1
 
@@ -36,11 +47,11 @@ A rule set is a **supported candidate** only if, on the untouched holdout, all o
 
 | Criterion | Threshold | Why |
 |---|---|---|
-| Entered rounds | at least 60, every one preserved in the result | Below that a single day dominates; this is an operating floor, not a power calculation |
-| Net after the stressed cost model | greater than zero | The stressed model adds one cent per share and 750 ms latency to recorded fees |
-| Missing-outcome sensitivity | net is still greater than zero when every unlabeled entered round is counted as a full loss of its cost | A missing label must never remove a possible loss from the verdict |
+| Entered rounds | at least 60, every one preserved in the result, including partial, delayed, forced-settlement and unlabeled ones | Below that a single day dominates; this is an operating floor, not a power calculation |
+| Net after the stressed cost model | greater than zero | The stressed model adds one cent per share and 750 ms latency to recorded fees; it is applied once, inside the evaluator |
+| Missing-outcome sensitivity | the stressed run's `sensitivity` net is still greater than zero when every unlabeled entered round pays nothing at settlement | A missing label must never remove a possible loss from the verdict |
 | Dependence on outliers | net after removing the three largest wins is still greater than zero | Avoids a verdict resting on one lucky payout |
-| Day-block bootstrap | status `descriptive` (at least six included days) and fewer than 25% of resamples have a mean net per entered round at or below zero | Descriptive uncertainty; not a significance test |
+| Day-block bootstrap | on sensitivity nets: status `descriptive` (at least six included days, at least 60 entered rounds) and fewer than 25% of resamples have a mean net per entered round at or below zero | Descriptive uncertainty; not a significance test |
 | Overfitting estimate | probability of backtest overfitting below 0.5 over the registered fixed-rule grid on train plus validation | Bailey et al. combinatorially symmetric cross-validation |
 | Beats the baselines | net per entered round exceeds every baseline evaluated on the same rounds with its own outcome book | Otherwise the rule is only capturing what the market already prices |
 
@@ -74,19 +85,30 @@ The new layer does not replace the simulator. It answers the first question quic
 (which rules survive costs on non-overlapping rounds) so that the slow simulator is spent
 only on survivors.
 
-## The freeze record: one persisted boundary
+## The freeze record and the four-step sequence
 
-A read-only reviewer creates no commit, so approval time cannot be the boundary. Instead
-the first BUILD action after PLAN approval, before any extraction or evaluation code runs,
-is:
+A read-only reviewer creates no commit, so approval time cannot be the boundary. The
+boundary is a committed freeze record, and BUILD follows one sequence:
 
-```
-btc5m dataset freeze --source capture.sqlite --output docs/research/freeze-<date>.json
-```
+| Step | Command | Reads | Writes | Refuses when |
+|---|---|---|---|---|
+| 1 Freeze | `btc5m dataset freeze --source capture.sqlite --output docs/research/freeze-<date>.json` | tape `meta` only | the freeze record, committed | the output path exists (`FREEZE_EXISTS`) |
+| 2 Build development | `btc5m dataset build --source capture.sqlite --freeze FILE --output DIR` | frames with ident at or below the freeze high-water | `dataset.sqlite` with train and validation rows only | the tape identity differs from the record, or the record's stored SHA-256 does not match its content |
+| 3 Select | `btc5m dataset evaluate --split train`, `--split validation`, then `btc5m dataset select` | the development dataset only | `docs/research/selection-<date>.json`, committed | the dataset manifest does not name a committed freeze record |
+| 4 Holdout | `btc5m dataset build-holdout --source capture.sqlite --freeze FILE --selection FILE --output DIR`, then `btc5m dataset evaluate --split holdout` | frames with ident above the freeze high-water, rounds at or after `holdout_start_ms` | `holdout.sqlite`, the verdict report | no committed selection record (`SELECTION_RECORD_REQUIRED`), or its rules, freeze or manifest hashes differ (`SELECTION_HASH_MISMATCH`) |
 
-It opens the tape read-only and writes, then commits, a record with the tape identity, the
-tape high-water frame ident, the tape `last_ms`, the wall clock, and the code identity.
-From those it derives and stores:
+The freeze fixes what development may see. It sets no deadline for any later step. Steps 2
+and 3 can run days or weeks after step 1 and read the same rows, because the development
+build stops at the freeze high-water and at `validation_end_ms`. Holdout rounds accumulate
+in the tape meanwhile (the collector keeps capturing), but no code extracts them until step
+4, and step 4 cannot start without the committed selection record. Revision 2 required
+H6's coefficients "before the freeze cutoff is crossed"; that requirement was unachievable
+and is gone. The only ordering rule is: selection record committed before any holdout row
+is extracted.
+
+The freeze command opens the tape read-only and writes a record with the tape identity, the
+tape high-water frame ident, the tape `last_ms`, the wall clock, the code identity, and the
+record's own SHA-256 over the other fields. From those it derives and stores:
 
 - `cutoff_ms = (max(wall_clock_ms, last_ms) // 300000 + 1) * 300000`, the next round
   boundary after everything the tape already holds (the same construction `lab.freeze`
@@ -100,40 +122,56 @@ Split membership is then mechanical and testable:
 |---|---|---|---|
 | Train | capture start to 2026-09-11 00:00 UTC minus purge | ident at or below freeze high-water | label frame ident at or below freeze high-water |
 | Validation | 2026-09-11 00:00 UTC plus purge to `validation_end_ms` | same | same |
-| Holdout | at or after `holdout_start_ms` | any ident above freeze high-water | any official label |
+| Holdout | at or after `holdout_start_ms` | ident above freeze high-water, read only by `build-holdout` | any official label present at holdout build time |
 
 A round whose label arrives after the freeze is *unlabeled* for train and validation, even
-if a later tape has it. Rounds captured between PLAN approval and the freeze fall in
-validation; nothing has scored them because the evaluator does not exist until B2, and B2
-refuses any round at or after `validation_end_ms` unless invoked as the holdout run in B5.
-No selection, coefficient or report may be computed on a dataset whose manifest does not
-reference a committed freeze record.
+if a later tape has it. A round in progress at the freeze (start before `cutoff_ms`, end
+after `last_ms`) is unlabeled in development and lies inside the purge, so nothing scores
+it. Rounds captured between PLAN approval and the freeze fall in validation; nothing has
+scored them because the evaluator does not exist until B2. The development file holds no
+round at or after `validation_end_ms`; `evaluate --split holdout` runs only against a
+`holdout.sqlite` produced by step 4. No selection, coefficient or report may be computed on
+a dataset whose manifest does not reference a committed freeze record.
 
-Tests for this boundary (B1 and B4): a synthetic tape is frozen, then extended by two rounds
-and a late label for an earlier round; the extraction must place the two rounds in holdout,
-report the earlier round as unlabeled in validation, and keep validation row counts equal to
-the pre-extension extraction. A selection record made on the pre-extension dataset must be
-byte-identical to one made after the extension. A dataset built without a freeze record is
-rejected by `evaluate`.
+Tests for the sequence (B1, B4 and B5), all on synthetic tapes:
+
+- Development determinism: freeze at high-water H; build; extend the tape by 200 rounds, a
+  late label for a development round and a label for a holdout round; build again. The two
+  development files have the same SQLite content hash, the same row counts and the same
+  unlabeled count; the late-labeled round is still unlabeled.
+- Holdout isolation: `build-holdout` on the extended tape without a selection record exits
+  `SELECTION_RECORD_REQUIRED`; with a record whose rules hash differs, `SELECTION_HASH_MISMATCH`;
+  with the matching record it holds only rounds starting at or after `holdout_start_ms`, and
+  the intersection of its slugs with the development file's slugs is empty.
+- Boundary immutability: `dataset freeze` against an existing output exits `FREEZE_EXISTS`
+  and leaves the file unchanged; a record whose `cutoff_ms` was edited by hand fails the
+  stored SHA-256 check in `build`; the manifest stores the record hash and `evaluate`
+  recomputes it.
+- Late BUILD: `select` run with a wall clock three days after `cutoff_ms` produces a record
+  identical, apart from `created_ms`, to one run one minute after it, on the same
+  development file.
+- A dataset built without a freeze record is rejected by `evaluate`.
 
 ## Increment B1: round dataset extraction
 
-Add `btc5m dataset build --source capture.sqlite --freeze FILE --output DIR`.
-It opens the source read-only, checks the tape identity against the freeze record, streams
-frames from the first cursor to the tape's current high-water, and writes one SQLite file
-with:
+Add `btc5m dataset build --source capture.sqlite --freeze FILE --output DIR` (step 2).
+It opens the source read-only, checks the tape identity and the record hash against the
+freeze record, streams frames from the first cursor to the **freeze high-water** (never the
+tape's current high-water), keeps only rounds starting before `validation_end_ms`, and
+writes one SQLite file with:
 
 - `rounds`: one row per market slug with start/end, verified opening reference and its
   status, settlement source, fee rate and exponent, tick size, minimum order, official final
-  label, the frame ident and receipt time of that label, the split name derived from the
-  freeze record, and the count of valid frames.
+  label, `label_frame_ident` and `label_received_ms` (the `now_ms` of the tape frame that
+  carried the label), the split name derived from the freeze record, and the count of valid
+  frames.
 - `ticks`: one row per frame per round with the frame ident, seconds remaining, spot, TWAP60,
   the observed final-minute integral, short and long sigma estimates as the engine computes
   them, best bid and ask for both tokens, cumulative displayed depth at 5, 25 and 100 shares
   (screening and reporting only), book source and receipt timestamps, exchange lead if
-  aligned, and a validity flag with the recorded rejection reason when the snapshot was not
-  tradable. The full ladders are **not** copied; they are read from the tape frame by ident
-  at fill time (see B2).
+  aligned, and `rejection`, the value of `strategy._safety_reason` for that snapshot (null
+  when tradable). The full ladders are **not** copied; they are read from the tape frame by
+  ident at fill time (see B2), where `rejection` is recomputed rather than trusted.
 - `flow`: per round per frame the signed public trade volume over the previous 10, 30 and
   60 seconds and, only if the archived trade records carry a trader identifier, the number
   of distinct identifiers per side. If no identifier exists the columns are absent and the
@@ -146,6 +184,13 @@ Rules: read-only source; bounded memory through cursor batches; resumable by cur
 interpolates across gaps; never derives a label from spot. Every derived number is computed
 by the same functions the engine uses so the dataset cannot silently disagree with it.
 
+`btc5m dataset build-holdout` (step 4) is the same extractor with the opposite bounds: frames
+with ident above the freeze high-water, rounds starting at or after `holdout_start_ms`,
+labels from any frame present at build time. It writes `holdout.sqlite` with the same
+schema, and it refuses to run without a committed selection record whose hashes match. It
+is implemented in B1 so that its refusal is tested from the start, but it is first run for
+real in B5.
+
 Tests (synthetic tapes built the way `tests/test_lab_tape.py` builds them):
 a three-round tape with a gap produces exact row counts and a null-label round; resume
 after an interrupted build appends nothing twice; a rejected snapshot yields a tick row
@@ -153,13 +198,18 @@ flagged invalid, not a fabricated book; the final-minute integral matches `strat
 hand-computed path; the freeze-boundary tests listed above; a build against a tape whose
 identity differs from the freeze record is refused.
 
-Acceptance: a read-only build against the real archive completes, and its manifest counts
-(rounds, labeled rounds, ticks, gap rounds, per split) are recorded in `docs/progress.md`,
-together with the committed freeze record's cutoff.
+Acceptance: a read-only development build against the real archive completes, its manifest
+shows no round at or after `validation_end_ms`, and its counts (rounds, labeled rounds,
+ticks, gap rounds, per split) are recorded in `docs/progress.md` together with the committed
+freeze record's cutoff.
 
 ## Increment B2: rule evaluator, cost model and baselines
 
 Add `btc5m dataset evaluate --dataset DIR --source capture.sqlite --rules FILE --split NAME --output DIR`.
+`--split train` and `--split validation` open `DIR/dataset.sqlite`; `--split holdout` opens
+`DIR/holdout.sqlite` and nothing else, so a development file can never be scored as holdout
+and a holdout file can never be scored as development (the manifest names its own split
+set and the evaluator checks it).
 A rule is a pure function over one round's tick sequence up to a decision time, returning at
 most one entry (side, decision time, size in USD) and an exit policy from a fixed set: hold
 to settlement, fixed stop and target, or time exit. The rule sees only ticks with receipt at
@@ -182,31 +232,85 @@ manifest identity differs from the tape is refused.
 
 ### Execution validity
 
-| Rule | Standard | Stressed |
+A fill frame is chosen from the tape, never from the `ticks` summaries. The evaluator applies
+four tests to each candidate frame, in this order, and records the first failure as the
+reason:
+
+1. **Window**: `decision_ms + latency_ms <= now_ms <= decision_ms + 2000`. Latency is 250 ms
+   (standard) or 750 ms (stressed).
+2. **Same round**: the frame has a snapshot and its market slug equals the round's slug. A
+   frame without a snapshot fails with `NO_SNAPSHOT`.
+3. **Engine safety**: `strategy._safety_reason(snapshot, config)` returns `None`, computed
+   from the tape frame at fill time with the evaluator's `Config` (defaults; the manifest
+   records the values used). That function rejects, in order: an unsupported settlement
+   source; a wrong or expired round (`start_s` must equal the round boundary containing
+   `now_ms`, so a frame at or after `end_s` fails here); an inactive market; a market not
+   accepting orders; a conflicting, missing, boundary-disabled or mis-timed opening
+   reference; an unsupported tick; future-stamped metadata; any spot, TWAP or book whose
+   source `timestamp_ms` or `received_ms` lies outside `[now_ms - max age, now_ms +
+   future_tolerance_ms]` (5,000 ms for books, `max_price_age_ms` for prices); a book whose
+   token id is not the market's; a book missing a side; and a crossed book
+   (`src/btc5m/strategy.py:86`). `PaperBroker._book` applies the same age, future and
+   crossed tests (`src/btc5m/paper.py:80`). The dataset's `ticks.rejection` column holds the
+   same value for screening, but the evaluator never reads it for a fill.
+4. **Ladder side**: the side being consumed (asks for a buy, bids for a sell) has at least
+   one level.
+
+A frame failing any test is skipped and the next frame in the window is tried. If no frame
+passes, an entry is `unfilled` with the reason `unfilled_no_frame` (no frame at all in the
+window) or `unfilled_<last reason>`, the round is reported as not entered, and an exit is
+delayed (next section).
+
+| Cost item | Standard | Stressed |
 |---|---|---|
-| Order live window | from decision time plus 250 ms to decision time plus 2,000 ms | plus 750 ms to plus 2,000 ms |
-| Fill frame | first frame in the window whose `now_ms` is before the market's `end_s`, whose snapshot is for the same market, and whose book `received_ms` is within `max_book_age_ms` (5,000 ms) of `now_ms` | same |
-| No such frame | the order is unfilled: no position, counted as `unfilled_no_frame` or `unfilled_stale`; the round is still reported (as not entered) | same |
-| Partial depth | if the walk yields fewer than `min_order_size` (5) shares, unfilled; otherwise the walked quantity is the position and the round is flagged `partial` | same |
+| Latency | 250 ms | 750 ms |
 | Fee | `fee_for(shares, price, fee_rate, fee_exponent)` per level, taker on every leg | same |
 | Extra slippage | none | one cent per share on each executed leg |
-| Exit trigger | stop, target or time exit is evaluated on each valid tick; the exit order opens a live window like the entry | same |
-| Exit not fillable in its window | the position is kept; the exit retries at each later valid frame with the then-current bids and is flagged `exit_delayed` with the delay in ms; if no valid frame remains before `end_s`, the position holds to settlement and is flagged `exit_forced_settlement` | same |
-| Settlement | official label only; an entered round without a label is reported with net `null`, counted, and enters the full-loss sensitivity | same |
+
+Tests: one valid decision at 90 s remaining followed by each of these execution snapshots
+gives no entry fill and the named reason: book source timestamp 6,000 ms old with a fresh
+receipt (`STALE_DATA`); receipt 6,000 ms old with a fresh source stamp (`STALE_DATA`); a
+crossed book (`CROSSED_BOOK`); `accepting_orders` false (`MARKET_NOT_ACCEPTING`); `active`
+false (`MARKET_INACTIVE`); the next round's market (`WRONG_ROUND`, which also covers a frame
+after `end_s`); a book whose token id belongs to the other market (`BOOK_TOKEN_MISMATCH`);
+an empty bid side on an exit (`MISSING_BOOK_SIDE`); a book received 1,000 ms in the future
+(`FUTURE_DATA`); a frame without a snapshot (`NO_SNAPSHOT`). A frame whose `ticks.rejection`
+was hand-edited to null is still rejected because the reason is recomputed from the tape; a
+frame whose `rejection` was hand-edited to `STALE_DATA` still fills when the tape frame is
+valid. The earlier fixtures stay: an outage spanning the entry window yields no position; the
+fee on a 0.90 fill equals 0.0063 per share; a 750 ms latency picks a later frame with a
+worse price; the same rule on the same dataset gives identical output twice.
+
+### Entry and exit transitions, residual inventory and depth consumption
+
+| Transition | Rule |
+|---|---|
+| Entry | One order, one live window, at most one fill frame. Walk the asks level by level until the USD budget is spent; the quantity at each level is rounded down to whole shares. If the total is below `min_order_size` (5 shares) the entry is `unfilled_thin` and the round is not entered. Otherwise the position is the walked quantity; if the ladder ran out before the budget did, the round is flagged `partial`. There is no entry retry. Cost basis = principal + entry fees. |
+| Exit trigger | The stop, target or time rule is tested on every valid tick after the fill. The first trigger opens one exit order for the whole remaining inventory. Hold-to-settlement policies open no exit order. |
+| Exit fill | At the first passing frame, walk the bids: sell whole shares level by level until the inventory or the displayed depth is exhausted. Fees per level through `fee_for`. Proceeds accumulate. Inventory decreases by the shares sold. |
+| Residual | If inventory remains and is at least 5 shares, the exit order stays open and retries. If it is below 5 shares, no venue order can sell it: it is flagged `residual_below_minimum` and holds to settlement. |
+| Depth consumption | A retry may fill only on a frame whose book source `timestamp_ms` for the sold token is strictly greater than the source timestamp of the book consumed by the previous sale. Two frames carrying the same book yield one fill. Any one frame yields at most one fill event per order. |
+| Retry end | Retries continue at every later passing frame until the round's `end_s`. Inventory remaining at `end_s` holds to settlement, flagged `exit_forced_settlement`. An exit whose first fill lies after its own live window is flagged `exit_delayed` with the delay in ms. |
+| Settlement | Held inventory (forced, residual or hold-to-settlement) pays 1.00 per share if the official label matches the held side and 0 otherwise. With no label, the round's observed net is null and its sensitivity net treats the held inventory as paying 0. |
+| Net | `observed_net = proceeds + settlement payout - cost basis`; `sensitivity_net` is the same with payout 0 when unlabeled. Both are `Decimal`. |
+| Conservation | `entry_shares == sold_shares + settled_shares` on every round. The evaluator asserts it and every fixture checks it. |
 
 Every entered round is therefore present in the result table exactly once. Nothing entered
 is dropped for a gap, an outage or an expiry. Flags describe path quality; the decision rule
 uses all entered rounds.
 
-Tests: an outage spanning the entry window yields no position; an outage during a stop
-trigger yields a delayed exit at a worse bid and the flag; an outage lasting to expiry yields
-`exit_forced_settlement` with the label's payout; a stale book (`received_ms` older than
-5,000 ms) is skipped as a fill frame; a frame after `end_s` is never a fill frame; a
-three-level partial walk of 12 shares against a USD 20 request is flagged `partial`; the
-fee on a 0.90 fill equals 0.0063 per share; a 750 ms latency picks a later frame with a
-worse price; a labeled loss is a full loss; an unlabeled entered round is counted and its
-sensitivity net equals minus its cost; the same rule on the same dataset gives identical
-output twice.
+Tests: a 12-share position exits into bid depth of 7, then a later frame with a newer book
+shows 5: two fill events, proceeds equal the sum of both walks minus both fees, inventory 0,
+`exit_delayed` with the measured delay; a 12-share position into depth of 9 leaves 3 shares
+(`residual_below_minimum`), and the net is checked under a matching label (payout 3.00), a
+losing label (0) and no label (observed null, sensitivity payout 0); two consecutive frames
+with identical book source timestamps produce one fill event; an outage lasting to `end_s`
+after a partial sale yields `exit_forced_settlement` with the residual settled by label; a
+USD 20 entry into a three-level ladder showing 12 shares yields a 12-share `partial` entry
+whose cost basis equals the hand-computed walk; a ladder showing 4 shares yields
+`unfilled_thin`; an outage during a stop trigger yields a delayed exit at a worse bid; a
+labeled loss is a full loss; an unlabeled entered round is counted and its sensitivity net
+equals minus its cost basis; share conservation holds on every fixture above.
 
 ### Baselines registered with every run
 
@@ -232,9 +336,42 @@ the rule's price.
   part of this plan and would need its own registered trial and accounting tests for
   completed and incomplete hedges.
 
-Outputs reuse `RoundResult` so `performance` (net, outlier removal, extra-cost stress)
-applies unchanged; the day-block bootstrap is the new function below. Results are split by
-settlement distance (near-even versus decided) because of the manipulation finding.
+Results are split by settlement distance (near-even versus decided) because of the
+manipulation finding. Rows and summaries use the adapter below.
+
+### Result rows and the adapter to `performance`
+
+`RoundResult.net` is a `Decimal`, and `performance` sums every row's net and uses every row
+as its denominator (`src/btc5m/research.py:25` and `:41`). It cannot carry a null net and
+must not receive no-trade rows. The evaluator therefore has its own row type and a bounded
+adapter, both in a new module `src/btc5m/rule_eval.py`:
+
+- `EvaluatedRound`: slug, `start_ms`, split, rule id, cost model, `entered` (bool),
+  `not_entered_reason`, `decision_ms`, side, entry fill (frame ident, shares, principal,
+  fees), exit fill events (list), `settled_shares`, label, `observed_net: Decimal | None`,
+  `sensitivity_net: Decimal`, total fees, and flags (`partial`, `exit_delayed`,
+  `exit_forced_settlement`, `residual_below_minimum`, `unlabeled`).
+- `summarize(rows)` returns counts (`rounds`, `entered`, `not_entered` by reason, `labeled`,
+  `unlabeled`, each flag) and two `performance` results: `observed`, from `RoundResult` rows
+  of labeled entered rounds with `net = observed_net`, and `sensitivity`, from `RoundResult`
+  rows of all entered rounds with `net = sensitivity_net`. `RoundResult.uncertain` is set for
+  flagged rounds; `used`, `complete` and `observed` are true for every adapted row so
+  `research.usable` keeps them. Not-entered rounds never reach `performance`.
+- The decision table shows `sensitivity.net / entered` (the strict form) beside
+  `observed.net / labeled`.
+- Costs are applied once. The stressed run is produced by the evaluator (750 ms latency plus
+  one cent per share on every executed leg). `performance` also emits a `cost_stress` list;
+  the report prints it only for the standard cost model, as headroom information, and the
+  decision rule reads only the stressed run's `sensitivity.net`, `without_best_3` and the
+  bootstrap on sensitivity nets.
+
+Test: one fixture holding a labeled win (+4.00), a labeled loss (-3.00), an unlabeled entered
+round with cost basis 5.00, a no-trade round, and a partially exited labeled round (7 shares
+sold for 6.30 net of fees, 5 shares settled at 1.00, cost basis 9.60, so +1.70) gives
+`rounds` 5, `entered` 4, `labeled` 3, `unlabeled` 1; `observed.rounds` 3 with net 2.70;
+`sensitivity.rounds` 4 with net -2.30; `without_best_3` computed from the observed list; and
+the stressed run's net lower than the standard run's by exactly one cent per executed share
+plus the latency effect built into the fixture.
 
 Acceptance: all baselines evaluated on the real dataset's training split with counts and
 net results recorded in progress; the market-favorite baseline's realized win rate by price
@@ -275,42 +412,68 @@ probability exceeds the ask by 0.02. It is excluded from the cross-validation ma
 because fitting it inside every half-split would either leak labels (if fitted once) or
 require 12,870 fits in pure Python (if fitted per split).
 
-Protocol: five expanding chronological folds over train plus validation. For fold k, the
-feature means and standard deviations and the coefficients are computed from rounds before
-the fold only; fold k is scored on Brier versus the market and on trading net under the
-stressed model. The coefficients that would go to the holdout are the ones fitted on all of
-train plus validation and are written into the selection record before the freeze cutoff is
-crossed. The falsifier is: Brier not below the market on the folds, or trading net not
-above H1's best fixed rule on the same folds.
+Protocol: five expanding chronological folds over the development rounds. Fold k scores
+rounds starting in `[fold_start_k, fold_end_k)`. Its fitting cutoff is
+`fit_cutoff_k = fold_start_k - 1800000` (the 30-minute purge). A round belongs to fold k's
+training set only if all three hold: `start_ms + 300000 <= fit_cutoff_k` (it ended before the
+cutoff); it has an official label; and `rounds.label_received_ms <= fit_cutoff_k` (the label
+had arrived by then). Feature means, standard deviations and coefficients for fold k are
+computed from that set alone. A round whose label arrived after `fit_cutoff_k` is unavailable
+to fold k even if it started long before the fold, and becomes available to the first later
+fold whose cutoff is at or after its receipt time. Fold k is scored on Brier versus the
+market and on trading net under the stressed model, using the same evaluator and fill rules
+as the fixed rules. The coefficients and standardization that go to the holdout are fitted
+on every development round whose label frame ident is at or below the freeze high-water and
+are written into the selection record in step 3 of the sequence, at whatever time step 3
+runs. The falsifier is: Brier not below the market on the folds, or trading net not above
+H1's best fixed rule on the same folds.
 
 Tests: the H3 rule reads only ticks at or before its decision time (a leaked later tick
 changes nothing); a rules file with a wrong trial count is rejected; CSCV on a synthetic
 grid with one genuinely better rule returns a low probability and on pure noise returns
-about 0.5; for H6, changing the label of a round inside a fold's scoring block leaves that
-fold's standardization and coefficients byte-identical, and changing a label before the fold
-does change them.
+about 0.5. For H6: (a) a round starting before fold 3 whose `label_received_ms` is ten
+minutes after `fit_cutoff_3` can have its label flipped without any change to fold 3's
+means, standard deviations or coefficients, and the same flip does change fold 4's; (b) a
+round starting inside fold 3's purge band is absent from fold 3's training set; (c) flipping
+the label of a round inside fold 3's scoring block leaves fold 3's model byte-identical;
+(d) the final coefficients ignore a development round whose label frame ident is above the
+freeze high-water.
 
 ### Day-block bootstrap (new function)
 
-`research.day_bootstrap(rows, *, coverage)` where `rows` are `RoundResult` rows for one
-rule and `coverage` maps UTC day to the number of observed round slots that day.
+`research.day_bootstrap(rows, *, coverage, entered)` where `rows` are `(utc_day, net)`
+pairs for the entered rounds of one rule (the adapter supplies sensitivity nets for the
+decision run and observed nets for the descriptive run), `coverage` maps UTC day to the
+number of observed round slots that day, and `entered` is the `summarize` count the rows
+must add up to.
 
-- Unit: UTC day. A day is **included** if the capture observed at least 144 of its 288
-  slots; an included day with no entered round contributes net 0 and count 0. Days below
-  that coverage are **missing**, excluded and counted.
+- Unit: UTC day. Every day with at least one entered round is **included**, whatever its
+  coverage; such a day with fewer than 144 observed slots is flagged `low_coverage_traded`
+  and counted, and its rounds stay in the population. A day with no entered round is
+  included as net 0, count 0 only if the capture observed at least 144 of its 288 slots;
+  otherwise it is **missing**, excluded and counted. The coverage rule therefore decides
+  only whether a zero is a genuine zero.
+- Invariant: the number of rows equals `entered`, or the function raises
+  `BOOTSTRAP_ROWS_MISMATCH`. The bootstrap population and the decision table cannot differ.
 - Statistic: total net divided by total entered rounds over the resampled days. A resample
   whose entered-round count is zero counts as at or below zero.
 - 2,000 seeded resamples of the included days with replacement.
-- Output: included days, missing days, entered rounds, mean per entered round, the 2.5th
-  and 97.5th percentile of the statistic, `negative_fraction`, and a status that is
-  `descriptive` only when at least six days are included and at least 60 rounds were
-  entered; otherwise `insufficient_evidence`, which fails the decision criterion.
+- Output: included days, `low_coverage_traded` days, missing days, entered rounds, mean per
+  entered round, the 2.5th and 97.5th percentile of the statistic, `negative_fraction`, and
+  a status that is `descriptive` only when at least six days are included and at least 60
+  rounds were entered; otherwise `insufficient_evidence`, which fails the decision criterion.
+- The decision criterion reads the run on sensitivity nets, where an unlabeled entered round
+  pays nothing at settlement. The run on observed nets is printed beside it as descriptive.
 
-Tests: a sparse fixture (nine days, three with one trade each) reports the traded-round
-denominator and `insufficient_evidence`; a missing-day fixture excludes the day with 100
-observed slots and counts it; an all-negative fixture gives `negative_fraction` 1.0; a fixed
-seed reproduces the percentiles; an included no-trade day lowers the mean per day but not
-the mean per entered round.
+Tests: a fixture where a day with 100 observed slots holds one entered round with net -4.50
+and five full-coverage days hold small wins: the low-coverage day is included and flagged,
+the population contains the -4.50, and `negative_fraction` exceeds the value for the same
+fixture with that round removed; a sparse fixture (nine days, three with one trade each)
+reports the traded-round denominator and `insufficient_evidence`; a missing-day fixture with
+no trade and 100 observed slots excludes that day and counts it; a row count that differs
+from `entered` raises; an all-negative fixture gives `negative_fraction` 1.0; a fixed seed
+reproduces the percentiles; an included no-trade day lowers the mean per day but not the
+mean per entered round.
 
 ### H7 maker rebate sensitivity (not a trial)
 
@@ -354,10 +517,15 @@ records the exact dataset manifest.
 
 ## Increment B5: holdout verdict (may wait)
 
-When the holdout contains at least 60 entered rounds for each pre-selected rule, evaluate
-once and apply the decision rule. If the capture is too short, the author returns `waiting`
-with the shortfall stated in rounds. No rule change after reading the holdout is allowed
-without a new registered rules file, a new selection record and a new freeze record.
+Run step 4 of the sequence: `build-holdout`, then `evaluate --split holdout` once for the
+selected rules and the baselines, and apply the decision rule. The entered-round count is
+known only from that evaluation, so a short holdout is itself a read: the report is kept as
+`insufficient_evidence` with the shortfall stated in rounds, the author returns `waiting`,
+and a later evaluation on a longer holdout is allowed only with the same rules file, the
+same selection record and the same freeze record (every holdout report is committed and
+listed in progress). No rule change after reading the holdout is allowed without a new
+registered rules file, a new selection record and a new freeze record, and any such restart
+uses a holdout that begins after the new freeze.
 
 ## Increment B6: external history probe (bounded, optional)
 

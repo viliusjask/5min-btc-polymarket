@@ -64,3 +64,16 @@ photo, so it is deferred rather than guessed. The plan records one bounded inter
 for a possible later trial and labels the no-hedge baseline an approximation.
 
 Neither residue is evidence of profitability. See the plan for how they are tested.
+
+## Third inspection, plan revision 3 (September 13)
+
+All ten files opened and were legible again. No new mechanism appeared. One detail in
+`5K48FChw.jpg` was checked arithmetically this time: every profit row equals shares times
+(1.00 minus fill price) exactly (260 x 0.05 = 13.00, 201 x 0.09 = 18.09, 137 x 0.11 = 15.07,
+225 x 0.04 = 9.00, 48 x 0.19 = 9.12, 82 x 0.11 = 9.02, 50 x 0.16 = 8.00) and every balance
+line adds the shown profit and the one hedge cost without any fee. The log therefore
+ignores the venue taker fee (about USD 0.86 on the 260-share 0.95 fill alone), enters seven
+consecutive rounds with seven wins, and sizes each trade at roughly half the shown balance
+(260 x 0.95 = USD 247 of a USD 455 balance). This strengthens the rejection of the log as
+evidence and confirms why the plan applies `fee_for` on every executed leg and keeps a
+per-round USD budget rather than a balance fraction.

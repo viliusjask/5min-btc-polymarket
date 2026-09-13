@@ -1,3 +1,45 @@
+# Progress: research re-plan, revision 3 after the second independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `6b7de88`
+requested changes on six findings. Revision 3 of [the plan](plans/profitable-subset-research.md)
+answers each in a table at the top and rewrites the affected sections:
+
+- The freeze record fixes what development may see and sets no deadline. BUILD follows four
+  steps: freeze, build development (train and validation only, stopping at the freeze
+  high-water), select and commit the selection record, then `build-holdout`, which refuses to
+  run without a committed selection record whose hashes match. Tests cover development
+  determinism after 200 more rounds, holdout isolation, boundary immutability (SHA-256 over
+  the record, no overwrite) and a selection made days after the cutoff.
+- A fill frame must pass `strategy._safety_reason` recomputed from the tape frame at fill
+  time (`src/btc5m/strategy.py:86`): source and receipt age, future stamps, inactive or
+  non-accepting markets, wrong or expired rounds, token mismatch, missing side, crossed book.
+  The dataset's `rejection` column is screening only; fixtures hand-edit it to show it has no
+  effect on fills. Ten invalid execution snapshots each follow one valid decision.
+- Entry is one attempt; exits sell displayed bid depth, keep the residual as inventory, retry
+  only on a newer book source timestamp, hold a residual below five shares to settlement,
+  accumulate proceeds, and assert `entry_shares == sold_shares + settled_shares`. Fixtures:
+  7 of 12 then 5; 9 of 12 with a 3-share residual under three label cases; an unchanged book
+  yields no second fill.
+- New `EvaluatedRound` rows with `observed_net: Decimal | None` and `sensitivity_net`, and a
+  `summarize` adapter that passes only entered rounds to `research.performance` (labeled
+  rows for `observed`, all entered rows for `sensitivity`), counts not-entered rounds apart,
+  and applies costs once. The decision rule reads the stressed run's sensitivity numbers.
+- H6 folds have `fit_cutoff_k = fold_start_k - 1800000`; a round trains fold k only if it
+  ended and its `label_received_ms` is at or before that cutoff. Test: a late-received label
+  can be flipped without changing fold k and the same flip changes fold k+1.
+- `research.day_bootstrap` includes every day with an entered round regardless of coverage
+  (flagged `low_coverage_traded`); the 144-slot rule decides only whether a no-trade day is a
+  genuine zero. The row count must equal the decision table's entered count or the function
+  raises. Fixture: a 100-slot day holding a USD -4.50 loss is included.
+- Also: `evaluate --split holdout` opens only `holdout.sqlite`; a short holdout read is kept
+  as `insufficient_evidence` and may be re-evaluated later only with the same rules,
+  selection and freeze records.
+
+All ten reference photos were inspected a third time; the PowerShell log in the gus thread
+was found to omit venue fees entirely (recorded in the photo register). No code changed; no
+runtime file, service, credential or funded action was touched. Next: independent PLAN
+review of revision 3.
+
 # Progress: research re-plan, revision 2 after independent review
 
 2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `08fbf74`

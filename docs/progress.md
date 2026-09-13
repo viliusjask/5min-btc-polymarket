@@ -1,3 +1,35 @@
+# Progress: research re-plan, revision 2 after independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `08fbf74`
+requested changes on seven findings. Revision 2 of [the plan](plans/profitable-subset-research.md)
+answers each in a table at the top and rewrites the affected sections:
+
+- A committed freeze record (`btc5m dataset freeze`) is the single split boundary: cutoff at
+  the next round boundary after the tape's last frame, a 30-minute purge on each side,
+  validation capped by round start, frame cursor and label receipt. Tests cover capture
+  advancing between freeze, extraction and selection.
+- Fills walk the complete price/size ladders read from the checksummed tape frame by ident;
+  depth summaries are screening only and are tested to have no effect on fills. Baselines walk
+  their own outcome token's ladder.
+- Execution validity: a live window from decision plus latency to decision plus 2,000 ms,
+  fresh books only, no fills after expiry, partial-depth handling, delayed or forced exits,
+  every entered round preserved, and a full-loss sensitivity for unlabeled entries that the
+  decision rule must pass.
+- A new `research.day_bootstrap` with a traded-round denominator, observed no-trade days as
+  zeros, missing days excluded and counted, a six-day minimum and an explicit
+  insufficient-evidence status.
+- H6 leaves the combinatorial cross-validation grid (now 24 fixed rules) and gets five
+  expanding chronological folds with fold-local standardization and fitting.
+- The screenshot hedge variant is deferred: both photos leave its trigger and size undefined
+  (the sentence is truncated; one log row shows a USD 1.69 hedge on a 48-share fill). The
+  no-hedge baseline is labeled an approximation.
+- H7 credits a hypothetical rebate only on passive (maker) fills, using the official pool
+  formula (20% of crypto taker fees, pro rata by fee-equivalent, USD 1 daily minimum), kept
+  apart from paper cash. The evidence register was corrected to the pool description.
+
+All ten reference photos were inspected again. No code changed; no runtime file, service,
+credential or funded action was touched. Next: independent PLAN review of revision 2.
+
 # Progress: research re-plan for a profitable subset
 
 2026-09-13. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base `cb7827b`.

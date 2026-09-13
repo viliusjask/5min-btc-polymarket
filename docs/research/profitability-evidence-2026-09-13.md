@@ -11,8 +11,13 @@ the stated time. Nothing here establishes that any strategy is profitable.
 |---|---|---|
 | Settlement rule | The September 13 market resolves Up if the Chainlink BTC/USD 60-second TWAP over the range is at or above the price at the range start. The description states that spot markets are not the source. | Public Gamma API, event slug `btc-updown-5m-1789295700`, market 4493717 |
 | Order constraints | Price tick 0.001, minimum order 5 shares, liquidity rewards require 50 shares within a 4.5-cent spread | Same Gamma record (`orderPriceMinTickSize`, `orderMinSize`, `rewardsMinSize`, `rewardsMaxSpread`) |
-| Fees | `fee = C x feeRate x p x (1 - p)`; crypto taker `feeRate` 0.07; makers pay nothing; a 20% maker rebate of collected fees is paid daily | [Fee documentation](https://docs.polymarket.com/trading/fees) |
+| Fees | `fee = C x feeRate x p x (1 - p)`; crypto taker `feeRate` 0.07; makers pay nothing | [Fee documentation](https://docs.polymarket.com/trading/fees) |
+| Maker rebates | Only filled maker orders qualify; taker orders earn nothing. A per-market pool equal to 20% of crypto taker fees is split pro rata by each maker's fee-equivalent `C x feeRate x p x (1 - p)` of executed liquidity. Paid daily; at least USD 1 must accrue before a payout. Rechecked September 13 after the revision 1 review. | [Maker Rebates Program](https://docs.polymarket.com/programs/maker-rebates) |
 | Recorded fee parameters | Every captured market so far records `fee_rate` 0.07 with exponent 1 | [Reversal evidence audit](reversal-evidence-audit.md) |
+
+Consequence for H7: a maker's pro-rata share equals 20% of its own fee-equivalent only under
+the assumption that every matching taker paid the crypto rate, so the plan treats that number
+as an upper bound, applies it to passive fills only, and shows it against the USD 1 minimum.
 
 The Gamma record also shows `makerBaseFee` and `takerBaseFee` of 1000. The bot does not use
 those fields; it reads the CLOB fee parameters per market. The plan keeps that rule and treats

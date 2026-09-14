@@ -86,8 +86,8 @@ remains allowed. Stage/session records and old transcripts are retained for reco
 Claude authors now use medium effort and retain conversations across effort-only changes.
 Native compaction triggers at 40% of the effective context window (about 400k with the assigned
 1M models); between-invocation rotation is 500k. Durable author handoffs preserve current
-findings, decisions, verification and next actions. Two top-level Claude invocations share
-slots with Alpha; delegated agents remain permitted. `.autopilot/usage/` keeps immutable
+findings, decisions, verification and next actions. There is no shared Claude concurrency cap;
+workflow dependencies determine scheduling and delegated agents remain permitted. `.autopilot/usage/` keeps immutable
 per-attempt usage and tool-call receipts, including incomplete calls. Serena read-only symbol
 tools are explicitly available to Claude reviewers. Claude calls use the shared Headroom
 helper with a private per-invocation loopback proxy, cache-preserving lossless output

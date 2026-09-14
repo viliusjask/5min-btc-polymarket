@@ -121,3 +121,11 @@ re-read for the stop validation: the PowerShell log in `5K48FChw.jpg` fills at 0
 and the gus post buys "between $0.80 and $0.99", so the screenshot baseline's band lies far
 above the 0.08 stop and is unaffected by the corrected lower-edge rule; that baseline holds
 to settlement and registers no stop in any case. No photo decision changed.
+
+## Revision 8 (September 14): no reinspection
+
+The three revision 7 findings concern the evaluator's fidelity to the paper broker and the
+engine (all-or-none entries, floor-protected exit quotes, confirmation across snapshot-free
+frames). None implicates a photo, and the ten files in `.local/` carry the same
+modification times as on September 13. Under the stage rule that images are reinspected only
+when changed or implicated by a finding, none was opened this round. No photo decision changed.

@@ -1,3 +1,60 @@
+# Progress: research re-plan, revision 8 after the sixth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`4cbfb14` (revision 7) returned three P1 findings, all on how faithfully the existing-rule
+comparators follow the paper broker and the engine. Each was checked against the code and
+accepted. Revision 8 of [the plan](plans/profitable-subset-research.md) answers them in a
+table with file and line evidence and replaces the fill model for every rule:
+
+- **All-or-none entries (P1).** `PaperBroker._immediate` discards every fill when principal
+  remains or the executable quantity is below the order's minimum receive quantity
+  (`src/btc5m/paper.py:281-282`). Revision 7 walked a USD budget to whole shares and
+  accepted partial entries, so the evaluator could enter rounds the bot never trades. Now
+  every entry is the production protected order (`buy_principal`,
+  `minimum_receive_shares`, `price_limit`, the fields `reserve_entry` writes at
+  `src/btc5m/ledger.py:562-577`), executed by `rule_eval.fill_immediate`, which repeats
+  `_immediate` line for line and is parity-tested against it. E1 to E5 take the order from
+  `strategy.evaluate`; hypotheses and baselines take it from `strategy._quote` under a
+  documented sizing configuration (USD 20 budget, momentum mode, open band and spread).
+  `partial` and `unfilled_thin` are gone; `unfilled_no_protected_depth` carries the paper
+  broker's execution record and a `cause` (`price`, `depth`, `minimum_shares`). The fixture
+  numbers were computed today with the production functions: a USD 5 budget against a 0.82
+  ask sizes to principal 4.15, minimum receive 5.00000, limit 0.83, and fills 5.0609756...
+  shares with a 0.052290 fee. A product observation fell out of that check: at the
+  production USD 5 budget the five-share minimum caps the limit at 0.934, so the bot cannot
+  buy a 0.95 ask at all (`BELOW_MINIMUM_SIZE`), which the report will state beside H5 and
+  the screenshot baseline.
+- **Floor-protected exit quotes (P1).** The engine quotes every exit from the current book
+  (quantity quantized to 0.01, floor at the last consumed level minus 0.01, refusals
+  `BELOW_SELL_PRECISION`, `BELOW_VENUE_MINIMUM`, `EXIT_PRICE_TOO_LOW` at
+  `src/btc5m/engine.py:702-709`); the paper broker sells only at or above the limit
+  (`paper.py:249-253`), ends the order `PAPER_NO_PROTECTED_DEPTH` or `PAPER_EXECUTION_GAP`
+  (`:241-243`, `:287`), and the next step quotes again. Revision 7's unlimited exit walk,
+  claimed "at least as conservative", could book cash a production order would not have
+  recovered in a falling book; that claim is withdrawn. The evaluator now runs the quote
+  loop for every rule, with per-attempt records (quote frame, quantity, floor, activation,
+  outcome) and `exit_quote_refusals` counts. Required fixtures: the falling book (0.66 under
+  a 0.69 floor sells nothing; the re-quote fills at 0.65; a book falling faster than one
+  re-quote per frame never fills and settles by label), the nonpositive floor (0.010 refused,
+  0.011 quoted at 0.001) and the execution gap.
+- **Confirmation over every tape frame (P1).** `Engine.step` cancels the pending candidate
+  when the snapshot is `None` (`engine.py:103-104`, `:115-116`) and the replay cancels it on
+  a snapshot-free frame or a gap above `max_price_age_ms` (`lab_replay.py:349-368`). The
+  revision 7 evaluator replicated confirmation over `ticks`, which omits snapshot-free
+  frames (`dataset.py:315-316`). E1 to E5 now stream every tape frame of the round from
+  `rounds.first_frame_ident`; a snapshot-free frame records `NO_SNAPSHOT` and cancels, a gap
+  above 5,000 ms cancels (`LAB_CAPTURE_GAP`). The required fixture (`ENTRY`, snapshot-free,
+  `ENTRY` does not enter; a fourth `ENTRY` with a newer spot stamp does) derives its expected
+  frame by driving `Engine.step` with the same inputs.
+
+No photo was reinspected this round: no finding implicates a photo, and the ten files are
+unchanged since September 13 (the register records the reason). Docs only; no code, runtime
+data, service or credential was touched. Author gate through the shared semaphore: see the
+briefing for the exact result.
+
+Next: independent PLAN review of revision 8 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record and the holdout gate.
+
 # Progress: research re-plan, revision 7 after the fifth independent review
 
 2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of

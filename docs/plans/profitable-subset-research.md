@@ -1,6 +1,6 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
-2026-09-14, revision 7. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
+2026-09-14, revision 8. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)
 and [the photo register](../research/reference-photos-2026-09-13.md). Revision 1 (`08fbf74`)
@@ -11,11 +11,16 @@ That approval predates the local-work reconciliation of `1d3b4df` and `4fdc0e1`,
 6 (`197039a`) reopened the plan against the recovered baseline: it records what was merged,
 audits the existing strategies and their recorded experiments against the research goal,
 restates B1 as partly implemented, and replaces the external-history probe with the importer
-that now exists. Revision 6 received five findings (four P1, one P2); revision 7 answers
-them in the first table below and rewrites the exit book selection, the existing-rule
-comparators, the holdout pre-extraction checks, the research implementation fingerprint and
-the stop validation. The decision rule, the freeze sequence, the fill model and the
-registered grid are unchanged unless a section below says otherwise.
+that now exists. Revision 6 received five findings (four P1, one P2); revision 7 (`4cbfb14`)
+answered them and rewrote the exit book selection, the existing-rule comparators, the
+holdout pre-extraction checks, the research implementation fingerprint and the stop
+validation. Revision 7 received three P1 findings, all on how faithfully the existing-rule
+comparators follow the paper broker and the engine; revision 8 answers them in the first
+table below and replaces the fill model: every entry is the production all-or-none
+protected order, every exit is a sequence of floor-protected quotes re-issued from the
+current book, and the existing rules' candidate confirmation runs over every tape frame of
+the round. The decision rule, the freeze sequence and the registered grid are unchanged
+unless a section below says otherwise.
 
 ## Revision 6: the recovered baseline
 
@@ -85,6 +90,16 @@ frames from September 7 07:26 UTC; the directional lab worker is at cursor 255,5
 USD -5.16 on two rounds. The September 4 OutcomeTick and Binance files are downloaded, but
 both September 8 conversion attempts are incomplete and no external tape was published.
 
+## Answers to the review of revision 7
+
+Each finding was checked against the code before it was accepted; all three were accepted.
+
+| Finding | Where it is answered | What changed and the code evidence |
+|---|---|---|
+| P1 existing-rule entries permitted partial fills and claimed no deviation from production, while the production buy is all-or-none: the paper broker discards every fill when principal remains or the executable quantity is below the order's minimum receive quantity | [Fills are the production orders](#fills-are-the-production-orders), [existing rules](#existing-rules-reuse-the-engines-decisions) | Confirmed at `src/btc5m/paper.py:281-282` (`fills = []` when `remaining or executable_quantity < order.quantity`), with the order built from `Decision.buy_principal`, `minimum_receive_shares` and `price_limit` (`src/btc5m/ledger.py:562-577`). The fill model is replaced. Every entry, for E1 to E5 and for the hypotheses and baselines alike, is that order, executed by `rule_eval.fill_immediate`, which repeats `_immediate` line for line and is parity-tested against it. E1 to E5 take the three order fields from `strategy.evaluate`; hypotheses take them from `strategy._quote` under a documented sizing configuration. `partial` and `unfilled_thin` no longer exist; a round whose order fails the all-or-none test is `unfilled_no_protected_depth` with the paper broker's execution record and a `cause` of `price`, `depth` or `minimum_shares`. The matched fixtures use the production numbers for the default USD 5 budget against a 0.82 ask (principal 4.15, minimum receive 5.00000, limit 0.83, computed today with `strategy.evaluate`): asks 5 at 0.82 then 20 at 0.85 leave 0.05 unspent (`price`); 4 at 0.82 leave 0.87 unspent and 4 shares (`depth`); a minimum raised by 0.0001 (`minimum_shares`); 30 at 0.82 fill 5.0609756... shares for 4.15 plus a 0.052290 fee. |
+| P1 removing the exit price limit is not conservative for net results: an unlimited simulated sale recovers cash where the production order, limited at the last consumed level minus 0.01, fails and the inventory may settle worthless | [Exit quotes](#entry-and-exit-transitions-residual-inventory-and-attempts), [fills](#fills-are-the-production-orders) | Confirmed. The engine quotes every exit from the current book: quantity is the covered depth quantized down to 0.01 (`src/btc5m/engine.py:702-706`, `BELOW_SELL_PRECISION`, `BELOW_VENUE_MINIMUM`), the floor is the last consumed level minus `sell_slippage` 0.01, and a floor at or below zero is refused (`engine.py:707-709`, `EXIT_PRICE_TOO_LOW`). The paper broker sells only levels at or above `price_limit` (`src/btc5m/paper.py:249-253`), ends the order `PAPER_NO_PROTECTED_DEPTH` when nothing sells (`:287`) or `PAPER_EXECUTION_GAP` 5,000 ms after activation (`:241-243`); the position and its exit reason survive (`src/btc5m/ledger.py:893-898`), and the same engine step reconciles the finished order and quotes again from the then-current book (`engine.py:107`, `:122`). The evaluator now runs exactly that loop for every rule: an attempt is a quote frame, a quantity, a floor, an activation and one protected fill. The unlimited walk and its "at least as conservative" claim are withdrawn. Required fixtures: the falling book (quote at floor 0.69; the first fresh book at 0.66 sells nothing although a walk without a floor would sell 12; the re-quote fills at 0.65 one frame later; a book falling faster than one re-quote per frame never fills and the inventory settles by label), the nonpositive floor (bids at 0.010 refuse the quote, 0.011 quotes at floor 0.001), and the execution gap. |
+| P1 confirmation was replicated over `ticks`, which holds only frames with a valid same-round snapshot, so `ENTRY`, snapshot-free frame, `ENTRY` could confirm in the evaluator while `Engine.step` cancels the pending candidate on a missing snapshot | [Existing rules](#existing-rules-reuse-the-engines-decisions), [B1](#increment-b1-round-dataset-extraction) | Confirmed at `src/btc5m/engine.py:103-104` and `:115-116` (`_cancel_pending("NO_SNAPSHOT")` when the snapshot is `None`), `:112-113` (input invalidation) and in the replay at `src/btc5m/lab_replay.py:349-368` (`LAB_CAPTURE_GAP` on a snapshot-free frame or a gap above `max_price_age_ms`). E1 to E5 now stream every tape frame of the round from `rounds.first_frame_ident`, for the decision path as well as the holding path; a frame without a same-round snapshot cancels the pending candidate (`NO_SNAPSHOT`), a gap above 5,000 ms cancels it (`LAB_CAPTURE_GAP`), and a non-`ENTRY` decision, a side change or an identity change cancels as before. The required fixture is the reviewer's sequence: `ENTRY`, a snapshot-free frame, `ENTRY` does not enter on the third frame (it opens a new candidate); a fourth `ENTRY` frame with a newer spot stamp enters; the expected frame is derived by driving `Engine.step` with the same inputs. |
+
 ## Answers to the review of revision 6
 
 Each finding was checked against the code before it was accepted; the file and line cited in
@@ -129,7 +144,7 @@ the third column is the evidence a reviewer can re-read.
 | Finding | Where it is answered | What changed |
 |---|---|---|
 | P1 holdout begins before validation ends; no approval commit exists | [Freeze record](#the-freeze-record-and-the-four-step-sequence), [B4](#increment-b4-chronological-protocol-and-the-first-report) | One persisted freeze record, written by the first BUILD action, defines the cutoff. Validation is capped strictly before the purged cutoff by round start, frame cursor and label receipt. Tests cover capture advancing between freeze, extraction and selection. |
-| P1 depth summaries cannot reconstruct USD-sized book walks | [B1 ticks](#increment-b1-round-dataset-extraction), [B2 fill walk](#fills-walk-the-full-ladder) | Fills read the full price/size ladders from the checksummed tape frame through a verified route (tape identity, frame ident, frame checksum). Summary columns are for screening only and are tested to have no effect on fills. Each baseline walks its own outcome token's ladder. |
+| P1 depth summaries cannot reconstruct USD-sized book walks | [B1 ticks](#increment-b1-round-dataset-extraction), [B2 fill walk](#fills-are-the-production-orders) | Fills read the full price/size ladders from the checksummed tape frame through a verified route (tape identity, frame ident, frame checksum). Summary columns are for screening only and are tested to have no effect on fills. Each baseline walks its own outcome token's ladder. |
 | P1 no decision-to-fill deadline, stale books, expiry, partial depth, residual positions | [B2 execution validity](#execution-validity) | An entry order is live from decision plus latency to decision plus 2,000 ms, only on fresh books of the same market before expiry; exit orders have their own attempt timing (revision 4). Unfilled entries leave no position. Every entered round is preserved: delayed exits fill at the next valid frame or hold to settlement. Unlabeled entered rounds enter a full-loss sensitivity that the decision rule must pass. |
 | P2 `research.block_sensitivity` cannot supply the day-block statistic | [Day-block bootstrap](#day-block-bootstrap-new-function) | A new `research.day_bootstrap` with a traded-round denominator, observed no-trade days as zeros, missing days excluded and counted, a six-day minimum, an explicit insufficient-evidence status, and sparse-day and missing-day fixtures. |
 | P1 H6 fitted on train, then ranked in cross-validation over train plus validation | [B3 H6](#h6-fitted-combination-separate-leakage-free-protocol) | H6 leaves the combinatorial cross-validation matrix. It is evaluated by expanding chronological folds with fold-local standardization and fitting. A test changes an out-of-fold label and asserts identical coefficients. |
@@ -153,7 +168,7 @@ A rule set is a **supported candidate** only if, on the untouched holdout, all o
 
 | Criterion | Threshold | Why |
 |---|---|---|
-| Entered rounds | at least 60, every one preserved in the result, including partial, delayed, forced-settlement and unlabeled ones | Below that a single day dominates; this is an operating floor, not a power calculation |
+| Entered rounds | at least 60, every one preserved in the result, including delayed, forced-settlement, execution-gap and unlabeled ones | Below that a single day dominates; this is an operating floor, not a power calculation |
 | Net after the stressed cost model | greater than zero | The stressed model adds one cent per share and 750 ms latency to recorded fees; it is applied once, inside the evaluator |
 | Missing-outcome sensitivity | the stressed run's `sensitivity` net is still greater than zero when every unlabeled entered round pays nothing at settlement | A missing label must never remove a possible loss from the verdict |
 | Dependence on outliers | net after removing the three largest wins is still greater than zero | Avoids a verdict resting on one lucky payout |
@@ -335,8 +350,9 @@ selection record (revision 7); the [research implementation
 fingerprint](#research-implementation-fingerprint) in the freeze record, the manifest and the
 selection record (revision 7); `rounds.first_frame_ident` and `rounds.last_frame_ident`, the
 ident range of every tape frame, with or without a snapshot, whose `now_ms` lies inside
-`[start_ms, end_ms)`, so the evaluator can bound its tape read for a round's holding path
-(revision 7; a test with a snapshot-free frame inside the round asserts the range includes
+`[start_ms, end_ms)`, so the evaluator can bound its tape read for a round's decision and holding paths
+(revision 7, extended to the decision path in revision 8 because the existing rules'
+candidate must see snapshot-free frames; a test with a snapshot-free frame inside the round asserts the range includes
 it while `ticks` does not); and the acceptance build on the real archive with its counts in
 progress. The real-archive freeze is still the first BUILD action and has not been run. The
 freeze record format changes to version 2 before that first run, which is why the fingerprint
@@ -425,26 +441,114 @@ Add `btc5m dataset evaluate --dataset DIR --source capture.sqlite --rules FILE -
 `DIR/holdout.sqlite` and nothing else, so a development file can never be scored as holdout
 and a holdout file can never be scored as development (the manifest names its own split
 set and the evaluator checks it).
-A rule is a pure function over one round's tick sequence up to a decision time, returning at
-most one entry (side, decision time, size in USD) and an exit policy from a fixed set: hold
-to settlement, fixed stop and target, time exit, or (revision 6) the production combination
-of stop, target and time exit with an optional `model` sale (F3). The rule sees only ticks
-with receipt at or before its decision time.
+A hypothesis rule is a pure function over one round's tick sequence up to a decision time,
+returning at most one entry signal (side, decision frame) and an exit policy from a fixed
+set: hold to settlement, fixed stop and target, time exit, or (revision 6) the production
+combination of stop, target and time exit with an optional `model` sale (F3). The rule sees
+only ticks with receipt at or before its decision time. The rule never chooses an order:
+(revision 8) every entry is the production protected all-or-none order sized from the
+decision frame's book, and every exit is a sequence of floor-protected quotes, as the next
+sections define.
 
-### Fills walk the full ladder
+### Fills are the production orders
 
-At fill time the evaluator reads the fill frame from the tape by ident through
-`Tape.read_after(ident - 1, limit=1)`, which verifies the checksum, and confirms the tape
-identity equals the dataset manifest's. It then walks the complete ladder of the outcome
-token being bought (asks) or sold (bids), level by level, until the requested USD (entries)
-or share quantity (exits) is met. Quantity is rounded down to whole shares and prices are
-used as recorded (tick 0.001). The `ticks` depth summaries are never consulted for a fill.
+Revision 7 walked an entry ladder to a USD budget, rounded to whole shares, accepted a
+partial entry and sold exits without a price limit. The bot does none of that. Its buy is a
+protected all-or-none order, and its sell is a floor-protected quote that is issued again
+from the current book until the inventory is gone or the round ends. Revision 8 makes the
+evaluator execute those orders for the existing rules and the hypotheses alike, so that a
+round the evaluator enters is a round the bot would have entered, and a sale it books is a
+sale the bot's order could have made.
 
-Tests: a five-level synthetic ladder with a hand-computed walk for 4, 30, 100 and 240
-shares (beyond every summary point) gives exact quantities, principal and fees; an exit walk
-across three bid levels matches by hand; corrupting the summary columns changes no fill; a
-tampered frame payload raises `TAPE_CORRUPT_FRAME` and the run stops; a dataset whose
-manifest identity differs from the tape is refused.
+**The order.** An entry order has the three numbers the `Intent` carries
+(`src/btc5m/ledger.py:562-577`): `principal` (USD to spend, `Decision.buy_principal`),
+`quantity` (the minimum shares to receive, `Decision.minimum_receive_shares`) and
+`price_limit` (`Decision.price_limit`). For E1 to E5 they come from `strategy.evaluate`
+([existing rules](#existing-rules-reuse-the-engines-decisions)). For H1 to H5 and the
+baselines the rule supplies only the side and the decision frame, and the evaluator sizes
+the order with `strategy._quote(snapshot, sizing_config, side, book, None, None, {})` under
+the **hypothesis sizing configuration**: `Config()` with `trade_budget_usd` 20 (daily and
+session allowances raised to 40 so the configuration validates; the evaluator applies no
+allowance), mode `momentum`, `momentum_min_ask` 0.001, `momentum_max_ask` 0.999 and
+`max_spread` 0.999. The sizing arithmetic is then the production one
+(`src/btc5m/strategy.py:279-324`): a fee-reserved cents principal, the ask-ladder depth
+check (`INSUFFICIENT_DEPTH`), a limit at the last consumed ask plus `buy_slippage` 0.01
+rounded up to the tick and capped by the band, by one tick below 1.00 and by the five-share
+minimum, a minimum receive quantity rounded up to the SDK amount quantum, and the principal
+reduced to an exact share amount at the limit. The value-mode surplus gate is skipped in
+momentum mode and the band and spread gates are open, so the hypothesis keeps its own
+signal. A sizing refusal (`INSUFFICIENT_DEPTH`, `BELOW_MINIMUM_SIZE`, `PRICE_BAND`) is the
+round's `not_entered_reason`; a hypothesis never enters a round on which the bot could not
+have sized an order. The rule's own price condition (H4's ask at most 0.10, H5's bands) is
+tested first on the decision frame's best ask. Sizing examples computed today with
+`strategy._quote` (tick 0.001, fee 0.07): ask 0.82 with 30 displayed gives principal 18.26,
+minimum receive 22.00000, limit 0.83; ask 0.10 gives 18.59, 169.00000, 0.11; ask 0.95
+gives 18.69, 19.46875, 0.96; ask 0.99 gives 9.99, 10.00000, 0.999 (the cap at one tick below
+1.00 forces an exact ten-share amount); ask 0.82 with only 20 displayed is
+`INSUFFICIENT_DEPTH`. The budget is 20 rather than the production 5 because at USD 5 the
+five-share minimum caps the limit at 0.934 (4.67 / 5), so a 0.95 ask is `BELOW_MINIMUM_SIZE`
+(checked today): the production sizing cannot buy H5's upper band or the screenshot
+baseline's 0.95 to 0.99 range at all, which the report states beside those rows. E1 to E5
+keep the production budget; the report shows net per entered round and net per USD of
+principal for every trial so the two sizes can be read side by side.
+
+**The buy fill.** At the fill frame (chosen by the [execution validity](#execution-validity)
+tests) the evaluator reads the frame from the tape by ident through
+`Tape.read_after(ident - 1, limit=1)`, which verifies the checksum, confirms the tape identity
+equals the dataset manifest's, and runs `rule_eval.fill_immediate(order, book)`, which
+repeats `PaperBroker._immediate` line for line (`src/btc5m/paper.py:246-287`): walk the asks
+while `level.price <= price_limit`; at each level spend `min(remaining, size x price)` and
+receive `principal / price` shares (fractional, as the paper broker books them); stop when
+the principal is spent; then the **all-or-none test**: if any principal remains, or the
+executable quantity is below `quantity`, nothing fills (`paper.py:281-282`). A round whose
+order fails that test is not entered and is recorded `unfilled_no_protected_depth` with the
+execution record the paper broker writes (`requested_amount`, `unfilled_amount`,
+`executable_quantity`, `minimum_receive_shares`, `price_limit`, best ask and both book
+stamps) and a `cause`: `price` (a level above the limit stopped the walk with principal
+left), `depth` (the ladder ran out inside the limit) or `minimum_shares` (the executable
+quantity is below the minimum). Fees are `fee_for(quantity, price, fee_rate, fee_exponent)`
+per level, rounded up to six decimals as the broker does (`paper.py:217-222`). Cost basis
+is principal plus fees. There is no partial entry and no entry retry; the `partial` and
+`unfilled_thin` outcomes of revision 7 no longer exist.
+
+**The sell fill.** A sell order is `(quantity, floor)` from an [exit
+quote](#entry-and-exit-transitions-residual-inventory-and-attempts). `fill_immediate` walks
+the bids while `level.price >= floor`, selling `min(remaining, size)` at each level. A sell
+is not all-or-none (`paper.py:281` applies to buys only), so a partial sale is a fill and the
+remainder is quoted again. If no level is at or above the floor the attempt ends
+`no_protected_depth` (`PAPER_NO_PROTECTED_DEPTH`, `paper.py:287`).
+
+The `ticks` depth summaries are never consulted for a fill. Prices are used as recorded
+(tick 0.001); quantities carry the paper broker's precision and are never rounded to whole
+shares.
+
+Tests:
+
+- Parity: over 200 seeded synthetic ladders (one to six levels, sizes 0.5 to 60 shares,
+  prices 0.05 to 0.98) and orders built by `strategy.evaluate` on matching snapshots, the
+  evaluator's fills equal `PaperBroker._immediate`'s on the same order and book, quantity by
+  quantity, price and fee, including the no-fill cases and the `execution_check` fields; the
+  paper call is made the way
+  `tests/test_paper.py::test_failed_immediate_buy_keeps_protections_and_explains_execution_inputs`
+  makes it, on a broker with a temporary ledger. The same test runs sells with floors.
+- Buy all-or-none, one fixture per cause, each with the production order for a USD 5 budget
+  against a 0.82 ask (principal 4.15, minimum receive 5.00000, limit 0.83; the fixture
+  asserts the triple against `strategy.evaluate`): asks 5 at 0.82 then 20 at 0.85 give
+  `unfilled_no_protected_depth`, cause `price`, unfilled amount 0.05, executable 5; asks 4 at
+  0.82 alone give cause `depth`, unfilled amount 0.87, executable 4; the order's `quantity`
+  raised by 0.0001 against 30 at 0.82 gives cause `minimum_shares`, unfilled amount 0; the
+  true order against 30 at 0.82 fills 5.0609756... shares for 4.15 with fee 0.052290 (cost
+  basis 4.202290), one fill event, entered.
+- Hypothesis sizing: the examples above are asserted, including `INSUFFICIENT_DEPTH` at 20
+  displayed and `BELOW_MINIMUM_SIZE` at ask 0.95 under the production budget; a USD 20 order
+  against 30 at 0.82 fills 22.2682926... shares with fee 0.230076.
+- Sell walks: a 12-share quote with floor 0.69 into bids 7 at 0.70 and 20 at 0.68 sells 7 at
+  0.70 (fee 0.102900) and leaves 5; the same book with floor 0.67 sells 12 (7 at 0.70, 5 at
+  0.68, fee 0.076160 on the second level); bids 20 at 0.68 alone with floor 0.69 sell
+  nothing (`no_protected_depth`).
+- Corrupting the `ticks` summary columns changes no fill; a tampered frame payload raises
+  `TAPE_CORRUPT_FRAME` and the run stops; a dataset whose manifest identity differs from
+  the tape is refused.
 
 ### Execution validity
 
@@ -457,13 +561,15 @@ and a `deadline_ms`, the latest frame it may consider:
 | Order | Attempt | `activation_ms` | `deadline_ms` |
 |---|---|---|---|
 | Entry | the only one | `decision_ms + latency_ms` | `decision_ms + 2000` |
-| Exit | first | `trigger_ms + latency_ms`, where `trigger_ms` is the `now_ms` of the tick that fired the stop, target or time rule | the last frame with `now_ms < end_s * 1000` |
-| Exit | each later one | the previous fill frame's `now_ms + latency_ms` | the same |
+| Exit | first | `trigger_ms + latency_ms`, where `trigger_ms` is the `now_ms` of the frame that fired the stop, target, time or model rule and quoted the first order | the earlier of `activation_ms + 5000` (the paper broker's execution gap, `src/btc5m/paper.py:241-243`) and the last frame with `now_ms < end_s * 1000` |
+| Exit | each later one | the quote frame's `now_ms + latency_ms`, where the quote frame is the frame on which the previous attempt ended (revision 8: a fill, `no_protected_depth` and an execution gap all end an attempt, and the engine's next step reconciles the finished order and quotes again on that same frame, `src/btc5m/engine.py:107`, `:122`) | the same |
 
 Latency is 250 ms (standard) or 750 ms (stressed) and is paid again on every attempt. The
 entry deadline is tighter than the paper broker's execution-gap limit of `max_book_age_ms`
 (5,000 ms, `src/btc5m/paper.py:241`); the evaluator prefers a not-entered round to a fill
-that a live order would not have obtained.
+that a live order would not have obtained. For the existing rules this is a stated
+deviation, made visible by the `entry_late_frame` count ([existing
+rules](#existing-rules-reuse-the-engines-decisions)).
 
 The evaluator applies five tests to each candidate frame of an attempt, in this order, and
 records the first failure as the reason. Test 3 has an entry form and an exit form; the
@@ -519,6 +625,12 @@ other four are the same for both:
 5. **Ladder side**: the side being consumed (asks for a buy, bids for a sell) has at least
    one level.
 
+The frame that passes is then walked with the order's protection (revision 8): a buy stops
+at `price_limit` and is all-or-none, a sell stops at the quote's floor
+([fills](#fills-are-the-production-orders)). A buy that fails its all-or-none test on the
+passing frame is `unfilled_no_protected_depth`; there is no second entry frame, because the
+paper broker ends the order on its first post-activation book (`paper.py:284-288`).
+
 ### Book selection for exits and trigger fidelity
 
 The dataset's `ticks` table holds one row per frame that carried a valid same-round
@@ -551,7 +663,9 @@ The stop, target and time triggers use the **same selected book** as the fill, i
 the engine uses (`src/btc5m/engine.py:551-700`):
 
 - Time: `end_s * 1000 - now_ms <= exit_seconds * 1000` (20 s) fires on any frame, book or
-  not; with no selectable book the attempt starts and waits for one.
+  not; with no selectable book the exit reason is fixed and the quote waits for a frame
+  whose selected book passes the exit-form tests (the engine holds `NO_EXIT_BOOK` and keeps
+  the reason, `engine.py:583-598`).
 - Stop and target: walk the selected book's bids for the whole inventory. If the displayed
   depth does not cover it, no trigger fires on that frame and the frame is counted
   `insufficient_full_exit_depth` for the round (the engine holds with
@@ -576,9 +690,10 @@ Exit-form fixtures (all with a 12-share up position entered at frame `E`, standa
   None` (its `code` is `STALE_DATA`) and `research.streams.books[up_token]` stamped `S -
   400` with best bid 0.70 for 12 shares against a gross entry of 0.80. An entry decision on
   `S` is refused (`NO_SNAPSHOT`, so a second rule with a live decision on this frame does
-  not enter). The stop fires on `S` (`trigger_ms = S`); attempt 1 activates at `S + 250`;
-  frame `S + 600` carries `streams.books[up_token]` stamped `S + 500` for 12 shares and no
-  snapshot; the exit fills 12 there. Expected: `exit_attempts` 1, `exit_delay_ms` 600,
+  not enter, and an existing rule's pending candidate is cancelled). The stop fires on `S`
+  (`trigger_ms = S`) and quotes 12 shares at floor 0.69; attempt 1 activates at `S + 250`;
+  frame `S + 600` carries `streams.books[up_token]` stamped `S + 500` with 12 shares at 0.70
+  and no snapshot; the exit fills 12 there at 0.70. Expected: `exit_attempts` 1, `exit_delay_ms` 600,
   inventory 0, and the fill record names frame `S + 600` and both stream book stamps.
 - **Pending book**: the same frames with `up_token` listed in `streams.pending_books` on
   `S + 600` yield nothing there (`PENDING_BOOK`); the next frame, where it is no longer
@@ -650,12 +765,13 @@ stamped `D + 850` fills.
 
 | Transition | Rule |
 |---|---|
-| Entry | One order, one attempt, at most one fill frame. Walk the asks level by level until the USD budget is spent; the quantity at each level is rounded down to whole shares. If the total is below `min_order_size` (5 shares) the entry is `unfilled_thin` and the round is not entered. Otherwise the position is the walked quantity; if the ladder ran out before the budget did, the round is flagged `partial`. There is no entry retry. Cost basis = principal + entry fees. |
-| Exit trigger | The stop, target, time or model rule is tested on every tape frame after the entry fill frame, in the engine's form and on the selected book ([previous section](#book-selection-for-exits-and-trigger-fidelity)). The first trigger opens one exit order for the whole inventory; `trigger_ms` is that frame's `now_ms`. Hold-to-settlement policies open no exit order. |
-| Exit fill | The first attempt activates at `trigger_ms + latency_ms`. At the first frame passing all five tests, walk the bids: sell whole shares level by level until the inventory or the displayed depth is exhausted. Fees per level through `fee_for`. Proceeds accumulate. Inventory decreases by the shares sold. One frame yields at most one fill event. |
-| Residual | If inventory remains and is at least 5 shares, the next attempt starts, activating at the fill frame's `now_ms + latency_ms`. It pays latency again and can fill only on a book whose stamps reach that activation (test 4), so it never sells into the ladder it already consumed. If inventory is below 5 shares, no venue order can sell it: it is flagged `residual_below_minimum` and holds to settlement. |
-| Exit end | Attempts continue until the last frame before `end_s`. Inventory remaining then holds to settlement, flagged `exit_forced_settlement`. Exits have no 2,000 ms deadline; that number only defines whether the exit was prompt. |
-| Exit timing record | Every exited round records `exit_attempts`, `exit_delay_ms = first_fill.now_ms - trigger_ms` and `exit_completion_ms = last_fill.now_ms - trigger_ms` (both null when nothing sold). `exit_delayed` is true when the first fill's `now_ms` exceeds `trigger_ms + 2000` or when no fill occurred before `end_s`. A later attempt that fills after `trigger_ms + 2000` does not set the flag by itself; its lateness is visible in `exit_completion_ms` and the report lists the distribution of both durations. |
+| Entry | One order, one attempt, at most one fill frame. The order is the production protected order ([fills](#fills-are-the-production-orders)); at the fill frame the walk stops at `price_limit` and the all-or-none test decides between a full fill and `unfilled_no_protected_depth`. There is no partial entry and no entry retry. Cost basis = principal + entry fees. |
+| Exit trigger | The stop, target, time or model rule is tested on every tape frame after the entry fill frame, in the engine's form and on the selected book ([previous section](#book-selection-for-exits-and-trigger-fidelity)). The first trigger fixes the exit reason for the rest of the round (`engine.py:563-580`, `ledger.note_exit` at `ledger.py:893-898`); the trigger frame is also the first quote frame and its `now_ms` is `trigger_ms`. Hold-to-settlement policies open no exit order. |
+| Exit quote (revision 8) | On a quote frame the evaluator does what `engine._exit` does once a reason is set (`engine.py:621-632`, `:702-709`): walk the selected book's bids for the remaining inventory; `quantity` is the covered shares quantized down to 0.01; the quote is refused with `BELOW_SELL_PRECISION` (quantity 0), `BELOW_VENUE_MINIMUM` (below 5 shares) or `EXIT_PRICE_TOO_LOW` (floor at or below 0); otherwise `floor` is the price of the last consumed level minus `sell_slippage` 0.01. A refused quote opens no attempt; the next frame is the next quote frame, and every refusal is counted per round in `exit_quote_refusals`. A frame whose selected book fails the exit-form tests is likewise a hold (`NO_EXIT_BOOK`, `PENDING_BOOK`, `STALE_DATA`, ...) and the next frame quotes. |
+| Exit fill | The attempt activates at the quote frame's `now_ms + latency_ms`. At the first frame passing all five tests, sell level by level while `level.price >= floor`, up to `quantity` shares; fees per level through `fee_for`; proceeds accumulate; inventory decreases by the shares sold. If no level is at or above the floor the attempt ends `no_protected_depth` with nothing sold. If no passing frame arrives within 5,000 ms of activation the attempt ends `execution_gap` on the first frame past that limit and the round is flagged `exit_execution_gap` (the paper broker records an uncertainty observation and keeps the position, `paper.py:241-243`). One frame yields at most one fill event. |
+| Residual | The frame on which an attempt ended (its fill frame, or the frame that recorded `no_protected_depth` or the gap) is the next quote frame, because the engine's step reconciles the finished order and quotes again before it returns (`engine.py:107`, `:122`). The new quote walks that frame's selected book for the remaining inventory and pays latency again; its fill needs a book whose stamps reach the new activation (test 4), so it never sells into the ladder it already consumed. A remaining inventory below 5 shares is refused `BELOW_VENUE_MINIMUM` on every later frame (the behaviour `tests/test_engine.py::test_unexitable_dust_records_reason_without_endless_sell_intents` pins), flagged `residual_below_minimum`, and holds to settlement. |
+| Exit end | Quotes and attempts continue until the last frame before `end_s`. Inventory remaining then holds to settlement, flagged `exit_forced_settlement`. Exits have no 2,000 ms deadline; that number only defines whether the exit was prompt. |
+| Exit timing record | Every exited round records `exit_attempts` (quotes that opened an order), `exit_quote_refusals` (refusal code to count), `exit_delay_ms = first_fill.now_ms - trigger_ms` and `exit_completion_ms = last_fill.now_ms - trigger_ms` (both null when nothing sold), and per attempt the quote frame ident, `quantity`, `floor`, `activation_ms`, the outcome (`filled`, `partially_filled`, `no_protected_depth`, `execution_gap`) and the fill event when there is one. `exit_delayed` is true when the first fill's `now_ms` exceeds `trigger_ms + 2000` or when no fill occurred before `end_s`. A later attempt that fills after `trigger_ms + 2000` does not set the flag by itself; its lateness is visible in `exit_completion_ms` and the report lists the distribution of both durations. |
 | Settlement | Held inventory (forced, residual or hold-to-settlement) pays 1.00 per share if the official label matches the held side and 0 otherwise. With no label, the round's observed net is null and its sensitivity net treats the held inventory as paying 0. |
 | Net | `observed_net = proceeds + settlement payout - cost basis`; `sensitivity_net` is the same with payout 0 when unlabeled. Both are `Decimal`. |
 | Conservation | `entry_shares == sold_shares + settled_shares` on every round. The evaluator asserts it and every fixture checks it. |
@@ -664,50 +780,80 @@ Every entered round is therefore present in the result table exactly once. Nothi
 is dropped for a gap, an outage or an expiry. Flags describe path quality; the decision rule
 uses all entered rounds.
 
-Tests, all with standard latency unless stated, `T` the trigger tick's `now_ms`:
+Tests, all with standard latency unless stated, `T` the trigger frame's `now_ms`, every
+position 12 shares of the up token with a gross entry of 0.80, and every trigger frame's bid
+book showing 12 at 0.70 unless stated (so the first quote is 12 shares at floor 0.69):
 
-- Two attempts, prompt first fill: a 12-share position; a frame at `T + 600` with a bid book
-  stamped `T + 500` showing 7 shares sells 7 (attempt 1); attempt 2 activates at `T + 850`;
-  a frame at `T + 1,200` carrying the same book (stamps `T + 500`) yields nothing
-  (`BOOK_BEFORE_ACTIVATION`); a frame at `T + 2,300` with a book stamped `T + 2,200` showing
-  5 sells the remaining 5 after the two-second mark. Expected: two fill events,
-  `exit_attempts` 2, `exit_delay_ms` 600, `exit_completion_ms` 2,300, `exit_delayed` false,
-  proceeds equal to both walks minus both fees, inventory 0.
+- Two attempts, prompt first fill: frame `T + 600` carries a bid book stamped `T + 500`
+  showing 7 at 0.70: sells 7 (attempt 1, `partially_filled`, proceeds 4.90, fee 0.102900),
+  and the same frame quotes attempt 2 for the remaining 5 from that book (quantity 5, floor
+  0.69, activation `T + 850`). Frame `T + 1,200` carries the same book (stamps `T + 500`):
+  nothing (`BOOK_BEFORE_ACTIVATION`). Frame `T + 2,300` carries a book stamped `T + 2,200`
+  showing 5 at 0.69: sells 5 at the floor (proceeds 3.45, fee 0.074865). Expected: two fill
+  events, `exit_attempts` 2, `exit_delay_ms` 600, `exit_completion_ms` 2,300, `exit_delayed`
+  false, proceeds 8.35 minus both fees, inventory 0.
+- Falling book (the required fixture): frame `T + 600` carries a book stamped `T + 500`
+  showing 20 at 0.66: nothing sells (`no_protected_depth`, 0.66 is below the floor 0.69)
+  although a walk without a floor would have sold 12 at 0.66; the same frame quotes attempt
+  2 from that book (quantity 12, floor 0.65, activation `T + 850`). Frame `T + 1,200` carries
+  a book stamped `T + 1,100` showing 12 at 0.65: sells 12 at 0.65 (proceeds 7.80, fee
+  0.191100). Expected: `exit_attempts` 2, one fill event, `exit_delay_ms` 1,200. The variant
+  in which every later book is two cents below the previous quote's floor (0.66 stamped
+  `T + 500`, 0.63 stamped `T + 1,100`, 0.60 stamped `T + 1,700`, and so on to `end_s`) never
+  fills: every attempt ends `no_protected_depth`, `exit_attempts` equals the number of
+  quotes, 12 shares are `exit_forced_settlement`, and the net under a losing label is minus
+  the cost basis, where the revision 7 walk would have booked 12 at 0.66. The fixture
+  asserts the evaluator reports the former and never the latter.
+- Nonpositive floor (`engine.py:707-709`): under the time exit the trigger frame's bid book
+  shows 12 at 0.010: the quote is refused `EXIT_PRICE_TOO_LOW` (floor 0.000), no attempt
+  opens, `exit_quote_refusals[EXIT_PRICE_TOO_LOW]` is 1. The next frame shows 12 at 0.011:
+  quoted at floor 0.001 with activation on that frame plus 250; a later fresh book at 0.011
+  fills 12 (proceeds 0.132, fee 0.009139). The variant in which every frame to `end_s` shows
+  0.010 has no attempt, a refusal count equal to the frame count, and 12 shares
+  `exit_forced_settlement`.
+- Execution gap: every frame from `T + 250` to `T + 5,300` carries a book stamped before
+  activation; the frame at `T + 5,300` ends attempt 1 `execution_gap` (5,050 ms after
+  activation), flags `exit_execution_gap`, and quotes attempt 2 from its own book when that
+  book passes the exit-form tests; the round stays in the result.
 - First fill after two seconds: frames at `T + 400`, `T + 1,200` and `T + 1,900` all carry a
-  bid book stamped `T - 100`; the first fresh book (stamped `T + 2,350`) arrives on a frame at
-  `T + 2,400` and holds the whole inventory. Expected: one fill event, one attempt,
-  `exit_delayed` true, `exit_delay_ms` 2,400, `exit_completion_ms` 2,400.
+  bid book stamped `T - 100`; the first fresh book (stamped `T + 2,350`, 12 at 0.70) arrives
+  on a frame at `T + 2,400` and holds the whole inventory at or above the floor. Expected:
+  one fill event, one attempt, `exit_delayed` true, `exit_delay_ms` 2,400,
+  `exit_completion_ms` 2,400.
 - Stress delays the first attempt and the completion (latency 750, activation `T + 750`):
-  a 12-share position and six frames. Frame `T + 600` carries a bid book stamped `T + 500`
-  showing 7: nothing sells, because the frame precedes activation and the book fails test 4.
-  Frame `T + 900` carries a book stamped `T + 850` showing 7: sells 7 (attempt 1). Attempt 2
-  activates at `T + 1,650`. Frame `T + 1,200` carries the same `T + 850` book: nothing
-  (`BOOK_BEFORE_ACTIVATION`). Frame `T + 2,300` carries a book stamped `T + 2,200` showing 5:
-  sells the remaining 5. Expected under stress: two fill events, `exit_attempts` 2,
-  `exit_delay_ms` 900, `exit_completion_ms` 2,300, `exit_delayed` false, proceeds equal to
-  both walks minus both fees minus one cent per share on each leg, inventory 0. The same
-  six frames under standard latency (activation `T + 250`) sell 7 on the `T + 600` frame,
-  activate attempt 2 at `T + 850`, and sell the remaining 5 on the `T + 900` frame because
-  its book stamp `T + 850` reaches that activation: `exit_delay_ms` 600,
-  `exit_completion_ms` 900, `exit_attempts` 2. The fixture asserts both runs side by side;
-  latency is the only input that differs.
+  six frames. Frame `T + 600` carries a bid book stamped `T + 500` showing 7 at 0.70:
+  nothing sells, because the frame precedes activation and the book fails test 4. Frame
+  `T + 900` carries a book stamped `T + 850` showing 7 at 0.70: sells 7 (attempt 1) and
+  quotes attempt 2 (5 at floor 0.69, activation `T + 1,650`). Frame `T + 1,200` carries the
+  same `T + 850` book: nothing (`BOOK_BEFORE_ACTIVATION`). Frame `T + 2,300` carries a book
+  stamped `T + 2,200` showing 5 at 0.70: sells the remaining 5. Expected under stress: two
+  fill events, `exit_attempts` 2, `exit_delay_ms` 900, `exit_completion_ms` 2,300,
+  `exit_delayed` false, proceeds equal to both walks minus both fees minus one cent per
+  share on each leg, inventory 0. The same six frames under standard latency (activation
+  `T + 250`) sell 7 on the `T + 600` frame, quote attempt 2 there (activation `T + 850`),
+  and sell the remaining 5 on the `T + 900` frame because its book stamp `T + 850` reaches
+  that activation: `exit_delay_ms` 600, `exit_completion_ms` 900, `exit_attempts` 2. The
+  fixture asserts both runs side by side; latency is the only input that differs.
 - Remainder held under stress: the stressed timeline above with the `T + 2,300` frame's book
   stamped `T + 1,600` instead of `T + 2,200` does not sell (activation `T + 1,650`); if no
   later frame qualifies, the 5 shares are `exit_forced_settlement`, `exit_attempts` 2,
   `exit_delay_ms` 900, `exit_completion_ms` 900 and `exit_delayed` false. Under standard
   latency the same variant completes at `T + 900` as before, so the forced settlement is
   caused by the stress model alone.
-- Residual below minimum: a 12-share position into depth of 9 leaves 3 shares
-  (`residual_below_minimum`, `exit_attempts` 1), and the net is checked under a matching label
-  (payout 3.00), a losing label (0) and no label (observed null, sensitivity payout 0).
+- Residual below minimum: a fresh book showing 9 at 0.70 sells 9 (attempt 1); the re-quote
+  for 3 shares is refused `BELOW_VENUE_MINIMUM` on that frame and on every later frame
+  (`exit_quote_refusals[BELOW_VENUE_MINIMUM]` counts them), `residual_below_minimum` is set,
+  `exit_attempts` is 1, and the net is checked under a matching label (payout 3.00), a losing
+  label (0) and no label (observed null, sensitivity payout 0).
 - Same book twice: two consecutive frames with identical book stamps after one sale produce
   one fill event.
 - Outage to expiry: an outage lasting to `end_s` after a partial sale yields
   `exit_forced_settlement`, `exit_delayed` false (the first fill was prompt), and the residual
   settled by label.
-- Entry depth: a USD 20 entry into a three-level ladder showing 12 shares yields a 12-share
-  `partial` entry whose cost basis equals the hand-computed walk; a ladder showing 4 shares
-  yields `unfilled_thin`.
+- Entry: the four all-or-none fixtures of the [fills section](#fills-are-the-production-orders)
+  run through the round path; the `price`, `depth` and `minimum_shares` rounds are not
+  entered and their `entry_execution` records carry the cause and the unfilled amount; the
+  fully executable order enters with 5.0609756... shares and cost basis 4.202290.
 - Outage at the trigger: an outage during a stop trigger yields a delayed exit at a worse bid
   with `exit_delayed` true.
 - A labeled loss is a full loss; an unlabeled entered round is counted and its sensitivity
@@ -716,7 +862,8 @@ Tests, all with standard latency unless stated, `T` the trigger tick's `now_ms`:
 ### Baselines registered with every run
 
 Each baseline is evaluated on its own outcome token's ladder at its own fill frame, never on
-the rule's price.
+the rule's price. Its order is sized by the hypothesis sizing configuration and executed
+all-or-none like every other entry ([fills](#fills-are-the-production-orders)).
 
 - **No trade** (zero).
 - **Market favorite at T** for T in 120, 60 and 30 seconds: buy the token whose ask is
@@ -751,12 +898,17 @@ adapter); the overfitting estimate and the H6 folds live in `src/btc5m/rule_fit.
 [research fingerprint](#research-implementation-fingerprint):
 
 - `EvaluatedRound`: slug, `start_ms`, split, rule id, cost model, `entered` (bool),
-  `not_entered_reason`, `decision_ms`, side, entry fill (frame ident, shares, principal,
-  fees), `trigger_ms`, exit fill events (list, each with frame ident, both book stamps,
-  shares, principal, fees), `exit_attempts`, `exit_delay_ms`, `exit_completion_ms`,
-  `settled_shares`, label, `observed_net: Decimal | None`, `sensitivity_net: Decimal`, total
-  fees, and flags (`partial`, `exit_delayed`,
-  `exit_forced_settlement`, `residual_below_minimum`, `unlabeled`).
+  `not_entered_reason`, `decision_ms`, side, the entry order (`principal`,
+  `minimum_receive_shares`, `price_limit`, sizing source `evaluate` or `hypothesis_sizing`),
+  the entry execution record (the paper broker's fields and the `cause`, present for every
+  order that reached a fill frame whether or not it filled), entry fill (frame ident, both
+  book stamps, shares, principal, fees), `trigger_ms`, exit attempts (list, each with quote
+  frame ident, `quantity`, `floor`, `activation_ms`, outcome, and the fill event's frame
+  ident, both book stamps, shares, principal and fees when it filled), `exit_attempts`,
+  `exit_quote_refusals`, `exit_delay_ms`, `exit_completion_ms`, `settled_shares`, label,
+  `observed_net: Decimal | None`, `sensitivity_net: Decimal`, total fees, and flags
+  (`exit_delayed`, `exit_forced_settlement`, `exit_execution_gap`, `residual_below_minimum`,
+  `stop_unreachable`, `unlabeled`).
 - `summarize(rows)` returns counts (`rounds`, `entered`, `not_entered` by reason, `labeled`,
   `unlabeled`, each flag) and two `performance` results: `observed`, from `RoundResult` rows
   of labeled entered rounds with `net = observed_net`, and `sensitivity`, from `RoundResult`
@@ -827,44 +979,68 @@ past the pending candidate's book stamp; any intervening screen that is not `ENT
 change of side or round identity, cancels the pending candidate (`_cancel_pending`,
 `engine.py:173-175`, `:263`).
 
-The existing-rule trials therefore do not carry an entry formula at all. The rule for E1 to
-E5 is:
+The existing-rule trials therefore do not carry an entry formula at all. Revision 8 adds
+the element the engine has and the revision 7 evaluator lacked: the candidate lives across
+**every** tape frame, not only the frames that carry a valid snapshot. `Engine.step` cancels
+the pending candidate when its snapshot is `None` (`engine.py:103-104`, `:115-116`) and when
+the provider reports an input invalidation (`:112-113`); the replay cancels it on a
+snapshot-free frame and on a frame gap above `max_price_age_ms` (`lab_replay.py:349-368`,
+`LAB_CAPTURE_GAP`). The dataset's `ticks` table cannot show this, because `_extract` skips
+snapshot-free frames (`dataset.py:315-316`). The rule for E1 to E5 is:
 
 | Element | Source | Deviation from production, and how it is made visible |
 |---|---|---|
-| Decision per screened tick | `strategy.evaluate(snapshot, config_for_rule)` on the tape snapshot of that tick, where `config_for_rule` is `engine._mode_config(mode)` over `Config()` for E1 to E4 (`engine.py:380-381`) and `variant.config` of `continuation-60-.5` for E5. The evaluator records `decision.reason` for every screened tick | none; the recorded reasons are the production reasons |
-| Entry | on the first tick whose decision is `ENTRY` and that satisfies the confirmation rule above, replicated tick by tick from `_confirm_candidate`; `decision_ms` is that tick's `now_ms`; side, `principal` and `limit` come from the decision | none in the decision; the evaluator has no ledger, so `check_entry` (loss allowances, session budget) is not applied and the difference is reported by F2's `budget_blocked` |
-| Entry fill | the walk stops at the decision's `limit` price, as `PaperBroker._immediate` stops at `price_limit` (`paper.py:250-253`); levels above it are not consumed, so a thin ladder gives `unfilled_thin` or `partial` rather than a worse fill | none |
-| Exits | the trigger form of the [book selection section](#book-selection-for-exits-and-trigger-fidelity); E4 adds the model trigger | the production exit order carries a limit of the last consumed level minus 0.01 (`engine.py:707`); the evaluator's exit walk has no limit and pays the stressed extra cent instead, which is at least as conservative in price and is stated in the report |
-| Not applied | `ACCOUNT_NOT_READY`, `CONFIGURATION_CHANGED`, venue submission, `ORDER_UNRESOLVED` | account and transport states have no tape representation; the evaluator's execution model replaces them and the deviation is listed in the report header |
+| Frames | every tape frame of the round from `rounds.first_frame_ident` to `last_frame_ident`, read by ident, one frame per engine step as `lab_replay` does; never the `ticks` table | none |
+| Decision per frame | if the frame has a snapshot whose slug is the round's, `strategy.evaluate(snapshot, config_for_rule)` on that snapshot, where `config_for_rule` is `engine._mode_config(mode)` over `Config()` for E1 to E4 (`engine.py:380-381`) and `variant.config` of `continuation-60-.5` for E5; the evaluator records `decision.reason` for every frame. A frame without a snapshot, or with another market's snapshot, records `NO_SNAPSHOT` | none; the recorded reasons are the production reasons |
+| Candidate | replicated frame by frame from `_confirm_candidate` and `step`: the first `ENTRY` frame records a pending candidate (spot stamp, book stamp, identity, side); a later `ENTRY` frame of the same identity and side whose signal source stamp is newer than the pending spot stamp and at or past the pending book stamp confirms; any frame whose decision is not `ENTRY` (including `NO_SNAPSHOT`), a side or identity change, or a gap above `max_price_age_ms` 5,000 ms since the previous frame cancels the candidate (`_cancel_pending`, `engine.py:173-175`, `:263`; `LAB_CAPTURE_GAP`) | none |
+| Entry | on the confirming frame; `decision_ms` is its `now_ms`; the order is the decision's `buy_principal`, `minimum_receive_shares` and `price_limit`, the fields `reserve_entry` writes into the `Intent` (`ledger.py:562-577`) | none in the decision; the evaluator has no ledger, so `check_entry` (loss allowances, session budget) is not applied and the difference is reported by F2's `budget_blocked` |
+| Entry fill | `fill_immediate` on the fill frame ([fills](#fills-are-the-production-orders)): walk to `price_limit`, all-or-none on principal and minimum receive, the paper broker's arithmetic | the fill frame must lie within 2,000 ms of the decision, where the paper broker allows 5,000 ms after activation (`paper.py:241`); a round whose first qualifying frame lies between 2,000 and 5,000 ms is counted `entry_late_frame` so the stricter deadline is visible |
+| Exits | the trigger form of the [book selection section](#book-selection-for-exits-and-trigger-fidelity), E4 adding the model trigger, then the [quote loop](#entry-and-exit-transitions-residual-inventory-and-attempts): quantity quantized to 0.01, floor at the last consumed level minus 0.01, the `BELOW_SELL_PRECISION`, `BELOW_VENUE_MINIMUM` and `EXIT_PRICE_TOO_LOW` refusals, fills only at levels at or above the floor, a new quote on the frame that ended the previous attempt | none in the quote or the fill; on an execution gap the paper broker records an uncertainty observation and keeps the position, and the evaluator flags the round `exit_execution_gap` and keeps it |
+| Not applied | `ACCOUNT_NOT_READY`, `CONFIGURATION_CHANGED`, `ACCOUNT_EXPOSURE_UNRECONCILED` (`engine.py:583-596`), venue submission, `ORDER_UNRESOLVED` | account and transport states have no tape representation; the evaluator's execution model replaces them and the deviation is listed in the report header |
 
 H1 to H5 keep their own decision functions and do not use the confirmation rule, because
 they are new hypotheses defined on the dataset columns; the report says so in the row of
-every H trial.
+every H trial. Their orders and fills are the production ones all the same
+([fills](#fills-are-the-production-orders)).
 
 Matched decision fixtures (synthetic snapshots built like `tests/test_strategy.py` builds
-them):
+them, tick 0.001):
 
-- For each of E1 to E5, a two-tick sequence on which `strategy.evaluate` returns `ENTRY`
-  twice with a newer spot stamp on the second tick: the evaluator enters on the second tick
-  with the decision's side, `principal` and `limit`, and the first tick is recorded
-  `ENTRY_CONFIRMATION_WAITING`.
+- For each of E1 to E5, a two-frame sequence on which `strategy.evaluate` returns `ENTRY`
+  twice with a newer spot stamp on the second frame: the evaluator enters on the second
+  frame with the decision's side, `buy_principal`, `minimum_receive_shares` and
+  `price_limit`, and the first frame is recorded `ENTRY_CONFIRMATION_WAITING`.
 - E2 with floor 0.86 and ask 0.81 (bid 0.79): not entered, reason
   `INSUFFICIENT_TERMINAL_SURPLUS`, and the recorded surplus equals the production feature
   `terminal_surplus_proxy` on that snapshot.
 - E2 with ask 0.81 and bid 0.77: `SPREAD_TOO_WIDE`.
 - E1 with ask 0.96: `PRICE_BAND`; E5 with ask 0.06 under the same signal: entered (the lab
   variant's band starts at 0.05).
+- Confirmation across a snapshot-free frame (the required fixture): frame 1 `ENTRY`; frame
+  2 without a snapshot (`code` `STALE_DATA`, `research.streams` present); frame 3 `ENTRY`
+  with a newer spot stamp than frame 1: no entry on frame 3, the frame 2 record reads
+  `NO_SNAPSHOT`, the candidate is cancelled and frame 3 opens a new one; frame 4 `ENTRY`
+  with a spot stamp newer than frame 3's enters. The same four frames with a valid `ENTRY`
+  snapshot on frame 2 enter on frame 2. The test derives the expected frame by driving
+  `Engine.step` with the same four inputs (`None` on frame 2) through a paper broker and
+  asserts the evaluator enters on the same frame.
+- Gap: two `ENTRY` frames 5,100 ms apart do not enter (`LAB_CAPTURE_GAP` cancels the first,
+  the second opens a new candidate); 4,900 ms apart, they enter.
 - Confirmation: `ENTRY`, then a `MOMENTUM_RECENT_MOVE` screen, then `ENTRY` again: no entry
-  on the third tick (the pending candidate was cancelled and the third tick opens a new
+  on the third frame (the pending candidate was cancelled and the third frame opens a new
   one); `ENTRY` then `ENTRY` on the opposite side: no entry (`CANDIDATE_IDENTITY_CHANGED`).
-- Limit: a decision whose `limit` is 0.83 against a ladder of 5 shares at 0.82 and 20 at
-  0.85 fills 5 shares only and is `unfilled_thin` (5 is the minimum, so exactly 5 enters; a
-  ladder of 4 at 0.82 gives `unfilled_thin`).
-- Property test over a synthetic 30-round tape: for every screened tick of every E rule,
-  the evaluator's recorded reason equals `strategy.evaluate(...)`.reason computed
-  independently in the test, and the set of entered rounds equals the set the test derives
-  by applying the confirmation rule to those reasons.
+- Order and all-or-none: the E2 decision on a 0.82 ask with 30 displayed carries principal
+  4.15, minimum receive 5.00000 and limit 0.83 (asserted against `strategy.evaluate`); the
+  four fill fixtures of the [fills section](#fills-are-the-production-orders) run on that
+  order: `price` (5 at 0.82 then 20 at 0.85, 0.05 unspent), `depth` (4 at 0.82) and
+  `minimum_shares` (minimum raised by 0.0001) are not entered, `unfilled_no_protected_depth`
+  with the cause; 30 at 0.82 enters with 5.0609756... shares and cost basis 4.202290, equal
+  to `PaperBroker._immediate`'s fill on the same order.
+- Property test over a synthetic 30-round tape with snapshot-free frames inside a third of
+  the rounds: for every frame of every E rule, the evaluator's recorded reason equals
+  `strategy.evaluate(...)`.reason computed independently in the test (or `NO_SNAPSHOT`), and
+  the set of entered rounds equals the set the test derives by applying the candidate rule
+  to those reasons.
 
 ### Stop validation (`STOP_UNREACHABLE`)
 
@@ -1138,10 +1314,11 @@ insufficient and no rule table is drawn from it. A second day is not imported in
   new freeze.
 - **Comparator drift**: the existing-rule trials call the production decision function and
   replicate its confirmation, so a negative or positive result is about the bot's rules;
-  every deviation (no ledger allowance, no account state, unlimited exit walk) is listed in
-  the report header with the column that measures it.
-- **Optimistic fills**: taker only, full-ladder walk from checksummed frames, a 2,000 ms
-  entry deadline, latency paid on every attempt, a book-activation bound on every fill,
+  every deviation (no ledger allowance, no account state, the 2,000 ms entry deadline, the
+  execution-gap flag) is listed in the report header with the column that measures it.
+- **Optimistic fills**: taker only, the production all-or-none protected entry and the
+  floor-protected exit quotes exactly as the paper broker executes them (parity-tested),
+  full-ladder walks from checksummed frames, a 2,000 ms entry deadline, latency paid on every attempt, a book-activation bound on every fill,
   extra slippage, no maker credit, preservation of every entered round with delayed or
   forced exits, a full-loss sensitivity for unlabeled entries, and a live-stage risk register
   covering ghost reverts
@@ -1175,5 +1352,6 @@ dependency in `pyproject.toml`,
 a committed freeze record before the first real-archive build, a committed selection record
 and rules file before any holdout read (checked by `build-holdout` itself), the research
 fingerprint printed in every evaluation report and equal to the selection's on any holdout
-report, `lab.SEMANTIC_FILES` unchanged, and a progress entry with the manifest counts for
-every real-archive run.
+report, `lab.SEMANTIC_FILES` unchanged, the parity test of `rule_eval.fill_immediate` against
+`PaperBroker._immediate` present and passing, and a progress entry with the manifest counts
+for every real-archive run.

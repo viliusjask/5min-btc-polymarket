@@ -7,7 +7,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE="$ROOT/.autopilot"
 SESSION=btc5m-autopilot
 SOURCE="${AUTOPILOT_HOME:-$HOME/projects/autopilot}"
-PIN="${AUTOPILOT_RUNTIME_PIN:-9118335e9781548121e9baca9b32effa951f5dfe}"
+PIN="${AUTOPILOT_RUNTIME_PIN:-367ccbc1704332acb0b88b3e5353f7f051146475}"
 BRANCH=chore/btc-autopilot
 BASE=main
 export GH_REPO=viliusjask/5min-btc-polymarket
@@ -23,7 +23,7 @@ preflight() {
     command -v "$item" >/dev/null || { echo "Missing executable: $item" >&2; return 1; }
   done
   python3 -c 'import sys; assert sys.version_info >= (3, 10)' || return 1
-  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py scripts/headroom_proxy.py scripts/codex_usage.py scripts/headroom_codex.py; do
+  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py scripts/headroom_proxy.py scripts/headroom_cache_patch.py scripts/codex_usage.py scripts/headroom_codex.py; do
     git -C "$SOURCE" cat-file -e "$PIN:$item" || return 1
   done
   git -C "$ROOT" rev-parse --verify "fork/$BASE" >/dev/null || return 1
@@ -85,7 +85,7 @@ mkdir -p "$STATE"/{logs,prompts,briefing,runtime/prompts,runtime/scripts}
 exec 9>"$STATE/runner.lock"
 flock -n 9 || { echo 'Another runner owns this project state.' >&2; exit 1; }
 printf '%s\n' "$$" > "$STATE/pid"
-for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py scripts/headroom_proxy.py scripts/codex_usage.py scripts/headroom_codex.py; do
+for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py scripts/headroom_proxy.py scripts/headroom_cache_patch.py scripts/codex_usage.py scripts/headroom_codex.py; do
   git -C "$SOURCE" show "$PIN:$item" > "$STATE/runtime/$item.tmp" \
     && mv "$STATE/runtime/$item.tmp" "$STATE/runtime/$item" || exit 1
 done

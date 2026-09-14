@@ -1,6 +1,6 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
-2026-09-14, revision 9. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
+2026-09-14, revision 10. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)
 and [the photo register](../research/reference-photos-2026-09-13.md). Revision 1 (`08fbf74`)
@@ -22,8 +22,13 @@ current book, and the existing rules' candidate confirmation runs over every tap
 the round. Revision 8 received one P1 and one P2 finding; revision 9 answers them in the
 first table below: baselines are capital-matched to each rule's budget, the baseline
 comparison and the overfitting ranking use net per USD of cost basis rather than net per
-round, and the minimum-share fixture is corrected so it refuses. The freeze sequence and
-the registered grid are unchanged unless a section below says otherwise.
+round, and the minimum-share fixture is corrected so it refuses. Revision 9 received two P1
+findings; revision 10 answers them in the first table below: the no-trade baseline is
+compared over the rule's whole entered population and is exempt from pairing, and B1 gains
+label validation (identity, finite positive prices, opening agreement with the round's
+anchor within `ANCHOR_TOLERANCE`) so the evaluator settles a round the way
+`PaperBroker.resolve` would, or leaves it unresolved. The freeze sequence and the
+registered grid are unchanged unless a section below says otherwise.
 
 ## Revision 6: the recovered baseline
 
@@ -92,6 +97,15 @@ frames from September 7 07:26 UTC; the directional lab worker is at cursor 255,5
 27 clean of 29, clean net USD +5.69); the holdout phase still holds only the Value control at
 USD -5.16 on two rounds. The September 4 OutcomeTick and Binance files are downloaded, but
 both September 8 conversion attempts are incomplete and no external tape was published.
+
+## Answers to the review of revision 9
+
+Both findings were checked against the code before acceptance; both were accepted.
+
+| Finding | Where it is answered | What changed and the evidence |
+|---|---|---|
+| P1 every baseline required 30 paired filled rounds, but the registered no-trade baseline never fills and deploys no cost basis, and its `net_per_cost_basis` is `None` under `summarize`; no candidate could satisfy the complete decision rule | [Decision rule](#the-question-and-the-decision-rule), [baselines](#baselines-registered-with-every-run), [adapter tests](#result-rows-and-the-adapter-to-performance) | Confirmed: revision 9's capital-matching paragraph applied pairing to "every baseline below", and the first bullet below it is no trade. The baseline set is now split into the no-trade baseline and the four **filled baselines**. No trade is compared over the rule's full sensitivity population, the same rows the second criterion reads: its net is zero on every round by definition, so the rule beats it exactly when the stressed run's `sensitivity.net` is greater than zero. It has no fill, no pairing, no cost basis and no `net_per_cost_basis`; `summarize` is never asked to divide for it, and the comparison record carries `paired` null and `kind: no_trade`. Pairing, `baseline_not_sized`, `baseline_unfilled`, the 30-round floor and `BASELINE_BUDGET_MISMATCH` apply to the filled baselines only. A new fixture exercises the complete baseline criterion end to end: a rule with 60 entered rounds against no trade and the four filled baselines at its budget passes; flipping one thing at a time (net at or below zero; 29 paired rounds on one filled baseline; a filled baseline with a higher metric; a `@20` baseline on a `@5` rule) fails with the named reason. |
+| P1 recovered extraction keeps only the label's final price and discards its opening price and `condition_id` without validation; a captured opening of 80000 with an official opening of 80001 and a final of 80000.5 could be scored as an Up win although the official outcome is Down and `PaperBroker.resolve` would refuse the anchor mismatch | [B1](#increment-b1-round-dataset-extraction), [label validation](#label-validation-and-settlement-identity), [settlement row](#entry-and-exit-transitions-residual-inventory-and-attempts), [adapter](#result-rows-and-the-adapter-to-performance) | Confirmed at `src/btc5m/dataset.py:395-400` (`entry["final_label"] = str(label[0]["final"])`, nothing else read) while the tape label carries `condition_id`, `opening` and `final` (`src/btc5m/comparison.py:346-350`, `src/btc5m/history_import.py:484-487`), the `rounds` table has no `condition_id` column (`dataset.py:205-222`), and the paper broker settles only when the label's condition matches, both prices are finite and positive, and the opening equals `market.reference_price` within `ANCHOR_TOLERANCE` 0.00000001 (`src/btc5m/paper.py:477-500`, `src/btc5m/market_data.py:356-371`, `:62`). Without the opening, the evaluator would have had to compare the final with the round's captured anchor, which is the reviewer's failure. B1 now stores `condition_id`, `label_condition_id`, `label_opening`, `final_label` and `label_status`, validates each label at extraction with the broker's tests, and the evaluator settles only rounds whose `label_status` is `official`, computing the winning side as `final >= opening` on the label's own prices, exactly `resolve`'s `D(int(final >= opening))`. Any other status leaves an entered round unresolved: observed net null, sensitivity payout 0. Required fixtures: the reviewer's mismatched opening (unresolved, `anchor_mismatch`, never an Up win), a wrong `condition_id` (`identity_mismatch`), a valid equality settlement (`final == opening` pays the Up side), non-finite or non-positive prices (`invalid_price`), a conflicted `None` label (`conflicted`), and parity of the evaluator's side with `PaperBroker.resolve` on the same market and label. |
 
 ## Answers to the review of revision 8
 
@@ -186,7 +200,7 @@ A rule set is a **supported candidate** only if, on the untouched holdout, all o
 | Dependence on outliers | net after removing the three largest wins is still greater than zero | Avoids a verdict resting on one lucky payout |
 | Day-block bootstrap | on sensitivity nets: status `descriptive` (at least six included days, at least 60 entered rounds) and fewer than 25% of resamples have a mean net per entered round at or below zero | Descriptive uncertainty; not a significance test |
 | Overfitting estimate | probability of backtest overfitting below 0.5 over the registered fixed-rule grid on train plus validation | Bailey et al. combinatorially symmetric cross-validation |
-| Beats the baselines | net per USD of cost basis on the paired rounds exceeds that of every baseline registered at the rule's own budget, each evaluated on those rounds with its own outcome book and its own all-or-none order; at least 30 paired rounds per baseline, otherwise the comparison is `insufficient_pairing` and the criterion is not met | Otherwise the rule is only capturing what the market already prices; the per-USD metric and the matched budget keep the assigned size out of the verdict (revision 9) |
+| Beats the baselines | Two parts (revision 10). No trade: the stressed run's `sensitivity.net` over every entered round is greater than zero (the no-trade baseline nets zero on every round; no pairing, no cost basis). Filled baselines: net per USD of cost basis on the paired rounds exceeds that of every filled baseline registered at the rule's own budget, each evaluated on those rounds with its own outcome book and its own all-or-none order; at least 30 paired rounds per filled baseline, otherwise the comparison is `insufficient_pairing` and the criterion is not met | Otherwise the rule is only capturing what the market already prices; the per-USD metric and the matched budget keep the assigned size out of the verdict (revision 9) |
 
 Anything that fails is reported as a negative result with the same detail as a positive one.
 A supported candidate earns a proposal for a bounded funded trial; it does not authorize one.
@@ -266,7 +280,7 @@ Split membership is then mechanical and testable:
 |---|---|---|---|
 | Train | capture start to 2026-09-11 00:00 UTC minus purge | ident at or below freeze high-water | label frame ident at or below freeze high-water |
 | Validation | 2026-09-11 00:00 UTC plus purge to `validation_end_ms` | same | same |
-| Holdout | at or after `holdout_start_ms` | ident above freeze high-water, read only by `build-holdout` | any official label present at holdout build time |
+| Holdout | at or after `holdout_start_ms` | ident above freeze high-water, read only by `build-holdout` | any label present at holdout build time, validated the same way ([label validation](#label-validation-and-settlement-identity)) |
 
 A round whose label arrives after the freeze is *unlabeled* for train and validation, even
 if a later tape has it. A round in progress at the freeze (start before `cutoff_ms`, end
@@ -311,9 +325,11 @@ freeze record, streams frames from the first cursor to the **freeze high-water**
 tape's current high-water), keeps only rounds starting before `validation_end_ms`, and
 writes one SQLite file with:
 
-- `rounds`: one row per market slug with start/end, verified opening reference and its
-  status, settlement source, fee rate and exponent, tick size, minimum order, official final
-  label, `label_frame_ident` and `label_received_ms` (the `now_ms` of the tape frame that
+- `rounds`: one row per market slug with start/end, `condition_id` (revision 10), verified
+  opening reference and its status, settlement source, fee rate and exponent, tick size,
+  minimum order, the label as the tape carries it (`label_condition_id`, `label_opening`,
+  `final_label`), `label_status` from the [label validation](#label-validation-and-settlement-identity)
+  below, `label_frame_ident` and `label_received_ms` (the `now_ms` of the tape frame that
   carried the label), the split name derived from the freeze record, and the count of valid
   frames.
 - `ticks`: one row per frame per round with the frame ident, seconds remaining, spot, TWAP60,
@@ -365,10 +381,70 @@ ident range of every tape frame, with or without a snapshot, whose `now_ms` lies
 `[start_ms, end_ms)`, so the evaluator can bound its tape read for a round's decision and holding paths
 (revision 7, extended to the decision path in revision 8 because the existing rules'
 candidate must see snapshot-free frames; a test with a snapshot-free frame inside the round asserts the range includes
-it while `ticks` does not); and the acceptance build on the real archive with its counts in
-progress. The real-archive freeze is still the first BUILD action and has not been run. The
+it while `ticks` does not); the [label validation](#label-validation-and-settlement-identity)
+columns and statuses (revision 10; `_finalize_rounds` at `src/btc5m/dataset.py:390-407`
+currently keeps `label["final"]` alone and the table has no `condition_id`); and the
+acceptance build on the real archive with its counts in progress. The real-archive freeze is still the first BUILD action and has not been run. The
 freeze record format changes to version 2 before that first run, which is why the fingerprint
 field can still be added to it.
+
+### Label validation and settlement identity
+
+The tape label for a slug is the dictionary the recorder writes when `MarketData.final_reference`
+returns a value (`src/btc5m/comparison.py:344-350`): `condition_id`, `opening` and `final`,
+all as strings; the recorder writes `None` instead when a previously labeled market becomes
+conflicted (`final_reference_conflicted`, `:351-352`). The importer writes the same three keys
+(`src/btc5m/history_import.py:484-487`). The paper broker turns such a label into a settlement
+only if every one of these holds (`src/btc5m/paper.py:477-500`, `src/btc5m/market_data.py:356-371`):
+the label's condition equals the market's; opening and final are finite and positive; the
+market has a reference price; and the opening equals that reference within `ANCHOR_TOLERANCE`
+(`market_data.py:62`, 0.00000001). The evaluator must not settle a round the broker would
+refuse, so B1 preserves the whole label and validates it at extraction:
+
+- Columns: `rounds.condition_id` (from `market.condition_id` of the round's first snapshot),
+  `label_condition_id`, `label_opening`, `final_label` (unchanged name) and `label_status`.
+- `label_status` is computed once by `dataset.label_status(round, label)` and stored:
+  `official` (all tests pass), `missing` (no label on the tape at or below the freeze
+  high-water), `conflicted` (the tape carries `None`), `identity_mismatch`
+  (`label_condition_id != condition_id`), `invalid_price` (either price is not finite or not
+  positive, or either is absent), `no_reference` (`reference_price` is null) and
+  `anchor_mismatch` (`abs(reference_price - label_opening) > ANCHOR_TOLERANCE`, imported
+  from `market_data`, never re-declared). The tests run in that order and the first failure
+  is the status. `final_label` and `label_opening` are stored verbatim whatever the status,
+  so a later revision can re-validate without a rebuild.
+- The manifest counts rounds per split by `label_status`; the existing "rounds without a
+  label" count becomes the sum of every status other than `official`.
+- The evaluator ([settlement](#entry-and-exit-transitions-residual-inventory-and-attempts))
+  reads `label_status` and settles only `official` rounds, computing the side as
+  `Decimal(final_label) >= Decimal(label_opening)`. Every other status makes an entered
+  round unresolved: `unlabeled` true, `label_status` carried on the row, observed net null,
+  sensitivity payout 0. The lab's own outcome column already applies the identity and anchor
+  tests (`src/btc5m/lab.py:565-575`); the dataset now applies the same tests plus the
+  broker's price tests.
+- Holdout: the same validation runs in `build-holdout`; the holdout row for the split table
+  reads "any label present at holdout build time, validated the same way".
+
+Tests (`tests/test_dataset.py`, `tests/test_rule_eval.py`):
+
+- Reviewer's case: a round captured with `reference_price` 80000 and status `official`, a
+  tape label with the same condition, opening 80001 and final 80000.5, is stored with
+  `label_status` `anchor_mismatch`; an entered Up round on it is unresolved (observed null,
+  sensitivity payout 0), never an Up win; the same label with opening 80000 is `official`
+  and settles Down.
+- Wrong condition: a label whose `condition_id` differs is `identity_mismatch` even when the
+  prices agree; the outcome is unresolved.
+- Valid equality: opening 80000, final 80000, matching condition and anchor, is `official`
+  and pays the Up side 1.00 per share (the broker's `final >= opening`); a Down position on
+  it settles at 0.
+- Prices: `NaN`, `Infinity`, 0 and a negative value in either field give `invalid_price`; a
+  round with `reference_price` null gives `no_reference`; the recorder's `None` label gives
+  `conflicted`; a slug with no label gives `missing`.
+- Parity: for 50 seeded (reference, opening, final, condition) combinations, the evaluator's
+  settled side equals the side `PaperBroker.resolve` returns for a `Market` built from the
+  same values with `final_reference` returning the same label, and the evaluator is
+  unresolved exactly when `resolve` returns `None`.
+- Rebuild determinism: the label columns are part of the content hash, so a tape whose label
+  changes between builds changes the hash.
 
 ### Holdout pre-extraction checks
 
@@ -809,7 +885,7 @@ stamped `D + 850` fills.
 | Residual | The frame on which an attempt ended (its fill frame, or the frame that recorded `no_protected_depth` or the gap) is the next quote frame, because the engine's step reconciles the finished order and quotes again before it returns (`engine.py:107`, `:122`). The new quote walks that frame's selected book for the remaining inventory and pays latency again; its fill needs a book whose stamps reach the new activation (test 4), so it never sells into the ladder it already consumed. A remaining inventory below 5 shares is refused `BELOW_VENUE_MINIMUM` on every later frame (the behaviour `tests/test_engine.py::test_unexitable_dust_records_reason_without_endless_sell_intents` pins), flagged `residual_below_minimum`, and holds to settlement. |
 | Exit end | Quotes and attempts continue until the last frame before `end_s`. Inventory remaining then holds to settlement, flagged `exit_forced_settlement`. Exits have no 2,000 ms deadline; that number only defines whether the exit was prompt. |
 | Exit timing record | Every exited round records `exit_attempts` (quotes that opened an order), `exit_quote_refusals` (refusal code to count), `exit_delay_ms = first_fill.now_ms - trigger_ms` and `exit_completion_ms = last_fill.now_ms - trigger_ms` (both null when nothing sold), and per attempt the quote frame ident, `quantity`, `floor`, `activation_ms`, the outcome (`filled`, `partially_filled`, `no_protected_depth`, `execution_gap`) and the fill event when there is one. `exit_delayed` is true when the first fill's `now_ms` exceeds `trigger_ms + 2000` or when no fill occurred before `end_s`. A later attempt that fills after `trigger_ms + 2000` does not set the flag by itself; its lateness is visible in `exit_completion_ms` and the report lists the distribution of both durations. |
-| Settlement | Held inventory (forced, residual or hold-to-settlement) pays 1.00 per share if the official label matches the held side and 0 otherwise. With no label, the round's observed net is null and its sensitivity net treats the held inventory as paying 0. |
+| Settlement | Held inventory (forced, residual or hold-to-settlement) pays 1.00 per share if the round's label is `official` and its settled side matches the held side, and 0 if it is `official` and the side differs. The settled side is `Up` when `final_label >= label_opening` on the label's own prices, exactly `PaperBroker.resolve`'s `D(int(final >= opening))` (`src/btc5m/paper.py:491`), never the final against the round's captured anchor ([label validation](#label-validation-and-settlement-identity), revision 10). With any other `label_status`, the round's observed net is null and its sensitivity net treats the held inventory as paying 0. |
 | Net | `observed_net = proceeds + settlement payout - cost basis`; `sensitivity_net` is the same with payout 0 when unlabeled. Both are `Decimal`. |
 | Conservation | `entry_shares == sold_shares + settled_shares` on every round. The evaluator asserts it and every fixture checks it. |
 
@@ -902,14 +978,24 @@ Each baseline is evaluated on its own outcome token's ladder at its own fill fra
 the rule's price. Its order is sized by the hypothesis sizing configuration and executed
 all-or-none like every other entry ([fills](#fills-are-the-production-orders)).
 
-**Capital matching (revision 9).** Every baseline below is registered once per budget in
-use: `market_favorite_60@5` and `market_favorite_60@20`, and so on for each. A rule is
-compared only with the baselines at its own budget (USD 5 for E1 to E5, USD 20 for H1 to
-H6); the evaluator refuses a comparison whose baseline budget differs from the rule's
+**The no-trade baseline (revision 10).** No trade fills nothing, deploys nothing and nets
+zero on every round. It is compared over the rule's **full sensitivity population**, the
+same rows the second decision criterion reads: the rule beats no trade exactly when the
+stressed run's `sensitivity.net` over every entered round is greater than zero. It is
+exempt from pairing and from the cost-basis division; its comparison record has `kind:
+no_trade`, `paired` null and no `net_per_cost_basis`, and `summarize` is never asked to
+divide by a zero cost basis for it. Everything in the next paragraph applies to the four
+**filled baselines** only.
+
+**Capital matching of the filled baselines (revision 9, scoped in revision 10).** Each
+filled baseline below is registered once per budget in use: `market_favorite_60@5` and
+`market_favorite_60@20`, and so on for each. A rule is compared only with the filled
+baselines at its own budget (USD 5 for E1 to E5, USD 20 for H1 to H6); the evaluator
+refuses a comparison whose baseline budget differs from the rule's
 (`BASELINE_BUDGET_MISMATCH`). The random-side baseline is drawn at the rule's own decision
 times and sized at the rule's budget, so it is matched by construction. The comparison runs
-on **paired rounds**: the rule's entered rounds on which the baseline's own order, sized at
-the matched budget on the baseline's outcome token, also filled all-or-none. Rounds the
+on **paired rounds**: the rule's entered rounds on which the filled baseline's own order,
+sized at the matched budget on the baseline's outcome token, also filled all-or-none. Rounds the
 baseline could not size are counted in `baseline_not_sized` by `_quote` reason
 (`BELOW_MINIMUM_SIZE`, `INSUFFICIENT_DEPTH`, `PRICE_BAND`), and rounds whose baseline order
 reached a fill frame but failed the all-or-none test are counted in `baseline_unfilled`;
@@ -918,20 +1004,20 @@ and baseline: entered, paired, `baseline_not_sized` by reason, `baseline_unfille
 rule's and the baseline's net per USD of cost basis on the paired rounds, the difference,
 and the rule's net per USD of cost basis on its unpaired rounds, so a reader can see whether
 a rule's result lives where the baseline could not trade. The decision criterion uses the
-paired comparison and needs at least 30 paired rounds per baseline (half the entered-round
-floor; an author-chosen operating threshold); fewer is `insufficient_pairing`, which fails
-the criterion and is reported as inconclusive rather than as a pass. At USD 5 the
+paired comparison and needs at least 30 paired rounds per filled baseline (half the
+entered-round floor; an author-chosen operating threshold); fewer is `insufficient_pairing`,
+which fails the criterion and is reported as inconclusive rather than as a pass. At USD 5 the
 market-favorite and screenshot baselines cannot size any ask above 0.934, so the E rules'
 pairing will be reduced on decided rounds; the report states the reduction, and the
 comparison is not made easier to reach.
 
-- **No trade** (zero).
-- **Market favorite at T** for T in 120, 60 and 30 seconds: buy the token whose ask is
-  above 0.5, hold to settlement. This measures what the market already prices.
-- **Random side at the rule's own decision times and sizes**, seeded, averaged over 200
-  draws; each draw walks the drawn token's ladder. This separates timing skill from side
-  skill.
-- **Screenshot literal, no hedge (approximation)**: enter with 120 to 90 seconds remaining
+- **No trade** (zero on every round; compared as described above, never paired).
+- **Market favorite at T** for T in 120, 60 and 30 seconds (filled): buy the token whose
+  ask is above 0.5, hold to settlement. This measures what the market already prices.
+- **Random side at the rule's own decision times and sizes** (filled), seeded, averaged
+  over 200 draws; each draw walks the drawn token's ladder. This separates timing skill from
+  side skill.
+- **Screenshot literal, no hedge (approximation)** (filled): enter with 120 to 90 seconds remaining
   when the spot move from the opening reference is between USD 70 and 100, buy with the move
   at 0.80 to 0.99, hold to settlement. The gus post also says to "cover just a small part of
   the position only if the market gets too imbalanced"; the example in parentheses is cut off
@@ -965,12 +1051,14 @@ adapter); the overfitting estimate and the H6 folds live in `src/btc5m/rule_fit.
   book stamps, shares, principal, fees), `trigger_ms`, exit attempts (list, each with quote
   frame ident, `quantity`, `floor`, `activation_ms`, outcome, and the fill event's frame
   ident, both book stamps, shares, principal and fees when it filled), `exit_attempts`,
-  `exit_quote_refusals`, `exit_delay_ms`, `exit_completion_ms`, `settled_shares`, label,
+  `exit_quote_refusals`, `exit_delay_ms`, `exit_completion_ms`, `settled_shares`,
+  `label_status` (revision 10; `official` or the unresolved reason from [label
+  validation](#label-validation-and-settlement-identity)), the settled side when official,
   `observed_net: Decimal | None`, `sensitivity_net: Decimal`, total fees, and flags
   (`exit_delayed`, `exit_forced_settlement`, `exit_execution_gap`, `residual_below_minimum`,
-  `stop_unreachable`, `unlabeled`).
+  `stop_unreachable`, `unlabeled`, which is true for every status other than `official`).
 - `summarize(rows)` returns counts (`rounds`, `entered`, `not_entered` by reason, `labeled`,
-  `unlabeled`, each flag) and two `performance` results: `observed`, from `RoundResult` rows
+  `unlabeled` in total and by `label_status`, each flag) and two `performance` results: `observed`, from `RoundResult` rows
   of labeled entered rounds with `net = observed_net`, and `sensitivity`, from `RoundResult`
   rows of all entered rounds with `net = sensitivity_net`. Beside each `performance` result
   it returns `cost_basis_deployed` (the sum of entry cost basis, principal plus entry fees,
@@ -1024,8 +1112,22 @@ Tests:
   at USD 20 (18.69, 19.46875, 0.96) and pairs; a round whose favorite shows only 4 shares at
   0.82 is `baseline_unfilled` (cause `depth`) at both budgets. No paired count, net or
   denominator changes when a refused round is added.
-- Pairing floor: 60 entered rounds of which the baseline pairs 29 give
+- Pairing floor: 60 entered rounds of which the filled baseline pairs 29 give
   `insufficient_pairing` and the criterion not met; 30 paired rounds are compared.
+- Complete baseline criterion (revision 10): one synthetic holdout-shaped fixture with a
+  rule entering 60 rounds at USD 5, the no-trade baseline and the four filled baselines
+  registered at `@5` (each pairing at least 30 rounds by construction of the books), and a
+  stressed `sensitivity.net` above zero. `baseline_criterion(rule, baselines)` returns
+  `met` with one record per baseline: no trade with `kind: no_trade`, `paired` null and the
+  rule's `sensitivity.net`; each filled baseline with `paired`, both metrics and the
+  difference. Five single-change variants each return `not_met` with the named reason:
+  the rule's stressed net at or below zero (`no_trade`); 29 paired rounds on one filled
+  baseline (`insufficient_pairing`); one filled baseline with a higher net per USD of cost
+  basis (`baseline_not_beaten`); a `@20` baseline supplied to the `@5` rule
+  (`BASELINE_BUDGET_MISMATCH`, a refusal, not a verdict); and a rule whose only entered
+  rounds are unresolved (sensitivity net negative, `no_trade`). The same fixture drives the
+  full decision rule once so every criterion row is exercised together and the verdict is
+  `supported_candidate` only in the unchanged case.
 
 Acceptance: all baselines evaluated at both budgets on the real dataset's training split
 with counts, `baseline_not_sized` by reason, net results and net per USD of cost basis

@@ -138,3 +138,10 @@ the same modification times as on September 13. None was opened this round. The 
 baseline is now registered at both budgets; at USD 5 it cannot buy an ask above 0.934, so
 its 0.95 to 0.99 range remains tradable only at USD 20, as recorded in revision 8. No photo
 decision changed.
+
+## Revision 10 (September 14): no reinspection
+
+The two revision 9 findings concern the no-trade baseline's place in the decision rule and
+the dataset's label validation. Neither implicates a photo, and the ten files in `.local/`
+carry the same modification times as on September 13. None was opened this round. No photo
+decision changed.

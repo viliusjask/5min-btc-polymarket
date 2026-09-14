@@ -1,3 +1,50 @@
+# Progress: research re-plan, revision 10 after the eighth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`51550f7` (revision 9) returned two P1 findings. Both were checked against the code and
+accepted. Revision 10 of [the plan](plans/profitable-subset-research.md) answers them in a
+table at the top and rewrites the affected sections:
+
+- **No-trade baseline (P1).** Revision 9 applied the paired-round comparison and its
+  30-round floor to every baseline, and the first registered baseline is no trade, which
+  never fills and deploys no cost basis (`summarize` would return `None` for its metric), so
+  no candidate could pass. The baseline set is now split: no trade is compared over the
+  rule's full sensitivity population (the rule beats it exactly when the stressed run's
+  `sensitivity.net` over every entered round is above zero), exempt from pairing and from
+  the cost-basis division, with `kind: no_trade` and `paired` null in its comparison record;
+  pairing, `baseline_not_sized`, `baseline_unfilled`, the 30-round floor and
+  `BASELINE_BUDGET_MISMATCH` apply to the four filled baselines only. A new fixture runs the
+  complete baseline criterion (no trade plus four filled baselines at the rule's budget) and
+  five single-change variants that each fail with the named reason, and drives the full
+  decision rule once.
+- **Label identity and anchor validation (P1).** `_finalize_rounds` keeps only
+  `label["final"]` (`src/btc5m/dataset.py:395-400`) although the tape label carries
+  `condition_id`, `opening` and `final` (`src/btc5m/comparison.py:346-350`), and the
+  `rounds` table has no `condition_id` column. The paper broker settles only when the
+  label's condition matches, both prices are finite and positive, and the opening equals
+  `market.reference_price` within `ANCHOR_TOLERANCE` (`src/btc5m/paper.py:477-500`,
+  `src/btc5m/market_data.py:356-371`). Without the opening, the evaluator would have to
+  compare the final with the captured anchor, which is the reviewer's failure (captured
+  80000, official 80001, final 80000.5 scored Up although the official outcome is Down).
+  B1 now stores `condition_id`, `label_condition_id`, `label_opening`, `final_label` and
+  `label_status` (`official`, `missing`, `conflicted`, `identity_mismatch`,
+  `invalid_price`, `no_reference`, `anchor_mismatch`, in that test order), validated at
+  extraction with the broker's tests and `ANCHOR_TOLERANCE` imported from `market_data`;
+  the evaluator settles only `official` rounds with the side `final >= opening` on the
+  label's own prices, and any other status leaves an entered round unresolved (observed
+  null, sensitivity payout 0). Fixtures: the reviewer's mismatched opening, a wrong
+  condition, valid equality settlement, invalid prices, a conflicted `None` label, a missing
+  label, and a 50-case parity test against `PaperBroker.resolve`.
+
+No photo was reinspected this round: neither finding implicates a photo, and the ten files
+are unchanged since September 13 (the register records the reason). Docs only; no code,
+runtime data, service or credential was touched. Author gate through the shared semaphore:
+see the briefing for the exact result.
+
+Next: independent PLAN review of revision 10 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record, the label validation columns
+and the holdout gate.
+
 # Progress: research re-plan, revision 9 after the seventh independent review
 
 2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of

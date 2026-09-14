@@ -35,8 +35,11 @@ abstentions count, and the corrected-anchor label fixture now expects the side t
 returns. Revision 11 received one P1 finding; revision 12 answers it in the first table
 below: a decided round is defined by **decision eligibility** (the rule's entry window plus
 `strategy._safety_reason` on the contemporaneous snapshot), separately from the execution
-validity tests, which govern fills only. The freeze sequence and the registered grid are
-unchanged unless a section below says otherwise.
+validity tests, which govern fills only. Revision 12 received one P1 and one P2 finding;
+revision 13 answers them in the first table below: a fixed-time decision happens on the
+first eligible frame at or after its time, never on an earlier frame, and each family's
+decision schedule (scanning window or fixed time) is stated explicitly. The freeze
+sequence and the registered grid are unchanged unless a section below says otherwise.
 
 ## Revision 6: the recovered baseline
 
@@ -106,13 +109,22 @@ frames from September 7 07:26 UTC; the directional lab worker is at cursor 255,5
 USD -5.16 on two rounds. The September 4 OutcomeTick and Binance files are downloaded, but
 both September 8 conversion attempts are incomplete and no external tape was published.
 
+## Answers to the review of revision 12
+
+Both findings were checked against the plan's own text and accepted.
+
+| Finding | Where it is answered | What changed and the evidence |
+|---|---|---|
+| P1 a fixed-time rule decided on the latest eligible frame before its time T, which backdates the order: with a selected frame at T - 200 ms and a fresh execution frame at T + 100 ms the order could fill under 250 ms latency, although an order decided at T cannot activate before T + 250 ms | [Baselines](#baselines-registered-with-every-run) (decision schedule), [adapter tests](#result-rows-and-the-adapter-to-performance) | Confirmed: revision 12's sentence "decides on the latest eligible frame in it" read features from a frame before T and let activation run from that frame. A fixed-time decision now happens on the **first decision-eligible frame whose `now_ms` is at or after T** inside a processing window of `[T, T + 5,000 ms]`; the feature snapshot and the decision timestamp are the same frame, safety is checked on that frame, and `activation_ms` and `deadline_ms` are measured from its `now_ms`. Frames before T never decide. If no eligible frame exists in the processing window the round is `no_decision_frame`. Fixture (reviewer's case): frames at T - 200 (eligible, favorite 0.92 x 30), T + 100 (snapshot-free, fresh book stamped T + 90), T + 400 (eligible) and T + 700 (book stamped T + 680): the decision frame is T + 400, `decision_ms` = T + 400, activation T + 650; the T + 100 frame fills nothing (it precedes the decision), the T - 200 frame is not the decision frame, and the fill happens on T + 700. Variant: T + 100 carries an eligible snapshot; the decision is at T + 100, activation T + 350, the T + 100 frame fails execution validity test 1 for its own order, and the fill is on a T + 400 frame with a book stamped T + 380. H5 and `market_favorite_60` share this schedule, so on a shared round they decide on the same frame. |
+| P2 the eligibility text called H2 to H4 fixed-time rules, but their registrations specify entry windows with no fixed decision time; implementing either section changes the other's signal opportunities and baseline population | [Baselines](#baselines-registered-with-every-run) (decision schedule table), [hypothesis table](#the-registered-fixed-rule-grid), [adapter tests](#result-rows-and-the-adapter-to-performance) | Confirmed: the grid gives H1 and H2 windows of 90 to 150 and 120 to 180 s, H3 15 to 30 and 30 to 60 s, H4 60 to 150 s; only H5 and the market-favorite baselines name a fixed time. The plan now carries a decision schedule table: **scanning** families (H1 to H4, the screenshot baseline, E1 to E5) run their condition on every decision-eligible frame of their window in tape order and decide on the first frame where it holds (one order per round, no re-arm after a refusal); a round with at least one eligible frame and no qualifying frame is decided with `not_entered_reason` `no_signal`; **fixed-time** families (H5 with its band test, the market favorite at 120, 60 and 30 s) use the processing-window rule above. The grid rows now name their schedule. Fixtures: an H1 round whose lead condition first holds on the third eligible frame of the 90 to 150 s window orders on that frame with `decision_ms` its `now_ms`, and the two earlier eligible frames place no order; an H1 round with five eligible frames and no qualifying lead is decided with `no_signal` and is in the population; an H4 round whose only qualifying frame is the last eligible frame of the window, with no fill frame after it, is `unfilled_no_frame` and decided; an H3 round with no eligible frame in 15 to 60 s (every frame stale) is `no_decision_frame`; and the same tape evaluated for H5 decides only from the first eligible frame at or after T - 60. |
+
 ## Answers to the review of revision 11
 
 The finding was checked against the plan's own execution validity table and accepted.
 
 | Finding | Where it is answered | What changed and the evidence |
 |---|---|---|
-| P1 decided rounds required a decision frame to pass the execution validity tests, but test 1 of those needs `now_ms >= decision_ms + latency_ms`, so a decision frame can never pass its own attempt's tests; abstentions have no order activation or execution token at all; and using a later fill-eligible frame instead would condition the population on future liquidity and drop refusals the plan promises to keep | [Baselines](#baselines-registered-with-every-run), [adapter tests](#result-rows-and-the-adapter-to-performance), [decision rule](#the-question-and-the-decision-rule) | Confirmed from the [execution validity](#execution-validity) table: the entry attempt's window is `[decision_ms + latency_ms, decision_ms + 2000]`, so the decision frame is always before it. Decision eligibility is now its own definition with no order, activation, deadline, book-activation, ladder or fill requirement: a tape frame is **decision-eligible** for a rule when its `now_ms` lies inside the rule's entry window, it carries a snapshot whose slug is the round's, and `strategy._safety_reason(snapshot, config)` returns `None` on that snapshot (`src/btc5m/strategy.py:86`; the same value B1 stores as `ticks.rejection`, `src/btc5m/dataset.py:147`). A round is **decided** when at least one decision-eligible frame exists; what happens afterwards (an order refused by every fill frame, an abstention, a fill) does not change that. The same definition, with the baseline's own window, defines `baseline_undecided`. Entry windows are stated per rule: a fixed-time rule or baseline (H2 to H5, market favorite at T) uses the 5,000 ms up to and including its fixed time and decides on the latest eligible frame in it; H1 and the screenshot baseline use their scan windows; E1 to E5 use the configured `entry_min_seconds` to `entry_max_seconds` window. Four fixtures are registered: a valid decision at T-60 followed by no frame in the fill window (`unfilled_no_frame`) and one followed only by pre-activation books (`unfilled_book_before_activation`) both stay decided rounds in the population at net zero; the 40 price-filter abstentions of the filter fixture are asserted to be in the population with `not_entered_reason` `price_condition`; a round whose only frames in the window fail `_safety_reason` (`STALE_DATA`) is `no_decision_frame`; and a decision frame that would fail execution validity test 1 by construction still makes the round decided. |
+| P1 decided rounds required a decision frame to pass the execution validity tests, but test 1 of those needs `now_ms >= decision_ms + latency_ms`, so a decision frame can never pass its own attempt's tests; abstentions have no order activation or execution token at all; and using a later fill-eligible frame instead would condition the population on future liquidity and drop refusals the plan promises to keep | [Baselines](#baselines-registered-with-every-run), [adapter tests](#result-rows-and-the-adapter-to-performance), [decision rule](#the-question-and-the-decision-rule) | Confirmed from the [execution validity](#execution-validity) table: the entry attempt's window is `[decision_ms + latency_ms, decision_ms + 2000]`, so the decision frame is always before it. Decision eligibility is now its own definition with no order, activation, deadline, book-activation, ladder or fill requirement: a tape frame is **decision-eligible** for a rule when its `now_ms` lies inside the rule's entry window, it carries a snapshot whose slug is the round's, and `strategy._safety_reason(snapshot, config)` returns `None` on that snapshot (`src/btc5m/strategy.py:86`; the same value B1 stores as `ticks.rejection`, `src/btc5m/dataset.py:147`). A round is **decided** when at least one decision-eligible frame exists; what happens afterwards (an order refused by every fill frame, an abstention, a fill) does not change that. The same definition, with the baseline's own window, defines `baseline_undecided`. Entry windows are stated per rule: a fixed-time rule or baseline (H2 to H5, market favorite at T) uses the 5,000 ms up to and including its fixed time and decides on the latest eligible frame in it (superseded in revision 13: the first eligible frame at or after the fixed time decides, and H2 to H4 are scanning families); H1 and the screenshot baseline use their scan windows; E1 to E5 use the configured `entry_min_seconds` to `entry_max_seconds` window. Four fixtures are registered: a valid decision at T-60 followed by no frame in the fill window (`unfilled_no_frame`) and one followed only by pre-activation books (`unfilled_book_before_activation`) both stay decided rounds in the population at net zero; the 40 price-filter abstentions of the filter fixture are asserted to be in the population with `not_entered_reason` `price_condition`; a round whose only frames in the window fail `_safety_reason` (`STALE_DATA`) is `no_decision_frame`; and a decision frame that would fail execution validity test 1 by construction still makes the round decided. |
 
 ## Answers to the review of revision 10
 
@@ -1044,13 +1056,19 @@ snapshot (`src/btc5m/strategy.py:86`, the contemporaneous test of round, market 
 opening reference, tick, and spot, TWAP and book freshness relative to the frame's own
 `now_ms`; B1 stores the same value as `ticks.rejection`, `src/btc5m/dataset.py:147`, and
 the evaluator recomputes it from the tape frame). No order activation, deadline, book
-activation, ladder or fill test is part of eligibility. The entry window is fixed per rule:
-a fixed-time rule or baseline (H2 to H5, the market favorite at 120, 60 and 30 s) uses the
-5,000 ms up to and including its fixed time (the same 5,000 ms as `max_book_age_ms`) and
-decides on the latest eligible frame in it; H1 and the screenshot baseline scan their stated
-windows and decide on the first eligible frame where their condition holds; E1 to E5 use
-the configured `entry_min_seconds` to `entry_max_seconds` window (`src/btc5m/config.py:21`)
-and every eligible frame runs `strategy.evaluate`. A round is **decided** when at least one
+activation, ladder or fill test is part of eligibility. Each family has one of two
+**decision schedules** (revision 13), and the feature snapshot and the decision timestamp
+are always the same frame:
+
+| Schedule | Families | Window | Which eligible frame decides | Decided but no order |
+|---|---|---|---|---|
+| Scanning | H1, H2 (90 to 150 s and 120 to 180 s remaining), H3 (15 to 30 s and 30 to 60 s), H4 (60 to 150 s), the screenshot baseline (120 to 90 s), E1 to E5 (the configured `entry_min_seconds` to `entry_max_seconds`, `src/btc5m/config.py:21`) | the stated remaining-seconds window | the rule's condition (for E1 to E5, `strategy.evaluate` with the engine's confirmation) runs on every decision-eligible frame of the window in tape order; the first frame where it holds is the decision frame, `decision_ms` is its `now_ms`, and there is one order per round with no re-arm after a refusal | at least one eligible frame and no qualifying frame: `not_entered_reason` `no_signal` (or the rule's own price or sizing reason on the qualifying frame) |
+| Fixed time | H5 (T - 60 s with its band test), the market favorite at 120, 60 and 30 s | the processing window `[T, T + 5,000 ms]` (the same 5,000 ms as `max_book_age_ms`) | the **first** decision-eligible frame whose `now_ms` is at or after T; frames before T never decide; its own snapshot supplies the features, `decision_ms` is its `now_ms`, and `activation_ms` and `deadline_ms` are measured from it | the first eligible frame at or after T fails the rule's price condition or sizing: `price_condition` or the `_quote` reason |
+
+A fixed-time decision therefore cannot be backdated: an order decided on a frame at T + 400
+ms activates at T + 650 ms under standard latency, and a fresh book at T + 100 ms is never
+consumed by it. H5 and `market_favorite_60` share the fixed-time schedule at T - 60, so on a
+round they both enter they decide on the same frame. A round is **decided** when at least one
 decision-eligible frame exists for the rule, whatever follows: an entry, an order refused by
 every fill frame (`unfilled_no_frame`, `unfilled_book_before_activation`,
 `unfilled_no_protected_depth` and the other `unfilled_*` reasons), or an abstention (price
@@ -1096,7 +1114,8 @@ bounds how few trades a rule may make.
 
 - **No trade** (zero on every round; compared as described above over the rule's entered
   rounds, never over the decided rounds, because it has no fill to place there).
-- **Market favorite at T** for T in 120, 60 and 30 seconds (filled): buy the token whose
+- **Market favorite at T** for T in 120, 60 and 30 seconds (filled; fixed-time schedule,
+  first eligible frame at or after T): buy the token whose
   ask is above 0.5, hold to settlement. This measures what the market already prices.
 - **Random side at the rule's own decision times and sizes** (filled), seeded, averaged
   over 200 draws; each draw walks the drawn token's ladder. This separates timing skill from
@@ -1105,7 +1124,7 @@ bounds how few trades a rule may make.
   anything at the rule's own timing and sizing, and it cannot tie structurally because half
   the draws take the other token. Its metric is the mean over the draws of net per USD of
   cost basis; the 30-fill floor applies to each draw's filled count.
-- **Screenshot literal, no hedge (approximation)** (filled): enter with 120 to 90 seconds remaining
+- **Screenshot literal, no hedge (approximation)** (filled; scanning schedule): enter with 120 to 90 seconds remaining
   when the spot move from the opening reference is between USD 70 and 100, buy with the move
   at 0.80 to 0.99, hold to settlement. The gus post also says to "cover just a small part of
   the position only if the market gets too imbalanced"; the example in parentheses is cut off
@@ -1229,12 +1248,29 @@ Tests:
   asserts that the eligible frame in (a) fails execution validity test 1 (its `now_ms` is
   below `decision_ms + latency_ms`), so a definition that reused those tests would have
   made (a) undecided.
+- Decision schedule (revision 13). Fixed time, the reviewer's case: a round with frames at
+  T - 200 ms (eligible, favorite 0.92 with 30 displayed), T + 100 ms (snapshot-free, book
+  stamped T + 90 ms), T + 400 ms (eligible, same book prices) and T + 700 ms (book stamped
+  T + 680 ms), evaluated for `market_favorite_60@20` with T = T-60 and standard latency:
+  the decision frame is T + 400 (`decision_ms` = T + 400), activation T + 650, the fill is
+  on T + 700, and the test asserts that no fill is credited on T + 100 and that the T - 200
+  frame is not the decision frame. Variant: T + 100 carries an eligible snapshot; the
+  decision is at T + 100, activation T + 350, the T + 100 frame fails execution validity
+  test 1 for its own order, and the fill is on a T + 400 frame whose book is stamped
+  T + 380. Scanning: an H1 round (lead 30, window 90 to 150 s) whose lead first reaches 30
+  on the third eligible frame orders on that frame with `decision_ms` its `now_ms`, and
+  the two earlier eligible frames place no order; an H1 round with five eligible frames and
+  a lead never above 20 is decided with `no_signal` and is counted in the population; an H4
+  round whose only qualifying frame is the last eligible frame of 60 to 150 s, with no tape
+  frame in the following 2,000 ms, is `unfilled_no_frame` and decided; an H3 round whose
+  every frame in 15 to 60 s carries a 6,000 ms old book is `no_decision_frame`; and H5 on
+  the fixed-time tape above decides only on the first eligible frame at or after T - 60.
 - Refusals preserved: a decided round whose favorite asks 0.95 with 30 displayed is
   `baseline_not_sized` (`BELOW_MINIMUM_SIZE`) at USD 5 and stays in the population at net
   zero and cost basis zero, and sizes at USD 20 (18.69, 19.46875, 0.96) and fills; a round
   whose favorite shows only 4 shares at 0.82 is `baseline_unfilled` (cause `depth`) at both
-  budgets; a round with no decision-eligible baseline frame in the 5,000 ms up to T-60 is
-  `baseline_undecided`. Adding
+  budgets; a round with no decision-eligible baseline frame in the processing window from
+  T-60 to T-60 + 5,000 ms is `baseline_undecided`. Adding
   any of the three raises the decided count and the named baseline count and changes
   neither side's net or cost basis.
 - Baseline fill floor: 60 decided rounds of which the filled baseline fills 29 give
@@ -1270,11 +1306,11 @@ is deliberately small; every cell counts as a trial.
 
 | Family | Rule | Falsifier |
 |---|---|---|
-| H1 opening lead | lead in USD 20, 30, 50, 70; entry windows 90 to 150 and 120 to 180 s; ask 0.70 to 0.95; hold to settlement (8 trials) | net per USD of cost basis not above the USD 20 market-favorite baseline over H1's decided rounds |
-| H2 normalized lead | lead divided by sigma times root of remaining seconds at 0.5, 1.0, 1.5; same windows; hold (6 trials) | same |
-| H3 final-minute lock-in (new) | with 15 to 60 s remaining, the conservative scenario probability from the observed TWAP integral is at least 0.97 and the ask is at most 0.95; hold (thresholds 0.95/0.97/0.99 by windows 15 to 30 and 30 to 60 s: 6 trials) | fills are unavailable in the last minute, or net is not positive after the stressed model |
-| H4 cheap reversal held (secondary) | ask at most 0.10 on the side against a 60 s move above 1 sigma, 60 to 150 s remaining; hold (2 trials) | positive net depends on fewer than four rounds |
-| H5 favorite bands | buy the favorite at T-60 only when the ask is in 0.90 to 0.95 or 0.95 to 0.99; hold (2 trials) | realized win rate below the fee break-even for the band, or net per USD of cost basis not above `market_favorite_60@20` over H5's decided rounds (the band is a filter on that baseline, so this is the comparison that can score it; revision 11) |
+| H1 opening lead | scanning schedule; lead in USD 20, 30, 50, 70; entry windows 90 to 150 and 120 to 180 s; ask 0.70 to 0.95; hold to settlement (8 trials) | net per USD of cost basis not above the USD 20 market-favorite baseline over H1's decided rounds |
+| H2 normalized lead | scanning schedule; lead divided by sigma times root of remaining seconds at 0.5, 1.0, 1.5; same windows; hold (6 trials) | same |
+| H3 final-minute lock-in (new) | scanning schedule; with 15 to 60 s remaining, the conservative scenario probability from the observed TWAP integral is at least 0.97 and the ask is at most 0.95; hold (thresholds 0.95/0.97/0.99 by windows 15 to 30 and 30 to 60 s: 6 trials) | fills are unavailable in the last minute, or net is not positive after the stressed model |
+| H4 cheap reversal held (secondary) | scanning schedule; ask at most 0.10 on the side against a 60 s move above 1 sigma, 60 to 150 s remaining; hold (2 trials) | positive net depends on fewer than four rounds |
+| H5 favorite bands | fixed-time schedule (first eligible frame at or after T-60); buy the favorite at T-60 only when the ask is in 0.90 to 0.95 or 0.95 to 0.99; hold (2 trials) | realized win rate below the fee break-even for the band, or net per USD of cost basis not above `market_favorite_60@20` over H5's decided rounds (the band is a filter on that baseline, so this is the comparison that can score it; revision 11) |
 | E1 to E5 existing rules (revision 6, decision source revised in revision 7) | The entry decision is `strategy.evaluate(snapshot, config)` itself, not a restatement ([next section](#existing-rules-reuse-the-engines-decisions)): E1 `momentum` under `Config()` with mode `momentum` (recent continuation, 30 s, `z` 0.5, ask 0.70 to 0.95, 90 to 150 s); E2 `value`, E3 `fast_value` and E4 `model_exit` under `Config()` with that mode (each passes the spread gate, the 0 to 0.92 band, the depth check, the sell-fee reserve and the surplus threshold inside `_quote`); E5 under the registered lab variant `continuation-60-.5`'s configuration (`lab_variants.py:238-250`). E1, E2, E3 and E5 use the production exits: stop 0.08 below the gross entry price, target bid 0.98, time exit at 20 s remaining; E4 adds the `model` sale (5 trials) | net per USD of cost basis not above the USD 5 market-favorite baseline over the rule's decided rounds, or not positive after the stressed model; these are the strategies the bot runs today, so a negative result here is itself a deliverable |
 
 Fixed-rule trials in the overfitting grid: 29 (24 hypothesis cells plus the five existing

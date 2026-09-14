@@ -1,3 +1,38 @@
+# Progress: research re-plan, revision 13 after the eleventh independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`c32e3d3` (revision 12) returned one P1 and one P2 finding, both checked against the
+plan's own text and accepted. Revision 13 of [the plan](plans/profitable-subset-research.md)
+answers them in a table at the top and adds a decision schedule table:
+
+- **Backdated fixed-time decisions (P1).** Revision 12 let a fixed-time rule decide on the
+  latest eligible frame before its time T, so a frame at T - 200 ms could decide and a fresh
+  book at T + 100 ms could fill under 250 ms latency. A fixed-time decision now happens on
+  the first decision-eligible frame at or after T inside a processing window of
+  `[T, T + 5,000 ms]`; the feature snapshot and the decision timestamp are the same frame,
+  and activation and deadline are measured from it. The reviewer's fixture is registered:
+  frames at T - 200, T + 100 (snapshot-free, fresh book), T + 400 and T + 700 decide on
+  T + 400 and fill on T + 700, and the test asserts no fill on T + 100; a variant with an
+  eligible T + 100 frame decides there and cannot fill on that frame.
+- **Decision schedules per family (P2).** H1 to H4 are registered with entry windows, not
+  fixed times. The plan now has a schedule table: scanning families (H1 to H4, the
+  screenshot baseline, E1 to E5) run their condition on every eligible frame of the window
+  and decide on the first qualifying frame, one order per round; a round with eligible
+  frames and no qualifying frame is decided with `no_signal`; fixed-time families (H5, the
+  market favorite at 120, 60 and 30 s) use the processing-window rule. Grid rows name their
+  schedule. Fixtures: an H1 signal on the third eligible frame orders there and not
+  earlier; an H1 round with no signal is decided and in the population; an H4 signal on the
+  last eligible frame with no fill frame after it is `unfilled_no_frame` and decided; an H3
+  round with only stale frames is `no_decision_frame`.
+
+No photo was reinspected this round: neither finding implicates a photo, and the ten files
+are unchanged since September 13. Docs only; no code, runtime data, service or credential
+was touched. Author gate through the shared semaphore: see the briefing for the result.
+
+Next: independent PLAN review of revision 13 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record, the label validation columns
+and the holdout gate.
+
 # Progress: research re-plan, revision 12 after the tenth independent review
 
 2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of

@@ -160,3 +160,11 @@ filled baselines. No photo decision changed.
 The single revision 11 finding concerns how a decided round is defined for the baseline
 comparison. It does not implicate a photo, and the ten files in `.local/` carry the same
 modification times as on September 13. None was opened this round. No photo decision changed.
+
+## Revision 13 (September 14): no reinspection
+
+The two revision 12 findings concern the timing of fixed-time decisions and the decision
+schedule of each hypothesis family. Neither implicates a photo, and the ten files in
+`.local/` carry the same modification times as on September 13. None was opened this
+round. The screenshot baseline is now labelled a scanning-schedule baseline over its 120 to
+90 s window, which is how it was already described. No photo decision changed.

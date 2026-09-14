@@ -86,7 +86,7 @@ remains allowed. Stage/session records and old transcripts are retained for reco
 Claude authors now use medium effort and retain conversations across effort-only changes.
 Native compaction triggers at 40% of the effective context window (about 400k with the assigned
 1M models); between-invocation rotation is 500k. Durable author handoffs preserve current
-findings, decisions, verification and next actions. There is no shared Claude concurrency cap;
+findings, decisions, verification and next actions. There is no shared model concurrency cap;
 workflow dependencies determine scheduling and delegated agents remain permitted. `.autopilot/usage/` keeps immutable
 per-attempt usage and tool-call receipts, including incomplete calls. Serena read-only symbol
 tools are explicitly available to Claude reviewers. Claude calls use the shared Headroom
@@ -95,3 +95,15 @@ compression, protected source reads and unchanged subscription authentication. T
 CLI model suffix retains the context window; API model IDs remain unchanged. Operational
 logs and aggregate metrics live in `.autopilot/headroom/<stage>/<uuid>/`. Originals remain
 in Claude transcripts. Proxy failure is visible; no silent direct-routing fallback.
+
+
+Codex/Astra follows the same savings policy: native compaction at 400k within its supported
+872k maximum window, author rotation at 500k, saved handoffs and resumed corrections. Astra
+reasoning stays high. Serena uses native Codex instructions and the explicit worktree;
+reviewers get read-only symbol tools. Codex per-attempt receipts subtract prior cumulative
+thread usage on resume, and mark missing accounting evidence instead of double counting.
+
+Codex calls also use automatic Headroom routing, with ChatGPT subscription authentication,
+HTTP Responses streaming, unchanged Astra/high and reviewer permissions, and native remote
+compaction preserved. The local proxy records private per-invocation metrics alongside the
+Claude metrics. This is scoped to these autopilot launchers, not global CLI configuration.

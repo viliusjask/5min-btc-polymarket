@@ -129,3 +129,12 @@ engine (all-or-none entries, floor-protected exit quotes, confirmation across sn
 frames). None implicates a photo, and the ten files in `.local/` carry the same
 modification times as on September 13. Under the stage rule that images are reinspected only
 when changed or implicated by a finding, none was opened this round. No photo decision changed.
+
+## Revision 9 (September 14): no reinspection
+
+The two revision 8 findings concern the evaluator's baseline budgets and ranking metric and
+a fixture's arithmetic. Neither implicates a photo, and the ten files in `.local/` carry
+the same modification times as on September 13. None was opened this round. The screenshot
+baseline is now registered at both budgets; at USD 5 it cannot buy an ask above 0.934, so
+its 0.95 to 0.99 range remains tradable only at USD 20, as recorded in revision 8. No photo
+decision changed.

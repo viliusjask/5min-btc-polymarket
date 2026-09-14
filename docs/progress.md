@@ -1,3 +1,47 @@
+# Progress: research re-plan, revision 9 after the seventh independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`cffc984` (revision 8) returned one P1 and one P2 finding. Both were checked and accepted.
+Revision 9 of [the plan](plans/profitable-subset-research.md) answers them in a table at
+the top and rewrites the affected sections:
+
+- **Capital-matched baselines and a per-USD metric (P1).** Every baseline used the USD 20
+  hypothesis budget while E1 to E5 use the production USD 5, and both the baseline
+  criterion and the overfitting ranking compared dollar net per entered round. The sizing
+  check shows why that decides things: a 0.82 ask with 30 displayed sizes to principal 4.15
+  at USD 5 and 18.26 at USD 20, so one winning round nets 0.8587 or 3.7782 for the same
+  economics (a factor of 4.4), while net per USD of cost basis is 0.2043 at both. The plan
+  now registers every baseline once per budget (`@5`, `@20`), compares a rule only with the
+  baselines at its own budget (`BASELINE_BUDGET_MISMATCH` otherwise), uses net per USD of
+  cost basis for the comparison and the overfitting ranking (`summarize` returns
+  `cost_basis_deployed` and `net_per_cost_basis`), and compares on paired rounds, the
+  rule's entered rounds on which the baseline's own capital-matched order also filled
+  all-or-none. Sizing refusals are preserved and counted (`baseline_not_sized` by reason,
+  `baseline_unfilled`), never scaled: at USD 5 the `_quote` ceiling is 4.67 / 5 = 0.934
+  whatever the band, so a USD 5 baseline cannot buy an ask above 0.934 (0.934 sizes,
+  0.935 is `BELOW_MINIMUM_SIZE`, checked today). Fewer than 30 paired rounds is
+  `insufficient_pairing` and fails the criterion. The sign-based criteria are unchanged.
+  Fixtures: identical economics at both budgets give equal net per USD of cost basis to four
+  decimals and the same verdict; refused rounds leave the pair untouched; permuting budgets
+  across the grid leaves the overfitting table unchanged; 29 paired rounds fail, 30 compare.
+- **Minimum-share fixture (P2).** The fixture raised the minimum from 5.00000 to 5.00010,
+  which is below the 5.0609756... executable shares (4.15 / 0.82), so `PaperBroker._immediate`
+  (`src/btc5m/paper.py:281-282`) would have filled and the parity check could not pass. The
+  minimum is now raised to 5.07, and an exact-limit variant is added: 30 at 0.83 fills
+  exactly 5 shares for 4.15 with fee 0.049385 under the true minimum, and 5.00010 refuses
+  there. The plan also records that an unmodified `_quote` order can never fail on the
+  minimum alone (the principal is reduced to an exact share amount at the limit,
+  `src/btc5m/strategy.py:304-323`), so a nonzero `minimum_shares` count on production
+  orders is a consistency failure (`ORDER_MINIMUM_INCONSISTENT`).
+
+No photo was reinspected this round: neither finding implicates a photo, and the ten files
+are unchanged since September 13 (the register records the reason). Docs only; no code,
+runtime data, service or credential was touched. Author gate through the shared semaphore:
+see the briefing for the exact result.
+
+Next: independent PLAN review of revision 9 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record and the holdout gate.
+
 # Progress: research re-plan, revision 8 after the sixth independent review
 
 2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of

@@ -1,6 +1,6 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
-2026-09-14, revision 8. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
+2026-09-14, revision 9. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)
 and [the photo register](../research/reference-photos-2026-09-13.md). Revision 1 (`08fbf74`)
@@ -19,8 +19,11 @@ comparators follow the paper broker and the engine; revision 8 answers them in t
 table below and replaces the fill model: every entry is the production all-or-none
 protected order, every exit is a sequence of floor-protected quotes re-issued from the
 current book, and the existing rules' candidate confirmation runs over every tape frame of
-the round. The decision rule, the freeze sequence and the registered grid are unchanged
-unless a section below says otherwise.
+the round. Revision 8 received one P1 and one P2 finding; revision 9 answers them in the
+first table below: baselines are capital-matched to each rule's budget, the baseline
+comparison and the overfitting ranking use net per USD of cost basis rather than net per
+round, and the minimum-share fixture is corrected so it refuses. The freeze sequence and
+the registered grid are unchanged unless a section below says otherwise.
 
 ## Revision 6: the recovered baseline
 
@@ -90,13 +93,22 @@ frames from September 7 07:26 UTC; the directional lab worker is at cursor 255,5
 USD -5.16 on two rounds. The September 4 OutcomeTick and Binance files are downloaded, but
 both September 8 conversion attempts are incomplete and no external tape was published.
 
+## Answers to the review of revision 8
+
+Both findings were checked before acceptance; both were accepted.
+
+| Finding | Where it is answered | What changed and the evidence |
+|---|---|---|
+| P1 every baseline used the USD 20 hypothesis budget while E1 to E5 used USD 5, and both the baseline criterion and the overfitting ranking compared dollar net per entered round, so the assigned budget alone could change a ranking or decide a baseline comparison; showing net per principal beside the result did not change the decision | [Decision rule](#the-question-and-the-decision-rule), [sizing](#fills-are-the-production-orders), [baselines](#baselines-registered-with-every-run), [adapter](#result-rows-and-the-adapter-to-performance), [overfitting](#overfitting-estimate-for-the-fixed-rule-grid) | Confirmed by the sizing check: the same 0.82 ask with 30 displayed sizes to principal 4.15 at USD 5 and 18.26 at USD 20 (`strategy._quote`, computed today), so a win nets 0.8587 at one budget and 3.7782 at the other, a factor of 4.4 in net per round for identical economics, while net per USD of cost basis is 0.2043 at both. Three changes. First, every baseline is registered once per budget in use (USD 5 and USD 20) and a rule is compared only with the baselines at its own budget; a comparison across budgets is refused (`BASELINE_BUDGET_MISMATCH`). Second, the comparison and the overfitting ranking use **net per USD of cost basis** (sensitivity net divided by the entry cost basis of the entered rounds), which `summarize` now returns; the sign-based criteria (stressed net, full-loss sensitivity, without the three largest wins, bootstrap) are unchanged because the sign of a sum does not depend on the denominator. Third, the comparison runs on **paired rounds**, the rule's entered rounds on which the capital-matched baseline's own order sized and filled all-or-none; a sizing refusal (at USD 5 every ask above 0.934 is `BELOW_MINIMUM_SIZE`) or an all-or-none failure is preserved and counted (`baseline_not_sized` by reason, `baseline_unfilled`), never scaled. Fewer than 30 paired rounds makes the comparison `insufficient_pairing`, which does not satisfy the criterion. Fixtures: identical economics at USD 5 and USD 20 give net per USD of cost basis equal to four decimals and the same comparison verdict under either budget assignment; a round the baseline cannot size at USD 5 is excluded from the pair and sizes at USD 20; permuting budget assignments across the grid leaves the overfitting table unchanged; 29 paired rounds are `insufficient_pairing` and 30 are compared. |
+| P2 the `minimum_shares` fixture raised the minimum from 5.00000 to 5.00010, which is still below the 5.0609756... executable shares, so `PaperBroker._immediate` fills and the required refusal contradicts the promised parity check | [Fill tests](#fills-are-the-production-orders), [existing-rule tests](#existing-rules-reuse-the-engines-decisions) | Confirmed by arithmetic and against `src/btc5m/paper.py:281-282`: 4.15 / 0.82 = 5.0609756... shares, and the all-or-none test compares that executable quantity with the order's `quantity`, so 5.00010 fills. The fixture now raises the minimum to 5.07 against 30 at 0.82 (refused, unfilled amount 0, executable 5.0609756...) and adds the exact-limit variant the reviewer proposed: 30 at 0.83, the limit price, fills exactly 5 shares for 4.15 with fee 0.049385 under the true minimum, and a minimum of 5.00010 refuses it. Both cases assert the refusal against `PaperBroker._immediate` itself. The plan also records why the modified order is necessary: `_quote` reduces the principal to an exact share amount at the limit (`src/btc5m/strategy.py:304-323`), so for an unmodified order whose principal is fully spent at prices at or below the limit the executable quantity is never below the minimum; a nonzero `minimum_shares` count on production orders is therefore reported as a consistency failure. Every repeated description of the fixture was corrected. |
+
 ## Answers to the review of revision 7
 
 Each finding was checked against the code before it was accepted; all three were accepted.
 
 | Finding | Where it is answered | What changed and the code evidence |
 |---|---|---|
-| P1 existing-rule entries permitted partial fills and claimed no deviation from production, while the production buy is all-or-none: the paper broker discards every fill when principal remains or the executable quantity is below the order's minimum receive quantity | [Fills are the production orders](#fills-are-the-production-orders), [existing rules](#existing-rules-reuse-the-engines-decisions) | Confirmed at `src/btc5m/paper.py:281-282` (`fills = []` when `remaining or executable_quantity < order.quantity`), with the order built from `Decision.buy_principal`, `minimum_receive_shares` and `price_limit` (`src/btc5m/ledger.py:562-577`). The fill model is replaced. Every entry, for E1 to E5 and for the hypotheses and baselines alike, is that order, executed by `rule_eval.fill_immediate`, which repeats `_immediate` line for line and is parity-tested against it. E1 to E5 take the three order fields from `strategy.evaluate`; hypotheses take them from `strategy._quote` under a documented sizing configuration. `partial` and `unfilled_thin` no longer exist; a round whose order fails the all-or-none test is `unfilled_no_protected_depth` with the paper broker's execution record and a `cause` of `price`, `depth` or `minimum_shares`. The matched fixtures use the production numbers for the default USD 5 budget against a 0.82 ask (principal 4.15, minimum receive 5.00000, limit 0.83, computed today with `strategy.evaluate`): asks 5 at 0.82 then 20 at 0.85 leave 0.05 unspent (`price`); 4 at 0.82 leave 0.87 unspent and 4 shares (`depth`); a minimum raised by 0.0001 (`minimum_shares`); 30 at 0.82 fill 5.0609756... shares for 4.15 plus a 0.052290 fee. |
+| P1 existing-rule entries permitted partial fills and claimed no deviation from production, while the production buy is all-or-none: the paper broker discards every fill when principal remains or the executable quantity is below the order's minimum receive quantity | [Fills are the production orders](#fills-are-the-production-orders), [existing rules](#existing-rules-reuse-the-engines-decisions) | Confirmed at `src/btc5m/paper.py:281-282` (`fills = []` when `remaining or executable_quantity < order.quantity`), with the order built from `Decision.buy_principal`, `minimum_receive_shares` and `price_limit` (`src/btc5m/ledger.py:562-577`). The fill model is replaced. Every entry, for E1 to E5 and for the hypotheses and baselines alike, is that order, executed by `rule_eval.fill_immediate`, which repeats `_immediate` line for line and is parity-tested against it. E1 to E5 take the three order fields from `strategy.evaluate`; hypotheses take them from `strategy._quote` under a documented sizing configuration. `partial` and `unfilled_thin` no longer exist; a round whose order fails the all-or-none test is `unfilled_no_protected_depth` with the paper broker's execution record and a `cause` of `price`, `depth` or `minimum_shares`. The matched fixtures use the production numbers for the default USD 5 budget against a 0.82 ask (principal 4.15, minimum receive 5.00000, limit 0.83, computed today with `strategy.evaluate`): asks 5 at 0.82 then 20 at 0.85 leave 0.05 unspent (`price`); 4 at 0.82 leave 0.87 unspent and 4 shares (`depth`); a raised minimum (`minimum_shares`; revision 9 corrects the raise to 5.07, since 5.00010 still fills); 30 at 0.82 fill 5.0609756... shares for 4.15 plus a 0.052290 fee. |
 | P1 removing the exit price limit is not conservative for net results: an unlimited simulated sale recovers cash where the production order, limited at the last consumed level minus 0.01, fails and the inventory may settle worthless | [Exit quotes](#entry-and-exit-transitions-residual-inventory-and-attempts), [fills](#fills-are-the-production-orders) | Confirmed. The engine quotes every exit from the current book: quantity is the covered depth quantized down to 0.01 (`src/btc5m/engine.py:702-706`, `BELOW_SELL_PRECISION`, `BELOW_VENUE_MINIMUM`), the floor is the last consumed level minus `sell_slippage` 0.01, and a floor at or below zero is refused (`engine.py:707-709`, `EXIT_PRICE_TOO_LOW`). The paper broker sells only levels at or above `price_limit` (`src/btc5m/paper.py:249-253`), ends the order `PAPER_NO_PROTECTED_DEPTH` when nothing sells (`:287`) or `PAPER_EXECUTION_GAP` 5,000 ms after activation (`:241-243`); the position and its exit reason survive (`src/btc5m/ledger.py:893-898`), and the same engine step reconciles the finished order and quotes again from the then-current book (`engine.py:107`, `:122`). The evaluator now runs exactly that loop for every rule: an attempt is a quote frame, a quantity, a floor, an activation and one protected fill. The unlimited walk and its "at least as conservative" claim are withdrawn. Required fixtures: the falling book (quote at floor 0.69; the first fresh book at 0.66 sells nothing although a walk without a floor would sell 12; the re-quote fills at 0.65 one frame later; a book falling faster than one re-quote per frame never fills and the inventory settles by label), the nonpositive floor (bids at 0.010 refuse the quote, 0.011 quotes at floor 0.001), and the execution gap. |
 | P1 confirmation was replicated over `ticks`, which holds only frames with a valid same-round snapshot, so `ENTRY`, snapshot-free frame, `ENTRY` could confirm in the evaluator while `Engine.step` cancels the pending candidate on a missing snapshot | [Existing rules](#existing-rules-reuse-the-engines-decisions), [B1](#increment-b1-round-dataset-extraction) | Confirmed at `src/btc5m/engine.py:103-104` and `:115-116` (`_cancel_pending("NO_SNAPSHOT")` when the snapshot is `None`), `:112-113` (input invalidation) and in the replay at `src/btc5m/lab_replay.py:349-368` (`LAB_CAPTURE_GAP` on a snapshot-free frame or a gap above `max_price_age_ms`). E1 to E5 now stream every tape frame of the round from `rounds.first_frame_ident`, for the decision path as well as the holding path; a frame without a same-round snapshot cancels the pending candidate (`NO_SNAPSHOT`), a gap above 5,000 ms cancels it (`LAB_CAPTURE_GAP`), and a non-`ENTRY` decision, a side change or an identity change cancels as before. The required fixture is the reviewer's sequence: `ENTRY`, a snapshot-free frame, `ENTRY` does not enter on the third frame (it opens a new candidate); a fourth `ENTRY` frame with a newer spot stamp enters; the expected frame is derived by driving `Engine.step` with the same inputs. |
 
@@ -174,7 +186,7 @@ A rule set is a **supported candidate** only if, on the untouched holdout, all o
 | Dependence on outliers | net after removing the three largest wins is still greater than zero | Avoids a verdict resting on one lucky payout |
 | Day-block bootstrap | on sensitivity nets: status `descriptive` (at least six included days, at least 60 entered rounds) and fewer than 25% of resamples have a mean net per entered round at or below zero | Descriptive uncertainty; not a significance test |
 | Overfitting estimate | probability of backtest overfitting below 0.5 over the registered fixed-rule grid on train plus validation | Bailey et al. combinatorially symmetric cross-validation |
-| Beats the baselines | net per entered round exceeds every baseline evaluated on the same rounds with its own outcome book | Otherwise the rule is only capturing what the market already prices |
+| Beats the baselines | net per USD of cost basis on the paired rounds exceeds that of every baseline registered at the rule's own budget, each evaluated on those rounds with its own outcome book and its own all-or-none order; at least 30 paired rounds per baseline, otherwise the comparison is `insufficient_pairing` and the criterion is not met | Otherwise the rule is only capturing what the market already prices; the per-USD metric and the matched budget keep the assigned size out of the verdict (revision 9) |
 
 Anything that fails is reported as a negative result with the same detail as a positive one.
 A supported candidate earns a proposal for a bounded funded trial; it does not authorize one.
@@ -489,8 +501,18 @@ gives 18.69, 19.46875, 0.96; ask 0.99 gives 9.99, 10.00000, 0.999 (the cap at on
 five-share minimum caps the limit at 0.934 (4.67 / 5), so a 0.95 ask is `BELOW_MINIMUM_SIZE`
 (checked today): the production sizing cannot buy H5's upper band or the screenshot
 baseline's 0.95 to 0.99 range at all, which the report states beside those rows. E1 to E5
-keep the production budget; the report shows net per entered round and net per USD of
-principal for every trial so the two sizes can be read side by side.
+keep the production budget. Two budgets are therefore in use, and (revision 9) the budget
+must not be able to decide anything: every baseline is registered once per budget
+([baselines](#baselines-registered-with-every-run)), a rule is compared only with the
+baselines at its own budget, and the comparison and the overfitting ranking use net per USD
+of cost basis ([adapter](#result-rows-and-the-adapter-to-performance)). The sizing
+configuration for a USD 5 baseline is the hypothesis sizing configuration with
+`trade_budget_usd` 5 (allowances at their defaults, which validate); at that budget the
+open band changes nothing above 0.934, because `_quote`'s ceiling `principal /
+min_order_size` is 4.67 / 5 regardless of the band, so a USD 5 baseline cannot buy an ask
+above 0.934 either (checked today: 0.934 sizes to 4.67, 5.00000, 0.934; 0.935 is
+`BELOW_MINIMUM_SIZE`). Those refusals are preserved and counted, never replaced by a scaled
+fill.
 
 **The buy fill.** At the fill frame (chosen by the [execution validity](#execution-validity)
 tests) the evaluator reads the frame from the tape by ident through
@@ -536,9 +558,24 @@ Tests:
   asserts the triple against `strategy.evaluate`): asks 5 at 0.82 then 20 at 0.85 give
   `unfilled_no_protected_depth`, cause `price`, unfilled amount 0.05, executable 5; asks 4 at
   0.82 alone give cause `depth`, unfilled amount 0.87, executable 4; the order's `quantity`
-  raised by 0.0001 against 30 at 0.82 gives cause `minimum_shares`, unfilled amount 0; the
-  true order against 30 at 0.82 fills 5.0609756... shares for 4.15 with fee 0.052290 (cost
-  basis 4.202290), one fill event, entered.
+  raised to 5.07 against 30 at 0.82 gives cause `minimum_shares`, unfilled amount 0,
+  executable 5.0609756... (revision 9: the earlier raise to 5.00010 was below the
+  executable quantity and would have filled); the true order against 30 at 0.82 fills
+  5.0609756... shares for 4.15 with fee 0.052290 (cost basis 4.202290), one fill event,
+  entered. Exact-limit variant: 30 at 0.83, the order's own limit, fills exactly 5 shares
+  for 4.15 with fee 0.049385 under the true minimum 5.00000, and the same book with the
+  minimum raised to 5.00010 gives cause `minimum_shares`. Every refusal and fill above is
+  also asserted against `PaperBroker._immediate` on the same order and book.
+- Why the `minimum_shares` fixtures modify the order: `_quote` rounds the minimum receive
+  quantity up and, when that quantity times the limit exceeds the principal, reduces the
+  principal to an exact share amount at the limit (`src/btc5m/strategy.py:304-323`), so
+  `minimum_receive x price_limit <= principal` holds for every order it emits. A fully spent
+  principal at prices at or below the limit then yields at least `principal / price_limit`
+  shares, which is at least the minimum. An unmodified order can fail the all-or-none test
+  only with principal left (`price` or `depth`). The evaluator therefore reports a nonzero
+  `minimum_shares` count on production or hypothesis orders as a consistency failure
+  (`ORDER_MINIMUM_INCONSISTENT`) and a test asserts that count is zero over the parity
+  ladders.
 - Hypothesis sizing: the examples above are asserted, including `INSUFFICIENT_DEPTH` at 20
   displayed and `BELOW_MINIMUM_SIZE` at ask 0.95 under the production budget; a USD 20 order
   against 30 at 0.82 fills 22.2682926... shares with fee 0.230076.
@@ -865,6 +902,29 @@ Each baseline is evaluated on its own outcome token's ladder at its own fill fra
 the rule's price. Its order is sized by the hypothesis sizing configuration and executed
 all-or-none like every other entry ([fills](#fills-are-the-production-orders)).
 
+**Capital matching (revision 9).** Every baseline below is registered once per budget in
+use: `market_favorite_60@5` and `market_favorite_60@20`, and so on for each. A rule is
+compared only with the baselines at its own budget (USD 5 for E1 to E5, USD 20 for H1 to
+H6); the evaluator refuses a comparison whose baseline budget differs from the rule's
+(`BASELINE_BUDGET_MISMATCH`). The random-side baseline is drawn at the rule's own decision
+times and sized at the rule's budget, so it is matched by construction. The comparison runs
+on **paired rounds**: the rule's entered rounds on which the baseline's own order, sized at
+the matched budget on the baseline's outcome token, also filled all-or-none. Rounds the
+baseline could not size are counted in `baseline_not_sized` by `_quote` reason
+(`BELOW_MINIMUM_SIZE`, `INSUFFICIENT_DEPTH`, `PRICE_BAND`), and rounds whose baseline order
+reached a fill frame but failed the all-or-none test are counted in `baseline_unfilled`;
+neither is scaled, imputed or replaced by the rule's own fill. The report shows, per rule
+and baseline: entered, paired, `baseline_not_sized` by reason, `baseline_unfilled`, the
+rule's and the baseline's net per USD of cost basis on the paired rounds, the difference,
+and the rule's net per USD of cost basis on its unpaired rounds, so a reader can see whether
+a rule's result lives where the baseline could not trade. The decision criterion uses the
+paired comparison and needs at least 30 paired rounds per baseline (half the entered-round
+floor; an author-chosen operating threshold); fewer is `insufficient_pairing`, which fails
+the criterion and is reported as inconclusive rather than as a pass. At USD 5 the
+market-favorite and screenshot baselines cannot size any ask above 0.934, so the E rules'
+pairing will be reduced on decided rounds; the report states the reduction, and the
+comparison is not made easier to reach.
+
 - **No trade** (zero).
 - **Market favorite at T** for T in 120, 60 and 30 seconds: buy the token whose ask is
   above 0.5, hold to settlement. This measures what the market already prices.
@@ -912,7 +972,13 @@ adapter); the overfitting estimate and the H6 folds live in `src/btc5m/rule_fit.
 - `summarize(rows)` returns counts (`rounds`, `entered`, `not_entered` by reason, `labeled`,
   `unlabeled`, each flag) and two `performance` results: `observed`, from `RoundResult` rows
   of labeled entered rounds with `net = observed_net`, and `sensitivity`, from `RoundResult`
-  rows of all entered rounds with `net = sensitivity_net`. `RoundResult.uncertain` is set for
+  rows of all entered rounds with `net = sensitivity_net`. Beside each `performance` result
+  it returns `cost_basis_deployed` (the sum of entry cost basis, principal plus entry fees,
+  over the rows that result used) and `net_per_cost_basis` (that result's net divided by
+  `cost_basis_deployed`, `None` when nothing was deployed). Net per USD of cost basis is the
+  metric the baseline comparison and the overfitting ranking use (revision 9); it does not
+  depend on the assigned budget when the economics are the same, which the fixtures below
+  check. `RoundResult.uncertain` is set for
   flagged rounds; `used`, `complete` and `observed` are true for every adapted row so
   `research.usable` keeps them. Not-entered rounds never reach `performance`. The same
   adapter makes both `day_bootstrap` calls: the decision call with the sensitivity rows and
@@ -920,23 +986,50 @@ adapter); the overfitting estimate and the H6 folds live in `src/btc5m/rule_fit.
   `expected_rows = labeled`, both with the same `coverage` and the same `entered_by_day`
   (the count of entered rounds per UTC day, which `summarize` computes from its own rows).
 - The decision table shows `sensitivity.net / entered` (the strict form) beside
-  `observed.net / labeled`.
+  `observed.net / labeled`, and `sensitivity.net_per_cost_basis` beside
+  `observed.net_per_cost_basis`.
 - Costs are applied once. The stressed run is produced by the evaluator (750 ms latency plus
   one cent per share on every executed leg). `performance` also emits a `cost_stress` list;
   the report prints it only for the standard cost model, as headroom information, and the
   decision rule reads only the stressed run's `sensitivity.net`, `without_best_3` and the
   bootstrap on sensitivity nets.
 
-Test: one fixture holding a labeled win (+4.00), a labeled loss (-3.00), an unlabeled entered
-round with cost basis 5.00, a no-trade round, and a partially exited labeled round (7 shares
-sold for 6.30 net of fees, 5 shares settled at 1.00, cost basis 9.60, so +1.70) gives
-`rounds` 5, `entered` 4, `labeled` 3, `unlabeled` 1; `observed.rounds` 3 with net 2.70;
-`sensitivity.rounds` 4 with net -2.30; `without_best_3` computed from the observed list; and
-the stressed run's net lower than the standard run's by exactly one cent per executed share
-plus the latency effect built into the fixture.
+Tests:
 
-Acceptance: all baselines evaluated on the real dataset's training split with counts and
-net results recorded in progress; the market-favorite baseline's realized win rate by price
+- One fixture holding a labeled win (+4.00 on cost basis 6.00), a labeled loss (-3.00 on
+  cost basis 3.00), an unlabeled entered round with cost basis 5.00, a no-trade round, and a
+  partially exited labeled round (7 shares sold for 6.30 net of fees, 5 shares settled at
+  1.00, cost basis 9.60, so +1.70) gives `rounds` 5, `entered` 4, `labeled` 3, `unlabeled` 1;
+  `observed.rounds` 3 with net 2.70, `cost_basis_deployed` 18.60 and `net_per_cost_basis`
+  0.145161...; `sensitivity.rounds` 4 with net -2.30, `cost_basis_deployed` 23.60 and
+  `net_per_cost_basis` -0.097457...; `without_best_3` computed from the observed list; and
+  the stressed run's net lower than the standard run's by exactly one cent per executed
+  share plus the latency effect built into the fixture.
+- Budget invariance (revision 9): the same synthetic tape and the same decision frames, each
+  showing 30 at 0.82 on the entered token, evaluated once at USD 5 and once at USD 20. The
+  USD 5 entry is 5.0609756... shares at cost basis 4.202290 and the USD 20 entry is
+  22.2682926... shares at cost basis 18.490076 (both computed today with `_quote` and
+  `fee_for`). A winning round nets 0.8587 at USD 5 and 3.7782 at USD 20, a factor of 4.4 in
+  net per round, while `net_per_cost_basis` is 0.2043375 at both budgets and a losing round
+  is exactly -1 at both; the test asserts equality to four decimals per round and for the
+  summary.
+- Comparison invariance: a rule and a market-favorite baseline with identical decision
+  frames and sides on deep books produce a zero difference in net per USD of cost basis at
+  both budgets, so neither budget lets the rule beat, or lose to, its own economics; the same
+  pair with the rule winning one more round than the baseline gives the same verdict
+  (`beats`) at USD 5 and at USD 20. Comparing a USD 5 rule with a `@20` baseline is refused
+  (`BASELINE_BUDGET_MISMATCH`).
+- Refusals preserved: a round whose favorite asks 0.95 with 30 displayed is
+  `baseline_not_sized` (`BELOW_MINIMUM_SIZE`) at USD 5 and excluded from the pair, and sizes
+  at USD 20 (18.69, 19.46875, 0.96) and pairs; a round whose favorite shows only 4 shares at
+  0.82 is `baseline_unfilled` (cause `depth`) at both budgets. No paired count, net or
+  denominator changes when a refused round is added.
+- Pairing floor: 60 entered rounds of which the baseline pairs 29 give
+  `insufficient_pairing` and the criterion not met; 30 paired rounds are compared.
+
+Acceptance: all baselines evaluated at both budgets on the real dataset's training split
+with counts, `baseline_not_sized` by reason, net results and net per USD of cost basis
+recorded in progress; the market-favorite baseline's realized win rate by price
 band is compared with the fee break-even table in the trader evidence register.
 
 ## Increment B3: registered hypotheses, uncertainty and overfitting estimate
@@ -946,12 +1039,12 @@ is deliberately small; every cell counts as a trial.
 
 | Family | Rule | Falsifier |
 |---|---|---|
-| H1 opening lead | lead in USD 20, 30, 50, 70; entry windows 90 to 150 and 120 to 180 s; ask 0.70 to 0.95; hold to settlement (8 trials) | net per round not above the market-favorite baseline on the same rounds |
+| H1 opening lead | lead in USD 20, 30, 50, 70; entry windows 90 to 150 and 120 to 180 s; ask 0.70 to 0.95; hold to settlement (8 trials) | net per USD of cost basis not above the USD 20 market-favorite baseline on the paired rounds |
 | H2 normalized lead | lead divided by sigma times root of remaining seconds at 0.5, 1.0, 1.5; same windows; hold (6 trials) | same |
 | H3 final-minute lock-in (new) | with 15 to 60 s remaining, the conservative scenario probability from the observed TWAP integral is at least 0.97 and the ask is at most 0.95; hold (thresholds 0.95/0.97/0.99 by windows 15 to 30 and 30 to 60 s: 6 trials) | fills are unavailable in the last minute, or net is not positive after the stressed model |
 | H4 cheap reversal held (secondary) | ask at most 0.10 on the side against a 60 s move above 1 sigma, 60 to 150 s remaining; hold (2 trials) | positive net depends on fewer than four rounds |
 | H5 favorite bands | buy the favorite at T-60 only when the ask is in 0.90 to 0.95 or 0.95 to 0.99; hold (2 trials) | realized win rate below the fee break-even for the band |
-| E1 to E5 existing rules (revision 6, decision source revised in revision 7) | The entry decision is `strategy.evaluate(snapshot, config)` itself, not a restatement ([next section](#existing-rules-reuse-the-engines-decisions)): E1 `momentum` under `Config()` with mode `momentum` (recent continuation, 30 s, `z` 0.5, ask 0.70 to 0.95, 90 to 150 s); E2 `value`, E3 `fast_value` and E4 `model_exit` under `Config()` with that mode (each passes the spread gate, the 0 to 0.92 band, the depth check, the sell-fee reserve and the surplus threshold inside `_quote`); E5 under the registered lab variant `continuation-60-.5`'s configuration (`lab_variants.py:238-250`). E1, E2, E3 and E5 use the production exits: stop 0.08 below the gross entry price, target bid 0.98, time exit at 20 s remaining; E4 adds the `model` sale (5 trials) | net per entered round not above the market-favorite baseline on the same rounds, or not positive after the stressed model; these are the strategies the bot runs today, so a negative result here is itself a deliverable |
+| E1 to E5 existing rules (revision 6, decision source revised in revision 7) | The entry decision is `strategy.evaluate(snapshot, config)` itself, not a restatement ([next section](#existing-rules-reuse-the-engines-decisions)): E1 `momentum` under `Config()` with mode `momentum` (recent continuation, 30 s, `z` 0.5, ask 0.70 to 0.95, 90 to 150 s); E2 `value`, E3 `fast_value` and E4 `model_exit` under `Config()` with that mode (each passes the spread gate, the 0 to 0.92 band, the depth check, the sell-fee reserve and the surplus threshold inside `_quote`); E5 under the registered lab variant `continuation-60-.5`'s configuration (`lab_variants.py:238-250`). E1, E2, E3 and E5 use the production exits: stop 0.08 below the gross entry price, target bid 0.98, time exit at 20 s remaining; E4 adds the `model` sale (5 trials) | net per USD of cost basis not above the USD 5 market-favorite baseline on the paired rounds, or not positive after the stressed model; these are the strategies the bot runs today, so a negative result here is itself a deliverable |
 
 Fixed-rule trials in the overfitting grid: 29 (24 hypothesis cells plus the five existing
 rules). H6 below is the 30th registered trial but is evaluated by its own protocol. The evaluator refuses a rules file whose trial count differs
@@ -1033,8 +1126,8 @@ them, tick 0.001):
   4.15, minimum receive 5.00000 and limit 0.83 (asserted against `strategy.evaluate`); the
   four fill fixtures of the [fills section](#fills-are-the-production-orders) run on that
   order: `price` (5 at 0.82 then 20 at 0.85, 0.05 unspent), `depth` (4 at 0.82) and
-  `minimum_shares` (minimum raised by 0.0001) are not entered, `unfilled_no_protected_depth`
-  with the cause; 30 at 0.82 enters with 5.0609756... shares and cost basis 4.202290, equal
+  `minimum_shares` (minimum raised to 5.07, and the 0.83 exact-limit book with 5.00010) are
+  not entered, `unfilled_no_protected_depth` with the cause; 30 at 0.82 enters with 5.0609756... shares and cost basis 4.202290, equal
   to `PaperBroker._immediate`'s fill on the same order.
 - Property test over a synthetic 30-round tape with snapshot-free frames inside a third of
   the rounds: for every frame of every E rule, the evaluator's recorded reason equals
@@ -1072,11 +1165,17 @@ with it is accepted; the declaration on an H trial is refused.
 
 Implement combinatorially symmetric cross-validation in pure Python (`rule_fit.py`) over the 29 fixed
 rules. Split train plus validation rounds into 16 chronological blocks; for each of the
-12,870 half-splits, rank trials by net per entered round in-sample and record the
-out-of-sample rank of the in-sample best. The probability of backtest overfitting is the
-share of splits where that rank falls below the median. Report it with the trial count and
-the ranked table. Fixed rules have no fitted state, so nothing in a block can leak into
-another.
+12,870 half-splits, rank trials by net per USD of cost basis in-sample (revision 9; the
+grid mixes USD 5 existing rules with USD 20 hypotheses, and net per entered round would
+rank the budget) and record the out-of-sample rank of the in-sample best. The probability
+of backtest overfitting is the share of splits where that rank falls below the median.
+Report it with the trial count and the ranked table. Fixed rules have no fitted state, so
+nothing in a block can leak into another. A trial that entered no round in a half-split has
+no metric and takes the lowest rank in that half. Test: two trials with identical entry
+frames and sides on deep 0.82 books, one at USD 5 and one at USD 20, receive the same
+in-sample metric in every split and tie; permuting the budget assignment across a synthetic
+grid leaves the ranked table and the estimate unchanged, while ranking the same grid by net
+per round (kept only as the test's counterexample) reorders it.
 
 ### H6 fitted combination: separate, leakage-free protocol
 
@@ -1220,7 +1319,8 @@ can be scored only under the committed rules, the committed selection and the re
 that produced them. The historical replay's `lab freeze` refuses historical studies; this
 layer follows the same principle.
 
-Deliverable: `docs/research/rule-evaluation-<date>.md` with the baseline table, every
+Deliverable: `docs/research/rule-evaluation-<date>.md` with the baseline table at both
+budgets (pairing counts and `baseline_not_sized` by reason per rule), every
 trial's train and validation results (all cost models, all flags, unlabeled counts and the
 full-loss sensitivity), the overfitting estimate, the H6 fold table, the day-block bootstrap
 per rule, the selected identifiers, and the count of holdout rounds still needed. Progress

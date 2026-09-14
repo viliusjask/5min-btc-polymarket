@@ -25,9 +25,9 @@ classified during execution. Secrets are not read or copied.
 
 The durable cycle starts with full research re-planning despite completed historical plans:
 
-- PLAN: Fable 5.1 high author → Astra high independent review → Fable corrections and fresh
+- PLAN: Fable 5.1 medium author → Astra high independent review → Fable corrections and fresh
   Astra review until approved.
-- BUILD: Opus 4.8 xhigh author → Astra high independent review → Opus corrections and fresh
+- BUILD: Opus 4.8 medium author → Astra high independent review → Opus corrections and fresh
   Astra review until approved → wrapper-run full project gate.
 - INTEGRATION: Fable 5.1 high reviews the complete cumulative diff. Findings go to Astra high
   fixes, then a separate fresh Astra high reviewer until approved. Clean initial Fable review
@@ -81,3 +81,13 @@ runner binds sessions to worktree, branch, model and effort and rotates overly l
 Resumed prompts carry current findings and task changes. Reviewers always start separately
 and freshly; every approving review covers the cumulative current change. Subagent delegation
 remains allowed. Stage/session records and old transcripts are retained for recovery.
+
+
+Claude authors now use medium effort and retain conversations across effort-only changes.
+Native compaction triggers at 40% of the effective context window (about 400k with the assigned
+1M models); between-invocation rotation is 500k. Durable author handoffs preserve current
+findings, decisions, verification and next actions. Two top-level Claude invocations share
+slots with Alpha; delegated agents remain permitted. `.autopilot/usage/` keeps immutable
+per-attempt usage and tool-call receipts, including incomplete calls. Serena read-only symbol
+tools are explicitly available to Claude reviewers. Headroom's optional MCP tools do not
+imply automatic compression; the proxy is not yet enabled.

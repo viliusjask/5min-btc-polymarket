@@ -7,7 +7,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE="$ROOT/.autopilot"
 SESSION=btc5m-autopilot
 SOURCE="${AUTOPILOT_HOME:-$HOME/projects/autopilot}"
-PIN="${AUTOPILOT_RUNTIME_PIN:-7eb74868bcab3c7b7d1e288d64211219513fa30c}"
+PIN="${AUTOPILOT_RUNTIME_PIN:-9827e67fed1db468b21f79e0f604d5a5848818ef}"
 BRANCH=chore/btc-autopilot
 BASE=main
 export GH_REPO=viliusjask/5min-btc-polymarket
@@ -23,7 +23,7 @@ preflight() {
     command -v "$item" >/dev/null || { echo "Missing executable: $item" >&2; return 1; }
   done
   python3 -c 'import sys; assert sys.version_info >= (3, 10)' || return 1
-  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py; do
+  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py; do
     git -C "$SOURCE" cat-file -e "$PIN:$item" || return 1
   done
   git -C "$ROOT" rev-parse --verify "fork/$BASE" >/dev/null || return 1
@@ -85,7 +85,7 @@ mkdir -p "$STATE"/{logs,prompts,briefing,runtime/prompts,runtime/scripts}
 exec 9>"$STATE/runner.lock"
 flock -n 9 || { echo 'Another runner owns this project state.' >&2; exit 1; }
 printf '%s\n' "$$" > "$STATE/pid"
-for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py; do
+for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py; do
   git -C "$SOURCE" show "$PIN:$item" > "$STATE/runtime/$item.tmp" \
     && mv "$STATE/runtime/$item.tmp" "$STATE/runtime/$item" || exit 1
 done
@@ -193,9 +193,9 @@ while [ ! -f "$STATE/STOP" ]; do
   STAGE_READ_ONLY=0
   [ "$stage" != reviewer ] || STAGE_READ_ONLY=1
   if [ "$mode" = PLAN ] && [ "$stage" = author ]; then
-    runner=run_claude; CLAUDE_MODEL="$FABLE_MODEL"; CLAUDE_EFFORT=high
+    runner=run_claude; CLAUDE_MODEL="$FABLE_MODEL"; CLAUDE_EFFORT=medium
   elif [ "$mode" = BUILD ] && [ "$stage" = author ]; then
-    runner=run_claude; CLAUDE_MODEL="$OPUS_MODEL"; CLAUDE_EFFORT=xhigh
+    runner=run_claude; CLAUDE_MODEL="$OPUS_MODEL"; CLAUDE_EFFORT=medium
   elif [ "$mode" = INTEGRATION ] && [ "$stage" = reviewer ] && [ "$(cat "$STATE/integration-reviewer" 2>/dev/null || echo fable)" = fable ]; then
     runner=run_claude; CLAUDE_MODEL="$FABLE_MODEL"; CLAUDE_EFFORT=high
   fi

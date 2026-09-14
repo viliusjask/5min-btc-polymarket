@@ -21,8 +21,8 @@ to live/paper runtime data. Existing paper collectors and dashboards keep runnin
 Research uses public/anonymous inputs and synthetic account fixtures. Do not touch parent
 worktrees or their virtual environments. Financial findings must remain evidence-grounded.
 
-Assigned routing is mandatory: PLAN author Fable 5.1 high, PLAN reviewer Astra high;
-BUILD author Opus 4.8 xhigh, BUILD reviewer Astra high; INTEGRATION initial reviewer Fable
+Assigned routing is mandatory: PLAN author Fable 5.1 medium, PLAN reviewer Astra high;
+BUILD author Opus 4.8 medium, BUILD reviewer Astra high; INTEGRATION initial reviewer Fable
 5.1 high, fixes Astra high, fresh independent rereview Astra high. Repeat corrections and
 independent review until approval. Do not substitute another model when a quota is exhausted.
 Root has authorized these cross-model development/review roles, superseding the older

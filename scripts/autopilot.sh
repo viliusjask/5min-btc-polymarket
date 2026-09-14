@@ -7,7 +7,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE="$ROOT/.autopilot"
 SESSION=btc5m-autopilot
 SOURCE="${AUTOPILOT_HOME:-$HOME/projects/autopilot}"
-PIN="${AUTOPILOT_RUNTIME_PIN:-9827e67fed1db468b21f79e0f604d5a5848818ef}"
+PIN="${AUTOPILOT_RUNTIME_PIN:-d1f5e28058b822d63e94efb900ecc07b32584603}"
 BRANCH=chore/btc-autopilot
 BASE=main
 export GH_REPO=viliusjask/5min-btc-polymarket
@@ -23,7 +23,7 @@ preflight() {
     command -v "$item" >/dev/null || { echo "Missing executable: $item" >&2; return 1; }
   done
   python3 -c 'import sys; assert sys.version_info >= (3, 10)' || return 1
-  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py; do
+  for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py scripts/headroom_proxy.py; do
     git -C "$SOURCE" cat-file -e "$PIN:$item" || return 1
   done
   git -C "$ROOT" rev-parse --verify "fork/$BASE" >/dev/null || return 1
@@ -85,7 +85,7 @@ mkdir -p "$STATE"/{logs,prompts,briefing,runtime/prompts,runtime/scripts}
 exec 9>"$STATE/runner.lock"
 flock -n 9 || { echo 'Another runner owns this project state.' >&2; exit 1; }
 printf '%s\n' "$$" > "$STATE/pid"
-for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py; do
+for item in lib.sh scripts/codex_events.py scripts/claude_events.py scripts/verify.sh scripts/wip_preflight.py scripts/author_session.py scripts/claude_budget.py scripts/headroom_proxy.py; do
   git -C "$SOURCE" show "$PIN:$item" > "$STATE/runtime/$item.tmp" \
     && mv "$STATE/runtime/$item.tmp" "$STATE/runtime/$item" || exit 1
 done

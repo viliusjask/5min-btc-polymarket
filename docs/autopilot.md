@@ -89,5 +89,9 @@ Native compaction triggers at 40% of the effective context window (about 400k wi
 findings, decisions, verification and next actions. Two top-level Claude invocations share
 slots with Alpha; delegated agents remain permitted. `.autopilot/usage/` keeps immutable
 per-attempt usage and tool-call receipts, including incomplete calls. Serena read-only symbol
-tools are explicitly available to Claude reviewers. Headroom's optional MCP tools do not
-imply automatic compression; the proxy is not yet enabled.
+tools are explicitly available to Claude reviewers. Claude calls use the shared Headroom
+helper with a private per-invocation loopback proxy, cache-preserving lossless output
+compression, protected source reads and unchanged subscription authentication. The `[1m]`
+CLI model suffix retains the context window; API model IDs remain unchanged. Operational
+logs and aggregate metrics live in `.autopilot/headroom/<stage>/<uuid>/`. Originals remain
+in Claude transcripts. Proxy failure is visible; no silent direct-routing fallback.

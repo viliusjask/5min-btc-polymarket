@@ -145,3 +145,12 @@ The two revision 9 findings concern the no-trade baseline's place in the decisio
 the dataset's label validation. Neither implicates a photo, and the ten files in `.local/`
 carry the same modification times as on September 13. None was opened this round. No photo
 decision changed.
+
+## Revision 11 (September 14): no reinspection
+
+The two revision 10 findings concern the population over which a rule is compared with the
+filled baselines and the expected side of one label fixture. Neither implicates a photo,
+and the ten files in `.local/` carry the same modification times as on September 13
+(listed again today: all 2026-09-13 13:10). None was opened this round. The screenshot
+baseline is unchanged; it is now evaluated over each rule's decided rounds like the other
+filled baselines. No photo decision changed.

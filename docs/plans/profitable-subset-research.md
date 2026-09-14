@@ -27,8 +27,13 @@ findings; revision 10 answers them in the first table below: the no-trade baseli
 compared over the rule's whole entered population and is exempt from pairing, and B1 gains
 label validation (identity, finite positive prices, opening agreement with the round's
 anchor within `ANCHOR_TOLERANCE`) so the evaluator settles a round the way
-`PaperBroker.resolve` would, or leaves it unresolved. The freeze sequence and the
-registered grid are unchanged unless a section below says otherwise.
+`PaperBroker.resolve` would, or leaves it unresolved. Revision 10 received one P1 and one
+P2 finding; revision 11 answers them in the first table below: the filled baselines are
+compared over the rule's **decided rounds** (every round on which the rule reached a
+decision, entered or not) instead of the rule's entered rounds only, so a price filter's
+abstentions count, and the corrected-anchor label fixture now expects the side the broker
+returns. The freeze sequence and the registered grid are unchanged unless a section below
+says otherwise.
 
 ## Revision 6: the recovered baseline
 
@@ -97,6 +102,18 @@ frames from September 7 07:26 UTC; the directional lab worker is at cursor 255,5
 27 clean of 29, clean net USD +5.69); the holdout phase still holds only the Value control at
 USD -5.16 on two rounds. The September 4 OutcomeTick and Binance files are downloaded, but
 both September 8 conversion attempts are incomplete and no external tape was published.
+
+## Answers to the review of revision 10
+
+Both findings were checked before acceptance; both were accepted. The first against the
+plan's own definitions (H5 and the market-favorite baseline at 60 s buy the same token at
+the same frame with the same order on every round H5 enters), the second against
+`PaperBroker.resolve` (`src/btc5m/paper.py:491`: the Up side is `final >= opening`).
+
+| Finding | Where it is answered | What changed and the evidence |
+|---|---|---|
+| P1 the comparison ran on **paired rounds**, the rule's entered rounds on which the baseline also filled; H5 and `market_favorite_60@20` buy the same side at the same time with the same sizing, execution and settlement on every such round, so their metrics tie whatever the filter is worth, and conditioning the baseline on the rule's selections removes the price filter's whole contribution | [Decision rule](#the-question-and-the-decision-rule), [baselines](#baselines-registered-with-every-run), [adapter tests](#result-rows-and-the-adapter-to-performance), [hypothesis table](#the-registered-fixed-rule-grid) | Confirmed from the definitions: H5 is "buy the favorite at T-60 when the ask is in the band", the baseline is "buy the favorite at T-60"; on H5's entered rounds the two orders are the same order. The comparison population is now the rule's **decided rounds**: every round of the split on which the rule's decision path reached at least one frame passing the execution validity tests inside its entry window, whether it then entered, ordered and was refused, or abstained. The filled baseline is evaluated on every decided round with its own decision frame, token, capital-matched order and all-or-none fill; its refusals (`baseline_undecided`, `baseline_not_sized` by reason, `baseline_unfilled`) and the rule's abstentions and execution refusals stay in the population at net zero and cost basis zero, counted and never imputed. Each side's metric is its net per USD of cost basis over its own filled rounds in that population, so a filter that abstains from the baseline's losing rounds scores higher than the baseline and a filter that abstains from its winning rounds scores lower. The 30-round floor now applies to the baseline's filled rounds in the population (`insufficient_baseline_fills`). The report adds the decomposition into shared, rule-only, baseline-only and opposed rounds with each side's net, and net per decided round at the matched budget beside the per-USD metric. The reviewer's fixture is registered: 100 decided rounds, an H5-shaped band rule entering 60 at 0.92 (cost basis 18.704160 each, computed today with `_quote` and `fee_for`), the favorite at 0.80 on the 40 excluded rounds, `market_favorite_60@20` filling all 100; with 28 wins on the excluded rounds the baseline nets -73.441096 over 1,877.882400 of cost basis (-0.0391085 per USD) against the rule's 30.141704 over 1,122.249600 (0.0268583) and the rule beats it; with 35 wins there the baseline's 0.0476981 exceeds the rule's and the verdict is `baseline_not_beaten`; the shared 60 rounds carry identical nets in both variants, which the test asserts, so the verdict's whole discriminating power comes from the excluded rounds. Random side stays conditioned on the rule's entered rounds on purpose, because it measures the side choice at the rule's timing and cannot tie structurally; the text says so. |
+| P2 the corrected-anchor fixture kept final 80000.5 and changed the opening to 80000 but required a Down settlement; since final is above the opening, `PaperBroker.resolve` returns Up, so the acceptance test contradicted the settlement rule and the required broker parity | [Label validation](#label-validation-and-settlement-identity) | Confirmed against `paper.py:491`. The corrected-anchor case now expects Up: opening 80000, final 80000.5 is `official`, the entered Up round wins 1.00 per share, and the same case through `PaperBroker.resolve` on a `Market` with `reference_price` 80000 yields Up. A separate Down case is added with opening 80000 and final 79999.5: `official`, the entered Up round is a full loss, and `resolve` yields Down. Both expectations are checked against the broker in the fixture, and the 50-case parity test already covers the rule generally. |
 
 ## Answers to the review of revision 9
 
@@ -200,7 +217,7 @@ A rule set is a **supported candidate** only if, on the untouched holdout, all o
 | Dependence on outliers | net after removing the three largest wins is still greater than zero | Avoids a verdict resting on one lucky payout |
 | Day-block bootstrap | on sensitivity nets: status `descriptive` (at least six included days, at least 60 entered rounds) and fewer than 25% of resamples have a mean net per entered round at or below zero | Descriptive uncertainty; not a significance test |
 | Overfitting estimate | probability of backtest overfitting below 0.5 over the registered fixed-rule grid on train plus validation | Bailey et al. combinatorially symmetric cross-validation |
-| Beats the baselines | Two parts (revision 10). No trade: the stressed run's `sensitivity.net` over every entered round is greater than zero (the no-trade baseline nets zero on every round; no pairing, no cost basis). Filled baselines: net per USD of cost basis on the paired rounds exceeds that of every filled baseline registered at the rule's own budget, each evaluated on those rounds with its own outcome book and its own all-or-none order; at least 30 paired rounds per filled baseline, otherwise the comparison is `insufficient_pairing` and the criterion is not met | Otherwise the rule is only capturing what the market already prices; the per-USD metric and the matched budget keep the assigned size out of the verdict (revision 9) |
+| Beats the baselines | Two parts (revision 10, population revised in revision 11). No trade: the stressed run's `sensitivity.net` over every entered round is greater than zero (the no-trade baseline nets zero on every round; no cost basis). Filled baselines: over the rule's **decided rounds**, the rule's net per USD of cost basis exceeds that of every filled baseline registered at the rule's own budget, each baseline evaluated on every decided round with its own decision frame, its own outcome book and its own all-or-none order, abstentions and refusals on either side counting zero net and zero cost basis; at least 30 baseline-filled rounds in the population per filled baseline, otherwise the comparison is `insufficient_baseline_fills` and the criterion is not met | Otherwise the rule is only capturing what the market already prices; comparing over the decided rounds rather than the rule's entered rounds is what lets a price filter's abstentions count (revision 11); the per-USD metric and the matched budget keep the assigned size out of the verdict (revision 9) |
 
 Anything that fails is reported as a negative result with the same detail as a positive one.
 A supported candidate earns a proposal for a bounded funded trial; it does not authorize one.
@@ -430,7 +447,12 @@ Tests (`tests/test_dataset.py`, `tests/test_rule_eval.py`):
   tape label with the same condition, opening 80001 and final 80000.5, is stored with
   `label_status` `anchor_mismatch`; an entered Up round on it is unresolved (observed null,
   sensitivity payout 0), never an Up win; the same label with opening 80000 is `official`
-  and settles Down.
+  and settles **Up** (final 80000.5 is at or above opening 80000, `src/btc5m/paper.py:491`),
+  so the entered Up round wins 1.00 per share (revision 11; revision 10 wrongly expected
+  Down). A Down case with opening 80000 and final 79999.5 is `official`, settles Down and
+  makes the same entered Up round a full loss. Both cases are also run through
+  `PaperBroker.resolve` on a `Market` with `reference_price` 80000 and must return the same
+  side.
 - Wrong condition: a label whose `condition_id` differs is `identity_mismatch` even when the
   prices agree; the outcome is unresolved.
 - Valid equality: opening 80000, final 80000, matching condition and anchor, is `official`
@@ -982,10 +1004,10 @@ all-or-none like every other entry ([fills](#fills-are-the-production-orders)).
 zero on every round. It is compared over the rule's **full sensitivity population**, the
 same rows the second decision criterion reads: the rule beats no trade exactly when the
 stressed run's `sensitivity.net` over every entered round is greater than zero. It is
-exempt from pairing and from the cost-basis division; its comparison record has `kind:
-no_trade`, `paired` null and no `net_per_cost_basis`, and `summarize` is never asked to
-divide by a zero cost basis for it. Everything in the next paragraph applies to the four
-**filled baselines** only.
+exempt from the population comparison and from the cost-basis division; its comparison
+record has `kind: no_trade`, `population` null and no `net_per_cost_basis`, and `summarize`
+is never asked to divide by a zero cost basis for it. Everything in the next two paragraphs
+applies to the four **filled baselines** only.
 
 **Capital matching of the filled baselines (revision 9, scoped in revision 10).** Each
 filled baseline below is registered once per budget in use: `market_favorite_60@5` and
@@ -993,30 +1015,68 @@ filled baseline below is registered once per budget in use: `market_favorite_60@
 baselines at its own budget (USD 5 for E1 to E5, USD 20 for H1 to H6); the evaluator
 refuses a comparison whose baseline budget differs from the rule's
 (`BASELINE_BUDGET_MISMATCH`). The random-side baseline is drawn at the rule's own decision
-times and sized at the rule's budget, so it is matched by construction. The comparison runs
-on **paired rounds**: the rule's entered rounds on which the filled baseline's own order,
-sized at the matched budget on the baseline's outcome token, also filled all-or-none. Rounds the
-baseline could not size are counted in `baseline_not_sized` by `_quote` reason
-(`BELOW_MINIMUM_SIZE`, `INSUFFICIENT_DEPTH`, `PRICE_BAND`), and rounds whose baseline order
-reached a fill frame but failed the all-or-none test are counted in `baseline_unfilled`;
-neither is scaled, imputed or replaced by the rule's own fill. The report shows, per rule
-and baseline: entered, paired, `baseline_not_sized` by reason, `baseline_unfilled`, the
-rule's and the baseline's net per USD of cost basis on the paired rounds, the difference,
-and the rule's net per USD of cost basis on its unpaired rounds, so a reader can see whether
-a rule's result lives where the baseline could not trade. The decision criterion uses the
-paired comparison and needs at least 30 paired rounds per filled baseline (half the
-entered-round floor; an author-chosen operating threshold); fewer is `insufficient_pairing`,
-which fails the criterion and is reported as inconclusive rather than as a pass. At USD 5 the
-market-favorite and screenshot baselines cannot size any ask above 0.934, so the E rules'
-pairing will be reduced on decided rounds; the report states the reduction, and the
-comparison is not made easier to reach.
+times and sized at the rule's budget, so it is matched by construction.
 
-- **No trade** (zero on every round; compared as described above, never paired).
+**The comparison population is the rule's decided rounds (revision 11).** Revision 9
+compared on paired rounds, the rule's entered rounds on which the baseline also filled. That
+cannot score a filter: H5 and `market_favorite_60` buy the same token at the same frame
+with the same order on every round H5 enters, so on paired rounds their nets are identical
+and the comparison ties whatever the band is worth. The population is therefore the rule's
+**decided rounds**: every round of the split on which the rule's decision path reached at
+least one frame passing the [execution validity](#execution-validity) tests inside its
+entry window (for H1 to H5 the decision frame at their fixed time, for E1 to E5 any frame
+on which `strategy.evaluate` ran), whether the rule then entered, ordered and was refused
+(`unfilled_*`), or abstained (price condition, sizing refusal or no signal, each with its
+`not_entered_reason`). A round with no such frame is `no_decision_frame` and is outside the
+population; the report counts it per rule. The filled baseline is evaluated on **every**
+decided round with its own decision frame at its own time, its own outcome token, its own
+order sized at the matched budget and the same all-or-none fill. Rounds where the baseline
+has no passing frame at its decision time are `baseline_undecided`; rounds it could not
+size are `baseline_not_sized` by `_quote` reason (`BELOW_MINIMUM_SIZE`,
+`INSUFFICIENT_DEPTH`, `PRICE_BAND`); rounds whose baseline order reached a fill frame but
+failed the all-or-none test are `baseline_unfilled`. Every one of those, and every round the
+rule abstained from or was refused on, stays in the population at net zero and cost basis
+zero; nothing is scaled, imputed or replaced by the other side's fill. Each side's metric is
+its **net per USD of cost basis over its own filled rounds in the population**, on the
+stressed run's sensitivity nets (an unlabeled round pays nothing at settlement for the
+baseline exactly as for the rule). For the rule this equals its
+`sensitivity.net_per_cost_basis`, because all its entered rounds are decided rounds; for the
+baseline it is its sensitivity net over its filled decided rounds divided by their cost
+basis. The rule beats the baseline when its metric strictly exceeds the baseline's, so a
+filter that abstains from rounds the baseline loses on scores higher, a filter that abstains
+from rounds the baseline wins on scores lower, and a rule whose decisions equal the
+baseline's on every decided round ties and is `baseline_not_beaten`. The criterion needs at
+least 30 baseline-filled rounds in the population per filled baseline (half the
+entered-round floor; an author-chosen operating threshold); fewer is
+`insufficient_baseline_fills`, which fails the criterion and is reported as inconclusive
+rather than as a pass. At USD 5 the market-favorite and screenshot baselines cannot size any
+ask above 0.934, so on decided rounds their fills will be fewer than the E rules' decided
+count; the report states the shortfall, and the comparison is not made easier to reach.
+
+The report shows, per rule and filled baseline: decided rounds; the rule's entered,
+refused and abstained counts by reason; the baseline's filled, `baseline_undecided`,
+`baseline_not_sized` by reason and `baseline_unfilled` counts; each side's net, cost basis
+and net per USD of cost basis; the difference; each side's net per decided round at the
+matched budget, so a reader can see whether a higher return per USD came with far fewer
+trades; and the decomposition of the decided rounds into `shared` (both filled the same
+token, with each side's net, which is identical by construction when the orders coincide),
+`rule_only`, `baseline_only` (the rounds the rule excluded; its net is the direct measure of
+what the filter removed) and `opposed` (both filled, different tokens). Per-USD metrics
+reward abstention and per-round metrics penalise it; the criterion reads the per-USD metric
+because the budget must not decide the verdict (revision 9), and the 60 entered-round floor
+bounds how few trades a rule may make.
+
+- **No trade** (zero on every round; compared as described above over the rule's entered
+  rounds, never over the decided rounds, because it has no fill to place there).
 - **Market favorite at T** for T in 120, 60 and 30 seconds (filled): buy the token whose
   ask is above 0.5, hold to settlement. This measures what the market already prices.
 - **Random side at the rule's own decision times and sizes** (filled), seeded, averaged
   over 200 draws; each draw walks the drawn token's ladder. This separates timing skill from
-  side skill.
+  side skill. It is the one filled baseline whose population is the rule's **entered**
+  rounds rather than its decided rounds, on purpose: it asks whether the side choice adds
+  anything at the rule's own timing and sizing, and it cannot tie structurally because half
+  the draws take the other token. Its metric is the mean over the draws of net per USD of
+  cost basis; the 30-fill floor applies to each draw's filled count.
 - **Screenshot literal, no hedge (approximation)** (filled): enter with 120 to 90 seconds remaining
   when the spot move from the opening reference is between USD 70 and 100, buy with the move
   at 0.80 to 0.99, hold to settlement. The gus post also says to "cover just a small part of
@@ -1101,28 +1161,53 @@ Tests:
   net per round, while `net_per_cost_basis` is 0.2043375 at both budgets and a losing round
   is exactly -1 at both; the test asserts equality to four decimals per round and for the
   summary.
-- Comparison invariance: a rule and a market-favorite baseline with identical decision
-  frames and sides on deep books produce a zero difference in net per USD of cost basis at
-  both budgets, so neither budget lets the rule beat, or lose to, its own economics; the same
-  pair with the rule winning one more round than the baseline gives the same verdict
-  (`beats`) at USD 5 and at USD 20. Comparing a USD 5 rule with a `@20` baseline is refused
-  (`BASELINE_BUDGET_MISMATCH`).
-- Refusals preserved: a round whose favorite asks 0.95 with 30 displayed is
-  `baseline_not_sized` (`BELOW_MINIMUM_SIZE`) at USD 5 and excluded from the pair, and sizes
-  at USD 20 (18.69, 19.46875, 0.96) and pairs; a round whose favorite shows only 4 shares at
-  0.82 is `baseline_unfilled` (cause `depth`) at both budgets. No paired count, net or
-  denominator changes when a refused round is added.
-- Pairing floor: 60 entered rounds of which the filled baseline pairs 29 give
-  `insufficient_pairing` and the criterion not met; 30 paired rounds are compared.
-- Complete baseline criterion (revision 10): one synthetic holdout-shaped fixture with a
-  rule entering 60 rounds at USD 5, the no-trade baseline and the four filled baselines
-  registered at `@5` (each pairing at least 30 rounds by construction of the books), and a
-  stressed `sensitivity.net` above zero. `baseline_criterion(rule, baselines)` returns
-  `met` with one record per baseline: no trade with `kind: no_trade`, `paired` null and the
-  rule's `sensitivity.net`; each filled baseline with `paired`, both metrics and the
-  difference. Five single-change variants each return `not_met` with the named reason:
-  the rule's stressed net at or below zero (`no_trade`); 29 paired rounds on one filled
-  baseline (`insufficient_pairing`); one filled baseline with a higher net per USD of cost
+- Comparison invariance: a rule and a market-favorite baseline with identical decisions on
+  every decided round on deep books produce a zero difference in net per USD of cost basis
+  at both budgets and the verdict `baseline_not_beaten` (strict), so neither budget lets
+  the rule beat, or lose to, its own economics; the same pair with the rule abstaining on
+  one round the baseline loses gives `beats` at USD 5 and at USD 20. Comparing a USD 5 rule
+  with a `@20` baseline is refused (`BASELINE_BUDGET_MISMATCH`).
+- Filter versus unfiltered baseline (revision 11, the reviewer's case): 100 decided rounds
+  on a synthetic tape; the rule is H5's form (favorite at T-60, ask in 0.90 to 0.95) and
+  enters 60 rounds showing 30 at 0.92 (`_quote` at USD 20: principal 18.60, minimum receive
+  20.00000, limit 0.93; fill 20.2173913... shares, fee 0.104160, cost basis 18.704160, a win
+  nets 1.513231..., a loss -18.704160; fee break-even 0.9252); the other 40 rounds show the
+  favorite at 0.80 with 30 displayed (18.63, 23.00000, 0.81; 23.2875 shares, fee 0.260820,
+  cost basis 18.890820, a win nets 4.396680, a loss -18.890820; break-even 0.8112), outside
+  the band, so the rule abstains with `not_entered_reason` `price_condition` and
+  `market_favorite_60@20` fills all 100. The rule wins 57 of its 60: net 30.141704 over cost
+  basis 1,122.249600, metric 0.0268583. Variant A, the excluded rounds win 28 of 40: the
+  baseline's `baseline_only` net is -103.582800, its total -73.441096 over 1,877.882400,
+  metric -0.0391085, and the rule `beats` it; net per decided round is 0.301417 for the rule
+  and -0.734411 for the baseline. Variant B, the excluded rounds win 35 of 40:
+  `baseline_only` net 59.429700, total 89.571404, metric 0.0476981, verdict
+  `baseline_not_beaten`; net per decided round 0.895714 for the baseline. In both variants
+  the test asserts that the 60 `shared` rounds carry identical nets on both sides and that
+  `rule_only` and `opposed` are empty, so the verdict's discriminating power comes only from
+  the excluded rounds. The same fixture under the revision 9 paired comparison would report a
+  zero difference in both variants; that assertion is kept as a regression test on the
+  population definition.
+- Refusals preserved: a decided round whose favorite asks 0.95 with 30 displayed is
+  `baseline_not_sized` (`BELOW_MINIMUM_SIZE`) at USD 5 and stays in the population at net
+  zero and cost basis zero, and sizes at USD 20 (18.69, 19.46875, 0.96) and fills; a round
+  whose favorite shows only 4 shares at 0.82 is `baseline_unfilled` (cause `depth`) at both
+  budgets; a round with no passing baseline frame at T-60 is `baseline_undecided`. Adding
+  any of the three raises the decided count and the named baseline count and changes
+  neither side's net or cost basis.
+- Baseline fill floor: 60 decided rounds of which the filled baseline fills 29 give
+  `insufficient_baseline_fills` and the criterion not met; 30 filled rounds are compared.
+- Complete baseline criterion (revision 10, population revised in revision 11): one
+  synthetic holdout-shaped fixture with a rule entering 60 of 80 decided rounds at USD 5,
+  the no-trade baseline and the four filled baselines registered at `@5` (each filling at
+  least 30 decided rounds by construction of the books), and a stressed `sensitivity.net`
+  above zero. `baseline_criterion(rule, baselines)` returns `met` with one record per
+  baseline: no trade with `kind: no_trade`, `population` null and the rule's
+  `sensitivity.net`; each filled baseline with `population` (decided rounds, or entered
+  rounds for random side), `baseline_filled`, the refusal counts, both metrics, the
+  difference and the shared/rule-only/baseline-only/opposed decomposition. Five
+  single-change variants each return `not_met` with the named reason: the rule's stressed
+  net at or below zero (`no_trade`); 29 baseline-filled rounds on one filled baseline
+  (`insufficient_baseline_fills`); one filled baseline with a higher net per USD of cost
   basis (`baseline_not_beaten`); a `@20` baseline supplied to the `@5` rule
   (`BASELINE_BUDGET_MISMATCH`, a refusal, not a verdict); and a rule whose only entered
   rounds are unresolved (sensitivity net negative, `no_trade`). The same fixture drives the
@@ -1130,7 +1215,8 @@ Tests:
   `supported_candidate` only in the unchanged case.
 
 Acceptance: all baselines evaluated at both budgets on the real dataset's training split
-with counts, `baseline_not_sized` by reason, net results and net per USD of cost basis
+with decided counts, `baseline_filled`, `baseline_undecided`, `baseline_not_sized` by
+reason, `baseline_unfilled`, net results, net per USD of cost basis and the decomposition
 recorded in progress; the market-favorite baseline's realized win rate by price
 band is compared with the fee break-even table in the trader evidence register.
 
@@ -1141,12 +1227,12 @@ is deliberately small; every cell counts as a trial.
 
 | Family | Rule | Falsifier |
 |---|---|---|
-| H1 opening lead | lead in USD 20, 30, 50, 70; entry windows 90 to 150 and 120 to 180 s; ask 0.70 to 0.95; hold to settlement (8 trials) | net per USD of cost basis not above the USD 20 market-favorite baseline on the paired rounds |
+| H1 opening lead | lead in USD 20, 30, 50, 70; entry windows 90 to 150 and 120 to 180 s; ask 0.70 to 0.95; hold to settlement (8 trials) | net per USD of cost basis not above the USD 20 market-favorite baseline over H1's decided rounds |
 | H2 normalized lead | lead divided by sigma times root of remaining seconds at 0.5, 1.0, 1.5; same windows; hold (6 trials) | same |
 | H3 final-minute lock-in (new) | with 15 to 60 s remaining, the conservative scenario probability from the observed TWAP integral is at least 0.97 and the ask is at most 0.95; hold (thresholds 0.95/0.97/0.99 by windows 15 to 30 and 30 to 60 s: 6 trials) | fills are unavailable in the last minute, or net is not positive after the stressed model |
 | H4 cheap reversal held (secondary) | ask at most 0.10 on the side against a 60 s move above 1 sigma, 60 to 150 s remaining; hold (2 trials) | positive net depends on fewer than four rounds |
-| H5 favorite bands | buy the favorite at T-60 only when the ask is in 0.90 to 0.95 or 0.95 to 0.99; hold (2 trials) | realized win rate below the fee break-even for the band |
-| E1 to E5 existing rules (revision 6, decision source revised in revision 7) | The entry decision is `strategy.evaluate(snapshot, config)` itself, not a restatement ([next section](#existing-rules-reuse-the-engines-decisions)): E1 `momentum` under `Config()` with mode `momentum` (recent continuation, 30 s, `z` 0.5, ask 0.70 to 0.95, 90 to 150 s); E2 `value`, E3 `fast_value` and E4 `model_exit` under `Config()` with that mode (each passes the spread gate, the 0 to 0.92 band, the depth check, the sell-fee reserve and the surplus threshold inside `_quote`); E5 under the registered lab variant `continuation-60-.5`'s configuration (`lab_variants.py:238-250`). E1, E2, E3 and E5 use the production exits: stop 0.08 below the gross entry price, target bid 0.98, time exit at 20 s remaining; E4 adds the `model` sale (5 trials) | net per USD of cost basis not above the USD 5 market-favorite baseline on the paired rounds, or not positive after the stressed model; these are the strategies the bot runs today, so a negative result here is itself a deliverable |
+| H5 favorite bands | buy the favorite at T-60 only when the ask is in 0.90 to 0.95 or 0.95 to 0.99; hold (2 trials) | realized win rate below the fee break-even for the band, or net per USD of cost basis not above `market_favorite_60@20` over H5's decided rounds (the band is a filter on that baseline, so this is the comparison that can score it; revision 11) |
+| E1 to E5 existing rules (revision 6, decision source revised in revision 7) | The entry decision is `strategy.evaluate(snapshot, config)` itself, not a restatement ([next section](#existing-rules-reuse-the-engines-decisions)): E1 `momentum` under `Config()` with mode `momentum` (recent continuation, 30 s, `z` 0.5, ask 0.70 to 0.95, 90 to 150 s); E2 `value`, E3 `fast_value` and E4 `model_exit` under `Config()` with that mode (each passes the spread gate, the 0 to 0.92 band, the depth check, the sell-fee reserve and the surplus threshold inside `_quote`); E5 under the registered lab variant `continuation-60-.5`'s configuration (`lab_variants.py:238-250`). E1, E2, E3 and E5 use the production exits: stop 0.08 below the gross entry price, target bid 0.98, time exit at 20 s remaining; E4 adds the `model` sale (5 trials) | net per USD of cost basis not above the USD 5 market-favorite baseline over the rule's decided rounds, or not positive after the stressed model; these are the strategies the bot runs today, so a negative result here is itself a deliverable |
 
 Fixed-rule trials in the overfitting grid: 29 (24 hypothesis cells plus the five existing
 rules). H6 below is the 30th registered trial but is evaluated by its own protocol. The evaluator refuses a rules file whose trial count differs
@@ -1422,7 +1508,8 @@ that produced them. The historical replay's `lab freeze` refuses historical stud
 layer follows the same principle.
 
 Deliverable: `docs/research/rule-evaluation-<date>.md` with the baseline table at both
-budgets (pairing counts and `baseline_not_sized` by reason per rule), every
+budgets (decided counts, `baseline_filled`, `baseline_undecided`, `baseline_not_sized` by
+reason and `baseline_unfilled` per rule), every
 trial's train and validation results (all cost models, all flags, unlabeled counts and the
 full-loss sensitivity), the overfitting estimate, the H6 fold table, the day-block bootstrap
 per rule, the selected identifiers, and the count of holdout rounds still needed. Progress

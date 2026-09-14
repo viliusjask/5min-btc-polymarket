@@ -1,3 +1,46 @@
+# Progress: research re-plan, revision 11 after the ninth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`431cd2f` (revision 10) returned one P1 and one P2 finding. Both were checked and accepted.
+Revision 11 of [the plan](plans/profitable-subset-research.md) answers them in a table at
+the top and rewrites the affected sections:
+
+- **Baseline comparison population (P1).** Revision 9 compared a rule with each filled
+  baseline on paired rounds, the rule's entered rounds on which the baseline also filled.
+  H5 ("buy the favorite at T-60 when the ask is in the band") and `market_favorite_60@20`
+  ("buy the favorite at T-60") place the same order on every round H5 enters, so on paired
+  rounds their nets are identical and the comparison could never score the band. The
+  population is now the rule's **decided rounds**: every round on which the rule reached a
+  frame passing the execution validity tests inside its entry window, whether it entered,
+  was refused or abstained. The filled baseline is evaluated on every decided round with
+  its own frame, token, capital-matched order and all-or-none fill; `baseline_undecided`,
+  `baseline_not_sized` by reason, `baseline_unfilled` and the rule's own abstentions and
+  refusals stay in the population at net zero and cost basis zero. Each side's metric is
+  net per USD of cost basis over its own filled rounds in that population; the floor is 30
+  baseline-filled rounds (`insufficient_baseline_fills`). The report adds the
+  shared/rule-only/baseline-only/opposed decomposition and net per decided round. The
+  reviewer's fixture is registered with numbers computed today from `strategy._quote` and
+  `fee_for`: 100 decided rounds, a band rule entering 60 at 0.92 (cost basis 18.704160
+  each), the favorite at 0.80 on the 40 excluded rounds; with 28 of 40 excluded wins the
+  baseline's metric is -0.0391085 against the rule's 0.0268583 and the rule beats it; with
+  35 of 40 the baseline's 0.0476981 wins and the verdict is `baseline_not_beaten`; the 60
+  shared rounds carry identical nets in both variants. Random side stays on the rule's
+  entered rounds on purpose (it measures the side choice, not the selection).
+- **Corrected-anchor label fixture (P2).** The revision 10 fixture kept final 80000.5,
+  moved the opening to 80000 and expected Down; `PaperBroker.resolve` returns Up for
+  `final >= opening` (`src/btc5m/paper.py:491`). The case now expects Up and a win for the
+  entered Up round; a separate Down case (opening 80000, final 79999.5) expects a full
+  loss; both are checked against `PaperBroker.resolve` in the fixture.
+
+No photo was reinspected this round: neither finding implicates a photo, and the ten files
+are unchanged since September 13 (the register records the reason). Docs only; no code,
+runtime data, service or credential was touched. Author gate through the shared semaphore:
+see the briefing for the exact result.
+
+Next: independent PLAN review of revision 11 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record, the label validation columns
+and the holdout gate.
+
 # Progress: research re-plan, revision 10 after the eighth independent review
 
 2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of

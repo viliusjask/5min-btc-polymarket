@@ -1,3 +1,61 @@
+# Progress: research re-plan, revision 7 after the fifth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`197039a` (revision 6) returned five findings, four P1 and one P2. Every one was checked
+against the code before it was accepted, and all five were accepted. Revision 7 of
+[the plan](plans/profitable-subset-research.md) answers them in a table with the file and
+line evidence and rewrites the affected sections:
+
+- **Exit book selection (P1).** The evaluator's exit no longer needs a snapshot. Its book is
+  chosen in the paper broker's order (`PaperBroker._book`, `src/btc5m/paper.py:80-84`): a
+  token in `streams.pending_books` yields no book, then `streams.books[token]`, then the
+  same-slug snapshot's book. The holding path streams tape frames by ident (including
+  snapshot-free frames, which `dataset._extract` skips at `src/btc5m/dataset.py:315-316`),
+  so B1 gains per-round `first_frame_ident` and `last_frame_ident`. Triggers use the same
+  selected book in the engine's form (full-depth average, `INSUFFICIENT_FULL_EXIT_DEPTH`
+  counted, model trigger only with a same-round snapshot). Position identity is fixed at the
+  entry fill; `ROUND_EXPIRED` ends attempts. Eight exit-form fixtures include the required
+  one where a missing snapshot blocks entry and a fresh independent book fires and completes
+  the exit.
+- **Existing-rule comparators (P1).** E1 to E5 have no restated entry formula. Each calls
+  `strategy.evaluate` under the production mode configuration (E5 under lab variant
+  `continuation-60-.5`), so the spread gate, band, depth, SDK rounding, the 0.0175 sell-fee
+  reserve and the surplus threshold are the production paths; the two-screen confirmation
+  (`engine._confirm_candidate`) is replicated; the entry walk stops at the decision's
+  `limit`. Deviations (no ledger allowance, no account state, unlimited exit walk) are
+  tabulated with the column that reports each. The reviewer's floor 0.86, ask 0.81 example
+  is a required skip fixture (surplus 0.0117 below 0.02), plus a property test that every
+  screened tick's reason equals `strategy.evaluate`'s.
+- **Holdout gate (P1).** `build_holdout` runs six checks before opening the tape: selection
+  self-hash, freeze linkage, git commitment of the selection, freeze and rules files
+  (tracked and working blob equal to `HEAD`'s), rules hash, development content hash and
+  research fingerprint, each with its refusal code and no `.building` file left behind.
+  The selection record becomes version 2 with the bindings it needs; `evaluate --split
+  holdout` repeats the checks. Refusal tests for uncommitted, committed-then-edited,
+  rules-mismatched and dataset-mismatched records are scheduled in B1.
+- **Stop validation (P2).** `STOP_UNREACHABLE` now applies to the band's lower edge
+  (`min_ask - stop > 0`), so the ask 0.05 to 0.10 fixture is refused. Production rules whose
+  band violates it (E2 to E4 with `value_min_ask` 0, E5 with 0.05) declare
+  `unreachable_stop: never_fires`, allowed only for existing-rule trials, and every entered
+  round whose stop threshold is at or below zero is flagged `stop_unreachable` and counted.
+  Boundary fixtures at gross entry 0.080 and 0.081.
+- **Research fingerprint (P1).** `dataset.research_implementation_id()` over nine research
+  files (`config.py`, `domain.py`, `strategy.py`, `lab_tape.py`, `lab_variants.py`,
+  `dataset.py`, `rule_eval.py`, `rule_fit.py`, `research.py`), stored in the freeze record
+  (version 2, allowed because no real freeze has run), the manifest and the selection
+  record, and binding for `build-holdout` and holdout evaluation
+  (`RESEARCH_IMPLEMENTATION_MISMATCH`). `lab.SEMANTIC_FILES` is unchanged and a test asserts
+  the research files are absent from it.
+
+The photo register records a seventh inspection: all ten legible, nothing new, no finding
+implicated a photo. Root's runner commit `0341ba8` (author-context reuse) landed on the
+branch during the correction round and is unrelated to the plan. Docs only; no code,
+runtime data, service or credential was touched. Author gate through the shared semaphore:
+see the briefing for the exact result.
+
+Next: independent PLAN review of revision 7 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record and the holdout gate.
+
 # Progress: research re-plan, revision 6 against the recovered baseline
 
 2026-09-13. Branch `chore/btc-autopilot`, PLAN stage reopened by the local-work recovery.

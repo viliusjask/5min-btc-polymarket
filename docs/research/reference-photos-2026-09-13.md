@@ -110,3 +110,14 @@ policy), so it is not registered as a second baseline; the plan states the readi
 The revision 6 changes (recovered importer, storage and replay work; the strategy audit;
 book-only exit validity) come from the reconciled local branches and the September 8
 research, not from the photos, so no photo decision changed.
+
+## Seventh inspection, plan revision 7 (September 14)
+
+All ten files opened and were legible again. No new mechanism or claim appeared, and no
+revision 6 finding implicated a photo. The five findings concern the evaluator's exit book
+source, the existing-rule comparators, the holdout gate, the stop validator and the research
+fingerprint; each is answered from the code, not from the photos. One photo detail was
+re-read for the stop validation: the PowerShell log in `5K48FChw.jpg` fills at 0.81 to 0.96
+and the gus post buys "between $0.80 and $0.99", so the screenshot baseline's band lies far
+above the 0.08 stop and is unaffected by the corrected lower-edge rule; that baseline holds
+to settlement and registers no stop in any case. No photo decision changed.

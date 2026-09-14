@@ -1,6 +1,6 @@
 # Plan: is there a defensibly profitable subset of short-term strategies?
 
-2026-09-13, revision 6. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
+2026-09-14, revision 7. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base
 `cb7827b`. Authored by the PLAN stage of the unattended runner from the objective in the
 ignored inbox. Evidence is in [the evidence register](../research/profitability-evidence-2026-09-13.md)
 and [the photo register](../research/reference-photos-2026-09-13.md). Revision 1 (`08fbf74`)
@@ -8,11 +8,14 @@ received seven findings, revision 2 (`6b7de88`) six, revision 3 (`f9bcc48`) thre
 revision 4 (`23167db`) two from the independent PLAN review; every one is answered below and
 the affected sections were rewritten. Revision 5 (`f775fc2`) was approved with no findings.
 That approval predates the local-work reconciliation of `1d3b4df` and `4fdc0e1`, so revision
-6 reopens the plan against the recovered baseline: it records what was merged, audits the
-existing strategies and their recorded experiments against the research goal, restates B1
-as partly implemented, and replaces the external-history probe with the importer that now
-exists. The decision rule, the freeze sequence, the fill model and the registered grid are
-unchanged unless a section below says otherwise.
+6 (`197039a`) reopened the plan against the recovered baseline: it records what was merged,
+audits the existing strategies and their recorded experiments against the research goal,
+restates B1 as partly implemented, and replaces the external-history probe with the importer
+that now exists. Revision 6 received five findings (four P1, one P2); revision 7 answers
+them in the first table below and rewrites the exit book selection, the existing-rule
+comparators, the holdout pre-extraction checks, the research implementation fingerprint and
+the stop validation. The decision rule, the freeze sequence, the fill model and the
+registered grid are unchanged unless a section below says otherwise.
 
 ## Revision 6: the recovered baseline
 
@@ -65,10 +68,10 @@ Fixes and reporting additions that follow from the audit (each is bounded and te
 
 | Id | Change | Where | Test |
 |---|---|---|---|
-| F1 | Exit-form validity: an exit attempt needs a valid book, not a valid oracle point | B2 execution validity | the four exit-form fixtures |
+| F1 | Exit-form validity: an exit attempt needs a valid book for the held token, chosen from the frame's independent stream first and the snapshot second, not a valid oracle point and not a snapshot at all | B2 [book selection for exits](#book-selection-for-exits-and-trigger-fidelity) | the exit-form fixtures, including the snapshot-free exit, `pending_books`, wrong-token and expiry fixtures |
 | F2 | `budget_blocked` reporting column: for each entered round, whether the production USD 10 daily allowance (`max(0, -day realized net) + 5 > 10`, `src/btc5m/ledger.py:537`) would have blocked it, computed from the rule's own prior rounds that UTC day in stressed-net order. Reporting only; the decision rule ignores it | B2 `summarize` | a fixture with three USD -4 losses on one day marks the third and fourth rounds blocked and leaves the totals unchanged |
-| F3 | Existing rules E1 to E5 registered as fixed trials; `ticks` gains `up_floor`, `down_floor`, `up_ceiling`, `down_ceiling`, `probability_up`, `fast_up_floor`, `fast_down_floor` and `fast_reason`, computed by `fair_value` under the default and the `fast_value` configurations; the exit set gains `model` (sell when net proceeds exceed the held side's ceiling plus 0.01, the engine's `model_exit_surplus`) | B1 (columns), B2 (exit set), B3 (grid) | floors and ceilings on a hand-computed tick equal `fair_value`'s; `fast_reason` is `FAST_STALE` when the exchange tick is 1,600 ms old; a `model` exit fires on the first tick whose bid proceeds beat the ceiling by 0.01 and not on one that beats it by 0.005 |
-| F4 | `STOP_UNREACHABLE`: a rule whose ask band's upper edge is at or below its stop size cannot register a stop policy | B3 rules file validation | a rule with ask 0.05 to 0.10 and stop 0.08 is refused; the same rule with hold is accepted |
+| F3 | Existing rules E1 to E5 registered as fixed trials whose entry decision is the engine's own `strategy.evaluate` under the production configuration of the mode (revision 7; [details](#existing-rules-reuse-the-engines-decisions)); `ticks` gains `up_floor`, `down_floor`, `up_ceiling`, `down_ceiling`, `probability_up`, `fast_up_floor`, `fast_down_floor` and `fast_reason`, computed by `fair_value` under the default and the `fast_value` configurations, for screening and reporting; the exit set gains `model` (sell when net proceeds exceed the held side's ceiling plus 0.01, the engine's `model_exit_surplus`) | B1 (columns), B2 (decisions, exit set), B3 (grid) | floors and ceilings on a hand-computed tick equal `fair_value`'s; `fast_reason` is `FAST_STALE` when the exchange tick is 1,600 ms old; a `model` exit fires on the first tick whose bid proceeds beat the ceiling by 0.01 and not on one that beats it by 0.005; the matched decision fixtures |
+| F4 | `STOP_UNREACHABLE`: a stop policy is accepted only if the rule's ask band's **lower** edge lies strictly above its stop size (revision 7; [details](#stop-validation-stop_unreachable)); production rules whose band violates this declare `unreachable_stop: never_fires` and every affected entered round is flagged `stop_unreachable` | B3 rules file validation, B2 flag | a rule with ask 0.05 to 0.10 and stop 0.08 is refused; the same rule with hold is accepted; boundary fixtures at 0.080 and 0.081 |
 | F5 | Residual inventory below the five-share minimum is flagged `residual_below_minimum` and settles by label (already in revision 5) | B2 | existing fixture |
 | F6 | The pinned lab's gap classifier and its uncertain-by-default rule are **not** changed; the seven test cases the follow-up enumerated remain a separate objective | Deferred | none |
 | F7 | `stale_margin_rejections`: count of entry decisions rejected by `STALE_DATA` whose oldest stamp was within 500 ms of `max_price_age_ms`, reported per rule so a five-second limit that is barely missed is visible | B2 report | a fixture with a 5,200 ms spot point counts one; a 6,000 ms point counts none |
@@ -81,6 +84,19 @@ frames from September 7 07:26 UTC; the directional lab worker is at cursor 255,5
 27 clean of 29, clean net USD +5.69); the holdout phase still holds only the Value control at
 USD -5.16 on two rounds. The September 4 OutcomeTick and Binance files are downloaded, but
 both September 8 conversion attempts are incomplete and no external tape was published.
+
+## Answers to the review of revision 6
+
+Each finding was checked against the code before it was accepted; the file and line cited in
+the third column is the evidence a reviewer can re-read.
+
+| Finding | Where it is answered | What changed and the code evidence |
+|---|---|---|
+| P1 exit evaluation still required a forecast snapshot (`NO_SNAPSHOT` on test 2), although the recovered replay exits on `research.streams` books when `frame.snapshot` is `None` and the importer emits snapshot-free frames | [Book selection for exits](#book-selection-for-exits-and-trigger-fidelity) | Test 2 now has an entry form (a same-slug snapshot is required) and an exit form (no snapshot is required). The exit book is chosen the way `PaperBroker._book` chooses it (`src/btc5m/paper.py:80-84`): a token listed in `streams.pending_books` yields no book; otherwise `streams.books[token]`; otherwise the same-slug snapshot's book for that token. The replay attaches `PublicStreams` to every policy and restores `research.streams` into it on every frame (`src/btc5m/lab_replay.py:198`, `:238-254`, `:348`), and the importer writes `research.streams` with `books` and `pending_books` on every frame, including frames whose candidate snapshot failed `_safety_reason` and became `snap = None` (`src/btc5m/history_import.py:560-575`). Both exit triggers and exit fills read that selected book; the position identity (slug, condition id, token id, `end_s`) is fixed at the entry fill; a frame at or after `end_s` ends the attempts. The required fixture is listed: a frame without a snapshot but with a fresh independent bid book for the held token blocks an entry on that frame and both triggers and completes an exit. Fixtures for `pending_books`, a wrong-token book, and expiry are added. |
+| P1 E2 to E4 restated the value entry as a formula that omits the sell-fee reserve and drops the spread and confirmation gates, so the evaluator would have scored strategies other than the running bot's | [Existing rules reuse the engine's decisions](#existing-rules-reuse-the-engines-decisions) | E1 to E5 no longer have their own entry text. Each is a call to `strategy.evaluate(snapshot, config)` with the production configuration for its mode (`engine._mode_config`, `src/btc5m/engine.py:380`) or, for E5, the registered lab variant's configuration. That path applies the spread gate (`max_spread` 0.03, `src/btc5m/strategy.py:260-261`), the price band, the depth check, the SDK share rounding, the sell-fee reserve `fee_rate x 0.25^exponent` (0.0175 per share at 0.07; `strategy.py:328`), the extra allowance and the surplus threshold. The reviewer's example (floor 0.86, ask 0.81) is now a required fixture that must be skipped with `INSUFFICIENT_TERMINAL_SURPLUS`: 0.86 - 0.81 - 0.010773 - 0.0175 - 0.01 = 0.0117, below 0.02. The two-screen entry confirmation (`engine._confirm_candidate`, `engine.py:240-297`) is replicated. Deviations from production are enumerated (no ledger allowance, no account preflight, no venue submission) with the reporting column that makes each visible. A property test asserts that every screened tick's recorded reason equals `strategy.evaluate`'s reason on that tick. |
+| P1 `dataset.build_holdout` checks only file existence, the selection record's self-hash and its freeze linkage; it accepts an uncommitted selection and reads holdout rows before rules or manifest hashes are checked | [Holdout pre-extraction checks](#holdout-pre-extraction-checks), [B1 status](#increment-b1-round-dataset-extraction) | Confirmed at `src/btc5m/dataset.py:493-517`: the function loads the freeze record, checks the selection's self-hash and `freeze_record_hash`, then calls `_extract`, which opens the tape. B1's remaining work now schedules five checks that all run before the tape is opened: git commitment of the selection record, the freeze record and the rules file (tracked, and the working file's blob equals `HEAD`'s), rules hash, development content hash, research fingerprint, and the freeze linkage. Each has a refusal code, and the refusal leaves no `holdout.sqlite` and no `.building` file. The selection record gains the bindings it needs (version 2). Tests for an uncommitted record, a committed-then-edited record, a rules mismatch and a manifest mismatch are required. `evaluate --split holdout` repeats the same checks. |
+| P2 `STOP_UNREACHABLE` compared the band's upper edge with the stop, so the fixture it must refuse (ask 0.05 to 0.10, stop 0.08) passes; E5 permits 0.05 entries with an absolute 0.08 stop | [Stop validation](#stop-validation-stop_unreachable) | Validation applies to the band's lower edge: a stop policy with stop size `s` is accepted only if `min_ask - s > 0`, because the engine's trigger is `price <= gross_entry_price - s` (`src/btc5m/engine.py:655-656`) and the gross entry price is at least the best ask, which is at least `min_ask`. The fixture is refused (0.05 is at or below 0.08). Production rules whose band violates it (E2 to E4 with `value_min_ask` 0, `src/btc5m/config.py:27`; E5 with 0.05, `lab_variants.py:246`) must declare `unreachable_stop: never_fires`, allowed only for existing-rule trials, and every entered round whose stop threshold is at or below zero is flagged `stop_unreachable` and counted per rule. Boundary fixtures at gross entry 0.080 and 0.081 are required. |
+| P1 the recovered code identity is `lab.implementation_id()`, whose `SEMANTIC_FILES` excludes `dataset.py` and the evaluator modules, so extraction or evaluation can change without changing any recorded identity | [Research implementation fingerprint](#research-implementation-fingerprint) | Confirmed at `src/btc5m/lab.py:37-60` (22 files; no `dataset.py`) and `src/btc5m/dataset.py:64`, `:443`. A second fingerprint, `dataset.research_implementation_id()`, covers the research files (`config.py`, `domain.py`, `strategy.py`, `lab_tape.py`, `lab_variants.py`, `dataset.py`, `rule_eval.py`, `rule_fit.py`, `research.py`). It is stored in the freeze record, the manifest and the selection record; `build-holdout` and `evaluate --split holdout` refuse when the current fingerprint differs from the selection's (`RESEARCH_IMPLEMENTATION_MISMATCH`). `SEMANTIC_FILES` is not changed, so pinned lab identities stay the same, and a test asserts that. |
 
 ## Answers to the review of revision 4
 
@@ -196,7 +212,7 @@ boundary is a committed freeze record, and BUILD follows one sequence:
 | 1 Freeze | `btc5m dataset freeze --source capture.sqlite --output docs/research/freeze-<date>.json` | tape `meta` only | the freeze record, committed | the output path exists (`FREEZE_EXISTS`) |
 | 2 Build development | `btc5m dataset build --source capture.sqlite --freeze FILE --output DIR` | frames with ident at or below the freeze high-water | `dataset.sqlite` with train and validation rows only | the tape identity differs from the record, or the record's stored SHA-256 does not match its content |
 | 3 Select | `btc5m dataset evaluate --split train`, `--split validation`, then `btc5m dataset select` | the development dataset only | `docs/research/selection-<date>.json`, committed | the dataset manifest does not name a committed freeze record |
-| 4 Holdout | `btc5m dataset build-holdout --source capture.sqlite --freeze FILE --selection FILE --output DIR`, then `btc5m dataset evaluate --split holdout` | frames with ident above the freeze high-water, rounds at or after `holdout_start_ms` | `holdout.sqlite`, the verdict report | no committed selection record (`SELECTION_RECORD_REQUIRED`), or its rules, freeze or manifest hashes differ (`SELECTION_HASH_MISMATCH`) |
+| 4 Holdout | `btc5m dataset build-holdout --source capture.sqlite --freeze FILE --selection FILE --rules FILE --dataset DIR --output DIR`, then `btc5m dataset evaluate --split holdout` | frames with ident above the freeze high-water, rounds at or after `holdout_start_ms` | `holdout.sqlite`, the verdict report | any of the [pre-extraction checks](#holdout-pre-extraction-checks) fails: no selection record (`SELECTION_RECORD_REQUIRED`); selection, freeze or rules file not committed unmodified at `HEAD` (`SELECTION_RECORD_UNCOMMITTED`, `FREEZE_RECORD_UNCOMMITTED`, `RULES_FILE_UNCOMMITTED`); self-hash or freeze linkage broken (`SELECTION_HASH_MISMATCH`); rules hash differs (`RULES_HASH_MISMATCH`); development content hash differs (`SELECTION_DATASET_MISMATCH`); research fingerprint differs (`RESEARCH_IMPLEMENTATION_MISMATCH`). All are checked before the tape is opened |
 
 The freeze fixes what development may see. It sets no deadline for any later step. Steps 2
 and 3 can run days or weeks after step 1 and read the same rows, because the development
@@ -241,9 +257,16 @@ Tests for the sequence (B1, B4 and B5), all on synthetic tapes:
   development files have the same SQLite content hash, the same row counts and the same
   unlabeled count; the late-labeled round is still unlabeled.
 - Holdout isolation: `build-holdout` on the extended tape without a selection record exits
-  `SELECTION_RECORD_REQUIRED`; with a record whose rules hash differs, `SELECTION_HASH_MISMATCH`;
-  with the matching record it holds only rounds starting at or after `holdout_start_ms`, and
-  the intersection of its slugs with the development file's slugs is empty.
+  `SELECTION_RECORD_REQUIRED`; with a committed record but a rules file whose hash differs,
+  `RULES_HASH_MISMATCH`; with a selection record that was written but never committed,
+  `SELECTION_RECORD_UNCOMMITTED`; with a committed record edited afterwards by one byte,
+  `SELECTION_RECORD_UNCOMMITTED` (the working blob no longer equals `HEAD`'s); with a
+  development dataset rebuilt under a different `--train-end`, `SELECTION_DATASET_MISMATCH`;
+  in every refusal no `holdout.sqlite` and no `holdout.sqlite.building` exists afterwards;
+  with the matching, committed inputs it holds only rounds starting at or after
+  `holdout_start_ms`, and the intersection of its slugs with the development file's slugs is
+  empty. These tests create a temporary git repository (`git init`, one commit) the way the
+  existing storage and CLI tests drive git through `subprocess`.
 - Boundary immutability: `dataset freeze` against an existing output exits `FREEZE_EXISTS`
   and leaves the file unchanged; a record whose `cutoff_ms` was edited by hand fails the
   stored SHA-256 check in `build`; the manifest stores the record hash and `evaluate`
@@ -306,9 +329,75 @@ carries it, else null, with a test on a synthetic external frame); the F3 valuat
 under the default configuration, and `fast_up_floor`, `fast_down_floor`, `fast_reason` under
 a `fast_value` configuration, all null when `fair_value` fails and `fast_reason` carrying its
 `FAST_*` reason); the `evaluate` refusal
-of a dataset without a freeze record (implemented with B2's evaluator); and the acceptance
-build on the real archive with its counts in progress. The real-archive freeze is still
-the first BUILD action and has not been run.
+of a dataset without a freeze record (implemented with B2's evaluator); the [holdout
+pre-extraction checks](#holdout-pre-extraction-checks) in `build_holdout` with the version 2
+selection record (revision 7); the [research implementation
+fingerprint](#research-implementation-fingerprint) in the freeze record, the manifest and the
+selection record (revision 7); `rounds.first_frame_ident` and `rounds.last_frame_ident`, the
+ident range of every tape frame, with or without a snapshot, whose `now_ms` lies inside
+`[start_ms, end_ms)`, so the evaluator can bound its tape read for a round's holding path
+(revision 7; a test with a snapshot-free frame inside the round asserts the range includes
+it while `ticks` does not); and the acceptance build on the real archive with its counts in
+progress. The real-archive freeze is still the first BUILD action and has not been run. The
+freeze record format changes to version 2 before that first run, which is why the fingerprint
+field can still be added to it.
+
+### Holdout pre-extraction checks
+
+`build_holdout` is a refusal gate first and an extractor second. Before it opens the tape it
+runs these checks in order, and any failure raises the named `DatasetError` with no file
+created under the output directory:
+
+| # | Check | Refusal |
+|---|---|---|
+| 1 | `--selection FILE` exists, parses as a dict, and its self SHA-256 matches | `SELECTION_RECORD_REQUIRED`, `SELECTION_HASH_MISMATCH` |
+| 2 | The freeze record's self-hash matches and `selection.freeze_record_hash` equals it | `FREEZE_RECORD_HASH_MISMATCH`, `SELECTION_HASH_MISMATCH` |
+| 3 | The selection record, the freeze record and `--rules FILE` are each tracked by git and unmodified: `git ls-files --error-unmatch PATH` succeeds and `git hash-object PATH` equals `git rev-parse HEAD:PATH`, run with `subprocess` in the file's directory. Git absent or the file outside a repository is a refusal, never a pass | `SELECTION_RECORD_UNCOMMITTED`, `FREEZE_RECORD_UNCOMMITTED`, `RULES_FILE_UNCOMMITTED`, `GIT_REQUIRED` |
+| 4 | SHA-256 of `--rules FILE` equals `selection.rules_sha256` | `RULES_HASH_MISMATCH` |
+| 5 | `content_hash(DIR/dataset.sqlite)` equals `selection.development_content_hash`, and that manifest's `freeze_record_sha256` and `tape_identity` equal the selection's | `SELECTION_DATASET_MISMATCH` |
+| 6 | `research_implementation_id()` equals `selection.research_implementation` | `RESEARCH_IMPLEMENTATION_MISMATCH` |
+
+Only then does `_extract` run. There is no flag that skips a check. The version 2 selection
+record written by `dataset select` therefore carries `freeze_record_hash`, `rules_sha256`,
+`development_content_hash`, `development_tape_identity`, `research_implementation`,
+`selected_rules`, `coefficients` and `created_ms`, plus its self-hash. `evaluate --split
+holdout` runs checks 1 to 6 again against the same files before reading `holdout.sqlite`,
+so a holdout file produced by an older build cannot be scored under changed rules or code.
+Commitment is checked, not enforced: the command does not commit anything itself, because
+the author commits the record as a reviewed step and the check proves that happened.
+
+### Research implementation fingerprint
+
+`lab.implementation_id()` hashes the 22 `SEMANTIC_FILES` of the trading engine
+(`src/btc5m/lab.py:37`). It is the right identity for pinned lab studies and it is left
+unchanged; the pinned workers' recorded identities must not move. It does not cover
+`dataset.py`, the evaluator or the statistics, so a change to extraction, fills, exits,
+fitting or the bootstrap would leave every recorded identity, rules hash and selection
+record untouched. `dataset.research_implementation_id(root=Path(__file__).parent)` is a
+second SHA-256 over `RESEARCH_FILES = ("config.py", "domain.py", "strategy.py",
+"lab_tape.py", "lab_variants.py", "dataset.py", "rule_eval.py", "rule_fit.py",
+"research.py")`, built with the same name-plus-bytes construction. The first five are the
+inputs extraction and decisions depend on; the last four are the research layer itself
+(`rule_fit.py` holds the combinatorially symmetric cross-validation and the H6 folds). Where
+it is recorded and what it gates:
+
+| Record | Field | Effect |
+|---|---|---|
+| Freeze record (version 2) | `research_implementation` | informational; extraction code may legitimately change between freeze and build (B1 work continues after the real freeze) and the manifest records what was used |
+| Dataset manifest | `research_implementation` | informational for development; compared in check 6 above for holdout |
+| Selection record (version 2) | `research_implementation` | binding: `build-holdout` and `evaluate --split holdout` refuse when the current fingerprint differs |
+| Evaluation report | `research_implementation`, `code_identity` | both printed so a report can be matched to code |
+
+Tests: computed against a temporary root holding copies of the files, changing one byte of
+the `dataset.py` copy changes `research_implementation_id(root)` and leaves
+`lab.implementation_id()` unchanged (it reads the real package, whose `SEMANTIC_FILES` do
+not include `dataset.py`); changing one byte of the `strategy.py` copy changes the research
+fingerprint and, computed on the same copied root through a root-parameterised helper,
+would change the lab identity too; a test asserts `"dataset.py"`, `"rule_eval.py"` and
+`"rule_fit.py"` are absent from `lab.SEMANTIC_FILES` and present in `RESEARCH_FILES`; a
+selection record whose `research_implementation` was written under a different `RESEARCH_FILES`
+content is refused by `build-holdout` with `RESEARCH_IMPLEMENTATION_MISMATCH` while every
+other check passes.
 
 `btc5m dataset build-holdout` (step 4) is the same extractor with the opposite bounds: frames
 with ident above the freeze high-water, rounds starting at or after `holdout_start_ms`,
@@ -381,8 +470,16 @@ records the first failure as the reason. Test 3 has an entry form and an exit fo
 other four are the same for both:
 
 1. **Window**: `activation_ms <= now_ms <= deadline_ms`.
-2. **Same round**: the frame has a snapshot and its market slug equals the round's slug. A
-   frame without a snapshot fails with `NO_SNAPSHOT`.
+2. **Same round**. Entry form: the frame has a snapshot and its market slug equals the
+   round's slug; a frame without a snapshot fails with `NO_SNAPSHOT`, a snapshot of another
+   market with `WRONG_ROUND`. Exit form (revision 7): no snapshot is required. The frame must
+   satisfy `now_ms < end_s * 1000` for the round fixed at the entry fill (`ROUND_EXPIRED`
+   otherwise, which ends the attempts), and a book for the held token must be selectable
+   under the [book selection rule](#book-selection-for-exits-and-trigger-fidelity)
+   (`PENDING_BOOK` or `NO_EXIT_BOOK` otherwise). If the frame does carry a snapshot, its
+   market's `active` and `accepting_orders` flags update the round's last known market state;
+   an exit attempt is refused while that state says inactive (`MARKET_INACTIVE`) or not
+   accepting (`MARKET_NOT_ACCEPTING`).
 3. **Engine safety**: `strategy._safety_reason(snapshot, config)` returns `None`, computed
    from the tape frame at fill time with the evaluator's `Config` (defaults; the manifest
    records the values used). That function rejects, in order: an unsupported settlement
@@ -396,16 +493,18 @@ other four are the same for both:
    (`src/btc5m/strategy.py:86`). `PaperBroker._book` applies the same age, future and
    crossed tests (`src/btc5m/paper.py:80`). The dataset's `ticks.rejection` column holds the
    same value for screening, but the evaluator never reads it for a fill.
-   **Exit form (revision 6).** An exit attempt does not need a valid oracle snapshot; a live
-   sell order does not consult our spot feed. It needs the frame's market to be active and
-   accepting orders, the round unexpired, and the consumed token's book to pass exactly the
-   checks `PaperBroker._book` applies: both stamps within `[now_ms - max_book_age_ms,
-   now_ms + future_tolerance_ms]`, the token id matching the market, and no crossed book.
-   A stale spot or TWAP point does not block an exit. This follows the live paper broker and
-   the recovered replay fix (`f600d1f`, `src/btc5m/lab_replay.py:362`), and it answers the
-   September 8 finding that all 18 first-flag cases of the USD 20 candidate had a fresh
-   independent exit book while the oracle point was 5.03 to 5.43 s old. Entries keep the
-   full form, because a decision needs the oracle. Reason codes are the same names.
+   **Exit form (revision 6, book source revised in revision 7).** An exit attempt does not
+   need a valid oracle snapshot, nor any snapshot; a live sell order does not consult our
+   spot feed. It needs the round unexpired and last known as active and accepting (test 2),
+   and the **selected** book for the held token (next section) to pass exactly the checks
+   `PaperBroker._book` applies (`src/btc5m/paper.py:80-93`): both stamps within `[now_ms -
+   max_book_age_ms, now_ms + future_tolerance_ms]` (`STALE_DATA`, `FUTURE_DATA`), the
+   book's token id equal to the held token id (`EXIT_TOKEN_MISMATCH`), and no crossed book
+   (`CROSSED_BOOK`). A stale spot or TWAP point does not block an exit. This follows the
+   live paper broker and the recovered replay fix (`f600d1f`, `src/btc5m/lab_replay.py:362`),
+   and it answers the September 8 finding that all 18 first-flag cases of the USD 20
+   candidate had a fresh independent exit book while the oracle point was 5.03 to 5.43 s
+   old. Entries keep the full form, because a decision needs the oracle.
 4. **Book activation**: the book of the token being consumed satisfies
    `min(book.timestamp_ms, book.received_ms) >= activation_ms`. This is the lower bound
    `PaperBroker._immediate` applies before it walks a book (`src/btc5m/paper.py:245`). Test 3
@@ -419,6 +518,85 @@ other four are the same for both:
    therefore yield one fill.
 5. **Ladder side**: the side being consumed (asks for a buy, bids for a sell) has at least
    one level.
+
+### Book selection for exits and trigger fidelity
+
+The dataset's `ticks` table holds one row per frame that carried a valid same-round
+snapshot (`src/btc5m/dataset.py:315-316` skips snapshot-free frames). The holding path of
+an entered round is therefore **not** read from `ticks`. The evaluator streams the tape by
+ident from the entry fill frame to the round's `last_frame_ident` (B1) through
+`Tape.read_after`, so every frame the collector or the importer wrote is seen, including
+frames whose snapshot is `None` because the oracle point was stale, the opening reference
+was missing or the importer's candidate failed `_safety_reason`
+(`src/btc5m/history_import.py:560-562`). For each such frame, the book for the held token
+is selected in the order `PaperBroker._book` uses (`src/btc5m/paper.py:80-84`), which is
+also the order the replay's broker sees after `_streams` restores `research.streams`
+(`src/btc5m/lab_replay.py:238-254`, `:348`):
+
+| Step | Source | Result |
+|---|---|---|
+| 1 | `frame.research["streams"]` is a dict and `token_id in streams["pending_books"]` | no book, reason `PENDING_BOOK` (an incomplete replace/remove pair is private until complete; `streams.py:359-362`) |
+| 2 | `streams["books"][token_id]` present | that book, rebuilt with `book_from` |
+| 3 | otherwise, the frame's snapshot exists, its slug equals the round's slug, and its up or down book has `token_id` | that snapshot book |
+| 4 | otherwise | no book, reason `NO_EXIT_BOOK` |
+
+The selected book is then subject to tests 3 (exit form), 4 and 5. Position identity is
+fixed at the entry fill: slug, condition id, held `token_id`, `end_s`. The lookup is by
+`token_id`, so a stream book of the other outcome token or of the next round's tokens is
+never consumed, and a book whose `token_id` differs from the held one is refused with
+`EXIT_TOKEN_MISMATCH`. Frames at or after `end_s * 1000` end the attempts (`ROUND_EXPIRED`)
+and the remaining inventory settles by label.
+
+The stop, target and time triggers use the **same selected book** as the fill, in the form
+the engine uses (`src/btc5m/engine.py:551-700`):
+
+- Time: `end_s * 1000 - now_ms <= exit_seconds * 1000` (20 s) fires on any frame, book or
+  not; with no selectable book the attempt starts and waits for one.
+- Stop and target: walk the selected book's bids for the whole inventory. If the displayed
+  depth does not cover it, no trigger fires on that frame and the frame is counted
+  `insufficient_full_exit_depth` for the round (the engine holds with
+  `INSUFFICIENT_FULL_EXIT_DEPTH`, `engine.py:651-652`). Otherwise `price = gross /
+  inventory`; `price <= gross_entry_price - stop_loss_per_share` fires the stop and `price >=
+  take_profit_bid` fires the target. A trigger is tested only on a book that passes the
+  exit-form tests, because the engine only ever sees a book `_book` returned.
+- Model (E4 and the `model` exit): fires only on a frame whose snapshot exists and has the
+  round's condition id, when `fair_value` is valid and net proceeds per share exceed the
+  held side's ceiling by `model_exit_surplus`; a snapshot-free frame cannot fire it
+  (`engine.py:662-664`).
+
+The trigger frame's `now_ms` is `trigger_ms`; the first attempt activates at `trigger_ms +
+latency_ms` and fills on a later frame whose selected book reaches that activation (test
+4), so a trigger and its fill never share one book. Frame-to-frame gaps larger than
+`max_price_age_ms` need no separate rule: a book older than `max_book_age_ms` relative to
+the frame fails test 3, and a book stamped before activation fails test 4.
+
+Exit-form fixtures (all with a 12-share up position entered at frame `E`, standard latency):
+
+- **Snapshot-free exit, the required fixture**: frame `S` at `E + 30 s` has `snapshot =
+  None` (its `code` is `STALE_DATA`) and `research.streams.books[up_token]` stamped `S -
+  400` with best bid 0.70 for 12 shares against a gross entry of 0.80. An entry decision on
+  `S` is refused (`NO_SNAPSHOT`, so a second rule with a live decision on this frame does
+  not enter). The stop fires on `S` (`trigger_ms = S`); attempt 1 activates at `S + 250`;
+  frame `S + 600` carries `streams.books[up_token]` stamped `S + 500` for 12 shares and no
+  snapshot; the exit fills 12 there. Expected: `exit_attempts` 1, `exit_delay_ms` 600,
+  inventory 0, and the fill record names frame `S + 600` and both stream book stamps.
+- **Pending book**: the same frames with `up_token` listed in `streams.pending_books` on
+  `S + 600` yield nothing there (`PENDING_BOOK`); the next frame, where it is no longer
+  pending and the book is stamped after activation, fills.
+- **Wrong token**: `streams.books` holds only the down token on `S + 600`, and the frame's
+  snapshot is absent: no book (`NO_EXIT_BOOK`), no fill; a down-token book copied under the
+  up token's key with `token_id` equal to the down token is refused (`EXIT_TOKEN_MISMATCH`).
+- **Expiry**: the fresh book arrives on a frame at `end_s * 1000`: `ROUND_EXPIRED`, no fill,
+  12 shares `exit_forced_settlement`.
+- **Stream before snapshot**: a frame carrying both a valid snapshot with the up book at bid
+  0.70 and `streams.books[up_token]` at bid 0.68, both fresh: the fill uses 0.68.
+- **Snapshot fallback**: a frame with a valid snapshot and no `research.streams` key sells
+  into the snapshot's up book.
+- **Insufficient full-exit depth**: a book showing 7 of 12 shares at a stop-qualifying price
+  does not fire the stop; the frame is counted `insufficient_full_exit_depth`; a later book
+  showing 12 fires it.
+- **Market state**: the last snapshot before `S` had `accepting_orders` false: no fill on
+  snapshot-free frames until a snapshot with `accepting_orders` true is seen.
 
 A frame failing any test is skipped and the next frame at or before the deadline is tried.
 If no frame passes, an entry is `unfilled` with the reason `unfilled_no_frame` (no frame at
@@ -473,7 +651,7 @@ stamped `D + 850` fills.
 | Transition | Rule |
 |---|---|
 | Entry | One order, one attempt, at most one fill frame. Walk the asks level by level until the USD budget is spent; the quantity at each level is rounded down to whole shares. If the total is below `min_order_size` (5 shares) the entry is `unfilled_thin` and the round is not entered. Otherwise the position is the walked quantity; if the ladder ran out before the budget did, the round is flagged `partial`. There is no entry retry. Cost basis = principal + entry fees. |
-| Exit trigger | The stop, target or time rule is tested on every valid tick after the entry fill frame. The first trigger opens one exit order for the whole inventory; `trigger_ms` is that tick's `now_ms`. Hold-to-settlement policies open no exit order. |
+| Exit trigger | The stop, target, time or model rule is tested on every tape frame after the entry fill frame, in the engine's form and on the selected book ([previous section](#book-selection-for-exits-and-trigger-fidelity)). The first trigger opens one exit order for the whole inventory; `trigger_ms` is that frame's `now_ms`. Hold-to-settlement policies open no exit order. |
 | Exit fill | The first attempt activates at `trigger_ms + latency_ms`. At the first frame passing all five tests, walk the bids: sell whole shares level by level until the inventory or the displayed depth is exhausted. Fees per level through `fee_for`. Proceeds accumulate. Inventory decreases by the shares sold. One frame yields at most one fill event. |
 | Residual | If inventory remains and is at least 5 shares, the next attempt starts, activating at the fill frame's `now_ms + latency_ms`. It pays latency again and can fill only on a book whose stamps reach that activation (test 4), so it never sells into the ladder it already consumed. If inventory is below 5 shares, no venue order can sell it: it is flagged `residual_below_minimum` and holds to settlement. |
 | Exit end | Attempts continue until the last frame before `end_s`. Inventory remaining then holds to settlement, flagged `exit_forced_settlement`. Exits have no 2,000 ms deadline; that number only defines whether the exit was prompt. |
@@ -567,7 +745,10 @@ manipulation finding. Rows and summaries use the adapter below.
 `RoundResult.net` is a `Decimal`, and `performance` sums every row's net and uses every row
 as its denominator (`src/btc5m/research.py:25` and `:41`). It cannot carry a null net and
 must not receive no-trade rows. The evaluator therefore has its own row type and a bounded
-adapter, both in a new module `src/btc5m/rule_eval.py`:
+adapter, both in a new module `src/btc5m/rule_eval.py` (fills, exits, rules and the
+adapter); the overfitting estimate and the H6 folds live in `src/btc5m/rule_fit.py`, and
+`day_bootstrap` joins `performance` in `research.py`. Those three modules are in the
+[research fingerprint](#research-implementation-fingerprint):
 
 - `EvaluatedRound`: slug, `start_ms`, split, rule id, cost model, `entered` (bool),
   `not_entered_reason`, `decision_ms`, side, entry fill (frame ident, shares, principal,
@@ -618,15 +799,102 @@ is deliberately small; every cell counts as a trial.
 | H3 final-minute lock-in (new) | with 15 to 60 s remaining, the conservative scenario probability from the observed TWAP integral is at least 0.97 and the ask is at most 0.95; hold (thresholds 0.95/0.97/0.99 by windows 15 to 30 and 30 to 60 s: 6 trials) | fills are unavailable in the last minute, or net is not positive after the stressed model |
 | H4 cheap reversal held (secondary) | ask at most 0.10 on the side against a 60 s move above 1 sigma, 60 to 150 s remaining; hold (2 trials) | positive net depends on fewer than four rounds |
 | H5 favorite bands | buy the favorite at T-60 only when the ask is in 0.90 to 0.95 or 0.95 to 0.99; hold (2 trials) | realized win rate below the fee break-even for the band |
-| E1 to E5 existing rules (revision 6) | E1 `momentum` recent continuation (30 s, `z` 0.5, ask 0.70 to 0.95, 90 to 150 s); E2 `value` (floor minus ask minus fee per share minus 0.01 allowance above 0.02, ask at most 0.92, 60 to 180 s); E3 `fast_value` (E2 on the fast floors, skipped when `fast_reason` is set); E4 `model_exit` (E2 entry with the `model` exit); E5 lab continuation (60 s, `z` 0.5, ask 0.05 to 0.95). E1, E2, E3 and E5 use the production exits: stop 0.08 below the gross entry price, target bid 0.98, time exit at 20 s remaining (5 trials) | net per entered round not above the market-favorite baseline on the same rounds, or not positive after the stressed model; these are the strategies the bot runs today, so a negative result here is itself a deliverable |
+| E1 to E5 existing rules (revision 6, decision source revised in revision 7) | The entry decision is `strategy.evaluate(snapshot, config)` itself, not a restatement ([next section](#existing-rules-reuse-the-engines-decisions)): E1 `momentum` under `Config()` with mode `momentum` (recent continuation, 30 s, `z` 0.5, ask 0.70 to 0.95, 90 to 150 s); E2 `value`, E3 `fast_value` and E4 `model_exit` under `Config()` with that mode (each passes the spread gate, the 0 to 0.92 band, the depth check, the sell-fee reserve and the surplus threshold inside `_quote`); E5 under the registered lab variant `continuation-60-.5`'s configuration (`lab_variants.py:238-250`). E1, E2, E3 and E5 use the production exits: stop 0.08 below the gross entry price, target bid 0.98, time exit at 20 s remaining; E4 adds the `model` sale (5 trials) | net per entered round not above the market-favorite baseline on the same rounds, or not positive after the stressed model; these are the strategies the bot runs today, so a negative result here is itself a deliverable |
 
 Fixed-rule trials in the overfitting grid: 29 (24 hypothesis cells plus the five existing
 rules). H6 below is the 30th registered trial but is evaluated by its own protocol. The evaluator refuses a rules file whose trial count differs
 from its registered header.
 
+### Existing rules reuse the engine's decisions
+
+Revision 6 wrote E2's entry as "floor minus ask minus fee per share minus 0.01 allowance
+above 0.02". The production function computes more than that (`strategy._quote`,
+`src/btc5m/strategy.py:246-360`): it refuses a spread wider than `max_spread` 0.03
+(`SPREAD_TOO_WIDE`), applies the mode's ask band (`PRICE_BAND`), reserves the fee on the
+principal, walks the ask ladder and refuses if the budget is not covered
+(`INSUFFICIENT_DEPTH`), rounds the SDK share amount up and shrinks the principal to an exact
+share amount, and subtracts a **sell-fee reserve** of `fee_rate x 0.25^exponent` (0.0175 per
+share at the 0.07 crypto rate) as well as the buy fee per share and the 0.01 allowance
+before comparing the surplus with `min_terminal_surplus` 0.02. A restated formula that
+omits the reserve enters rounds the bot skips. With floor 0.86 and ask 0.81 the restated
+surplus is 0.0292 and passes, while production computes 0.86 - 0.81 - 0.010773 (buy fee at
+0.81) - 0.0175 - 0.01 = 0.011727 and skips with `INSUFFICIENT_TERMINAL_SURPLUS`. The engine
+also requires a **two-screen confirmation** before it submits (`engine._confirm_candidate`,
+`src/btc5m/engine.py:240-297`): the first `ENTRY` screen only records a pending candidate
+(`ENTRY_CONFIRMATION_WAITING`); the entry happens on a later screen of the same round and
+side whose signal source stamp is newer than the pending candidate's spot stamp and at or
+past the pending candidate's book stamp; any intervening screen that is not `ENTRY`, or a
+change of side or round identity, cancels the pending candidate (`_cancel_pending`,
+`engine.py:173-175`, `:263`).
+
+The existing-rule trials therefore do not carry an entry formula at all. The rule for E1 to
+E5 is:
+
+| Element | Source | Deviation from production, and how it is made visible |
+|---|---|---|
+| Decision per screened tick | `strategy.evaluate(snapshot, config_for_rule)` on the tape snapshot of that tick, where `config_for_rule` is `engine._mode_config(mode)` over `Config()` for E1 to E4 (`engine.py:380-381`) and `variant.config` of `continuation-60-.5` for E5. The evaluator records `decision.reason` for every screened tick | none; the recorded reasons are the production reasons |
+| Entry | on the first tick whose decision is `ENTRY` and that satisfies the confirmation rule above, replicated tick by tick from `_confirm_candidate`; `decision_ms` is that tick's `now_ms`; side, `principal` and `limit` come from the decision | none in the decision; the evaluator has no ledger, so `check_entry` (loss allowances, session budget) is not applied and the difference is reported by F2's `budget_blocked` |
+| Entry fill | the walk stops at the decision's `limit` price, as `PaperBroker._immediate` stops at `price_limit` (`paper.py:250-253`); levels above it are not consumed, so a thin ladder gives `unfilled_thin` or `partial` rather than a worse fill | none |
+| Exits | the trigger form of the [book selection section](#book-selection-for-exits-and-trigger-fidelity); E4 adds the model trigger | the production exit order carries a limit of the last consumed level minus 0.01 (`engine.py:707`); the evaluator's exit walk has no limit and pays the stressed extra cent instead, which is at least as conservative in price and is stated in the report |
+| Not applied | `ACCOUNT_NOT_READY`, `CONFIGURATION_CHANGED`, venue submission, `ORDER_UNRESOLVED` | account and transport states have no tape representation; the evaluator's execution model replaces them and the deviation is listed in the report header |
+
+H1 to H5 keep their own decision functions and do not use the confirmation rule, because
+they are new hypotheses defined on the dataset columns; the report says so in the row of
+every H trial.
+
+Matched decision fixtures (synthetic snapshots built like `tests/test_strategy.py` builds
+them):
+
+- For each of E1 to E5, a two-tick sequence on which `strategy.evaluate` returns `ENTRY`
+  twice with a newer spot stamp on the second tick: the evaluator enters on the second tick
+  with the decision's side, `principal` and `limit`, and the first tick is recorded
+  `ENTRY_CONFIRMATION_WAITING`.
+- E2 with floor 0.86 and ask 0.81 (bid 0.79): not entered, reason
+  `INSUFFICIENT_TERMINAL_SURPLUS`, and the recorded surplus equals the production feature
+  `terminal_surplus_proxy` on that snapshot.
+- E2 with ask 0.81 and bid 0.77: `SPREAD_TOO_WIDE`.
+- E1 with ask 0.96: `PRICE_BAND`; E5 with ask 0.06 under the same signal: entered (the lab
+  variant's band starts at 0.05).
+- Confirmation: `ENTRY`, then a `MOMENTUM_RECENT_MOVE` screen, then `ENTRY` again: no entry
+  on the third tick (the pending candidate was cancelled and the third tick opens a new
+  one); `ENTRY` then `ENTRY` on the opposite side: no entry (`CANDIDATE_IDENTITY_CHANGED`).
+- Limit: a decision whose `limit` is 0.83 against a ladder of 5 shares at 0.82 and 20 at
+  0.85 fills 5 shares only and is `unfilled_thin` (5 is the minimum, so exactly 5 enters; a
+  ladder of 4 at 0.82 gives `unfilled_thin`).
+- Property test over a synthetic 30-round tape: for every screened tick of every E rule,
+  the evaluator's recorded reason equals `strategy.evaluate(...)`.reason computed
+  independently in the test, and the set of entered rounds equals the set the test derives
+  by applying the confirmation rule to those reasons.
+
+### Stop validation (`STOP_UNREACHABLE`)
+
+Revision 6 compared the band's upper edge with the stop size, which accepts the very rule
+the fixture must refuse. The engine's stop is `price <= gross_entry_price -
+stop_loss_per_share` (`src/btc5m/engine.py:655-656`), and the gross entry price is at least
+the best ask, which is at least the rule's `min_ask`. A stop is reachable for every entry
+of a rule exactly when `min_ask - stop > 0`, so validation applies to the **lower** edge of
+the permitted band:
+
+| Rule declaration | Validator result |
+|---|---|
+| stop policy, `min_ask - stop > 0` (E1: 0.70 - 0.08) | accepted |
+| stop policy, `min_ask - stop <= 0`, no declaration (fixture: ask 0.05 to 0.10, stop 0.08) | refused, `STOP_UNREACHABLE` |
+| stop policy, `min_ask - stop <= 0`, `unreachable_stop: never_fires`, trial kind `existing` (E2, E3, E4 with `value_min_ask` 0; E5 with 0.05) | accepted; every entered round with `gross_entry_price - stop <= 0` is flagged `stop_unreachable`, its stop can never fire (as in production) and the count per rule is printed in the report beside the entered count |
+| `unreachable_stop: never_fires` on a hypothesis trial | refused, `UNREACHABLE_STOP_NOT_ALLOWED` (a new rule must be defined so its stop can fire) |
+| hold policy (H4: ask at most 0.10) | accepted; no stop exists |
+
+The declaration exists so that E2 to E5 can be scored as the bot runs them (its stop below
+an eight-cent entry silently never fires) without hiding that fact: the flag makes the
+count of unprotected entries a reported number. Boundary fixtures: a gross entry of exactly
+0.080 under stop 0.08 is flagged (threshold 0); a gross entry of 0.081 is not flagged, and a
+later full-depth bid book at 0.001 fires its stop; a rule with `min_ask` 0.080 and stop 0.08
+is refused while `min_ask` 0.081 is accepted; the ask 0.05 to 0.10 fixture is refused with
+a stop and accepted with hold; E5's registration without the declaration is refused and
+with it is accepted; the declaration on an H trial is refused.
+
 ### Overfitting estimate for the fixed-rule grid
 
-Implement combinatorially symmetric cross-validation in pure Python over the 29 fixed
+Implement combinatorially symmetric cross-validation in pure Python (`rule_fit.py`) over the 29 fixed
 rules. Split train plus validation rounds into 16 chronological blocks; for each of the
 12,870 half-splits, rank trials by net per entered round in-sample and record the
 out-of-sample rank of the in-sample best. The probability of backtest overfitting is the
@@ -764,14 +1032,17 @@ Splits come from the committed freeze record as described above. The selection s
 
 1. Evaluate every registered trial and baseline on train and on validation.
 2. Compute the fixed-rule overfitting estimate and the H6 fold protocol.
-3. Write `docs/research/selection-<date>.json` with the rules file SHA-256, the freeze
-   record SHA-256, the three selected rule identifiers, and H6's final coefficients if H6
-   is selected. Commit it before any holdout row is read.
+3. Write `docs/research/selection-<date>.json` (version 2) with the rules file SHA-256, the
+   freeze record SHA-256, the development dataset's content hash and tape identity, the
+   research implementation fingerprint, the three selected rule identifiers, and H6's final
+   coefficients if H6 is selected. Commit it, together with the rules file, before any
+   holdout row is read; `build-holdout` checks that commitment.
 
-`evaluate --split holdout` refuses to run unless the selection record exists, its rules
-file hash matches, and the dataset manifest references the same freeze record. The
-historical replay's `lab freeze` refuses historical studies; this layer follows the same
-principle.
+`evaluate --split holdout` refuses to run unless the six [pre-extraction
+checks](#holdout-pre-extraction-checks) pass again against the same files, so the holdout
+can be scored only under the committed rules, the committed selection and the research code
+that produced them. The historical replay's `lab freeze` refuses historical studies; this
+layer follows the same principle.
 
 Deliverable: `docs/research/rule-evaluation-<date>.md` with the baseline table, every
 trial's train and validation results (all cost models, all flags, unlabeled counts and the
@@ -858,7 +1129,17 @@ insufficient and no rule table is drawn from it. A second day is not imported in
 
 - **Selection bias from many trials**: fixed grid of 29 rules plus one fitted model, trial
   count in the file, overfitting estimate, H6 fold protocol, one holdout read gated by a
-  committed selection record.
+  committed selection record whose commitment, rules hash, dataset hash and research
+  fingerprint are checked before extraction.
+- **Silent code drift after selection**: the lab identity does not cover the research
+  layer, so the research fingerprint binds extraction, evaluation, fitting and statistics
+  at selection time and the holdout refuses a different fingerprint. A legitimate fix after
+  selection therefore means a new selection record, and if the holdout was already read, a
+  new freeze.
+- **Comparator drift**: the existing-rule trials call the production decision function and
+  replicate its confirmation, so a negative or positive result is about the bot's rules;
+  every deviation (no ledger allowance, no account state, unlimited exit walk) is listed in
+  the report header with the column that measures it.
 - **Optimistic fills**: taker only, full-ladder walk from checksummed frames, a 2,000 ms
   entry deadline, latency paid on every attempt, a book-activation bound on every fill,
   extra slippage, no maker credit, preservation of every entered round with delayed or
@@ -892,5 +1173,7 @@ and `storage-migrations/` (compare modification times before and after a real-ar
 or an import; imports write only under the worktree's ignored `work/`), no new runtime
 dependency in `pyproject.toml`,
 a committed freeze record before the first real-archive build, a committed selection record
-before any holdout read, and a progress entry with the manifest counts for every
-real-archive run.
+and rules file before any holdout read (checked by `build-holdout` itself), the research
+fingerprint printed in every evaluation report and equal to the selection's on any holdout
+report, `lab.SEMANTIC_FILES` unchanged, and a progress entry with the manifest counts for
+every real-archive run.

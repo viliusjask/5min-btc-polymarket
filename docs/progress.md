@@ -1,3 +1,38 @@
+# Progress: research re-plan, revision 12 after the tenth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`fa9082d` (revision 11) returned one P1 finding, checked against the plan's execution
+validity table and accepted. Revision 12 of [the plan](plans/profitable-subset-research.md)
+answers it in a table at the top and rewrites the population paragraph:
+
+- **Decision eligibility (P1).** Revision 11 defined a decided round as one on which the
+  rule reached a frame passing the execution validity tests, but those tests start at
+  `decision_ms + latency_ms`, so a decision frame can never pass them, and a population
+  built on later fill frames would depend on future liquidity and drop refusals. A frame is
+  now decision-eligible when its `now_ms` is inside the rule's entry window, it carries the
+  round's snapshot, and `strategy._safety_reason` returns `None` on that snapshot
+  (`src/btc5m/strategy.py:86`, the value B1 stores as `ticks.rejection`). No order,
+  activation, deadline, book-activation, ladder or fill test is involved. Entry windows are
+  fixed per rule (5,000 ms up to a fixed decision time; H1 and screenshot scan windows; the
+  configured `entry_min_seconds` to `entry_max_seconds` window for E1 to E5). A round is
+  decided when at least one eligible frame exists, whatever follows; `baseline_undecided`
+  uses the same definition under the baseline's own window. Four fixtures: a valid decision
+  followed by no fill frame (`unfilled_no_frame`) or only pre-activation books stays in the
+  population at net zero; the filter fixture's 40 price-condition abstentions are asserted
+  to be in the population; a round whose window frames all fail `_safety_reason` is
+  `no_decision_frame` and `baseline_undecided`; and the eligible frame in the first case is
+  asserted to fail execution validity test 1, proving the two definitions differ.
+
+No photo was reinspected this round: the finding does not implicate a photo, and the ten
+files are unchanged since September 13. Docs only; no code, runtime data, service or
+credential was touched. The runner commits between revisions 11 and 12 (`a3ba2e3` to
+`edb2cbc`) are root's tooling changes and are unrelated to the plan. Author gate through
+the shared semaphore: see the briefing for the exact result.
+
+Next: independent PLAN review of revision 12 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record, the label validation columns
+and the holdout gate.
+
 # Progress: research re-plan, revision 11 after the ninth independent review
 
 2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of

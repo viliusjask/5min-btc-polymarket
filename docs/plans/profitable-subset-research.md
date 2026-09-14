@@ -32,8 +32,11 @@ P2 finding; revision 11 answers them in the first table below: the filled baseli
 compared over the rule's **decided rounds** (every round on which the rule reached a
 decision, entered or not) instead of the rule's entered rounds only, so a price filter's
 abstentions count, and the corrected-anchor label fixture now expects the side the broker
-returns. The freeze sequence and the registered grid are unchanged unless a section below
-says otherwise.
+returns. Revision 11 received one P1 finding; revision 12 answers it in the first table
+below: a decided round is defined by **decision eligibility** (the rule's entry window plus
+`strategy._safety_reason` on the contemporaneous snapshot), separately from the execution
+validity tests, which govern fills only. The freeze sequence and the registered grid are
+unchanged unless a section below says otherwise.
 
 ## Revision 6: the recovered baseline
 
@@ -102,6 +105,14 @@ frames from September 7 07:26 UTC; the directional lab worker is at cursor 255,5
 27 clean of 29, clean net USD +5.69); the holdout phase still holds only the Value control at
 USD -5.16 on two rounds. The September 4 OutcomeTick and Binance files are downloaded, but
 both September 8 conversion attempts are incomplete and no external tape was published.
+
+## Answers to the review of revision 11
+
+The finding was checked against the plan's own execution validity table and accepted.
+
+| Finding | Where it is answered | What changed and the evidence |
+|---|---|---|
+| P1 decided rounds required a decision frame to pass the execution validity tests, but test 1 of those needs `now_ms >= decision_ms + latency_ms`, so a decision frame can never pass its own attempt's tests; abstentions have no order activation or execution token at all; and using a later fill-eligible frame instead would condition the population on future liquidity and drop refusals the plan promises to keep | [Baselines](#baselines-registered-with-every-run), [adapter tests](#result-rows-and-the-adapter-to-performance), [decision rule](#the-question-and-the-decision-rule) | Confirmed from the [execution validity](#execution-validity) table: the entry attempt's window is `[decision_ms + latency_ms, decision_ms + 2000]`, so the decision frame is always before it. Decision eligibility is now its own definition with no order, activation, deadline, book-activation, ladder or fill requirement: a tape frame is **decision-eligible** for a rule when its `now_ms` lies inside the rule's entry window, it carries a snapshot whose slug is the round's, and `strategy._safety_reason(snapshot, config)` returns `None` on that snapshot (`src/btc5m/strategy.py:86`; the same value B1 stores as `ticks.rejection`, `src/btc5m/dataset.py:147`). A round is **decided** when at least one decision-eligible frame exists; what happens afterwards (an order refused by every fill frame, an abstention, a fill) does not change that. The same definition, with the baseline's own window, defines `baseline_undecided`. Entry windows are stated per rule: a fixed-time rule or baseline (H2 to H5, market favorite at T) uses the 5,000 ms up to and including its fixed time and decides on the latest eligible frame in it; H1 and the screenshot baseline use their scan windows; E1 to E5 use the configured `entry_min_seconds` to `entry_max_seconds` window. Four fixtures are registered: a valid decision at T-60 followed by no frame in the fill window (`unfilled_no_frame`) and one followed only by pre-activation books (`unfilled_book_before_activation`) both stay decided rounds in the population at net zero; the 40 price-filter abstentions of the filter fixture are asserted to be in the population with `not_entered_reason` `price_condition`; a round whose only frames in the window fail `_safety_reason` (`STALE_DATA`) is `no_decision_frame`; and a decision frame that would fail execution validity test 1 by construction still makes the round decided. |
 
 ## Answers to the review of revision 10
 
@@ -217,7 +228,7 @@ A rule set is a **supported candidate** only if, on the untouched holdout, all o
 | Dependence on outliers | net after removing the three largest wins is still greater than zero | Avoids a verdict resting on one lucky payout |
 | Day-block bootstrap | on sensitivity nets: status `descriptive` (at least six included days, at least 60 entered rounds) and fewer than 25% of resamples have a mean net per entered round at or below zero | Descriptive uncertainty; not a significance test |
 | Overfitting estimate | probability of backtest overfitting below 0.5 over the registered fixed-rule grid on train plus validation | Bailey et al. combinatorially symmetric cross-validation |
-| Beats the baselines | Two parts (revision 10, population revised in revision 11). No trade: the stressed run's `sensitivity.net` over every entered round is greater than zero (the no-trade baseline nets zero on every round; no cost basis). Filled baselines: over the rule's **decided rounds**, the rule's net per USD of cost basis exceeds that of every filled baseline registered at the rule's own budget, each baseline evaluated on every decided round with its own decision frame, its own outcome book and its own all-or-none order, abstentions and refusals on either side counting zero net and zero cost basis; at least 30 baseline-filled rounds in the population per filled baseline, otherwise the comparison is `insufficient_baseline_fills` and the criterion is not met | Otherwise the rule is only capturing what the market already prices; comparing over the decided rounds rather than the rule's entered rounds is what lets a price filter's abstentions count (revision 11); the per-USD metric and the matched budget keep the assigned size out of the verdict (revision 9) |
+| Beats the baselines | Two parts (revision 10, population revised in revision 11). No trade: the stressed run's `sensitivity.net` over every entered round is greater than zero (the no-trade baseline nets zero on every round; no cost basis). Filled baselines: over the rule's **decided rounds**, the rule's net per USD of cost basis exceeds that of every filled baseline registered at the rule's own budget, each baseline evaluated on every decided round (decision eligibility: entry window plus `_safety_reason`, revision 12) with its own decision-eligible frame, its own outcome book and its own all-or-none order, abstentions and refusals on either side counting zero net and zero cost basis; at least 30 baseline-filled rounds in the population per filled baseline, otherwise the comparison is `insufficient_baseline_fills` and the criterion is not met | Otherwise the rule is only capturing what the market already prices; comparing over the decided rounds rather than the rule's entered rounds is what lets a price filter's abstentions count (revision 11); the per-USD metric and the matched budget keep the assigned size out of the verdict (revision 9) |
 
 Anything that fails is reported as a negative result with the same detail as a positive one.
 A supported candidate earns a proposal for a bounded funded trial; it does not authorize one.
@@ -1022,16 +1033,33 @@ compared on paired rounds, the rule's entered rounds on which the baseline also 
 cannot score a filter: H5 and `market_favorite_60` buy the same token at the same frame
 with the same order on every round H5 enters, so on paired rounds their nets are identical
 and the comparison ties whatever the band is worth. The population is therefore the rule's
-**decided rounds**: every round of the split on which the rule's decision path reached at
-least one frame passing the [execution validity](#execution-validity) tests inside its
-entry window (for H1 to H5 the decision frame at their fixed time, for E1 to E5 any frame
-on which `strategy.evaluate` ran), whether the rule then entered, ordered and was refused
-(`unfilled_*`), or abstained (price condition, sizing refusal or no signal, each with its
-`not_entered_reason`). A round with no such frame is `no_decision_frame` and is outside the
-population; the report counts it per rule. The filled baseline is evaluated on **every**
-decided round with its own decision frame at its own time, its own outcome token, its own
-order sized at the matched budget and the same all-or-none fill. Rounds where the baseline
-has no passing frame at its decision time are `baseline_undecided`; rounds it could not
+**decided rounds**, defined by **decision eligibility** (revision 12), which is separate
+from the [execution validity](#execution-validity) tests: those govern fill frames and
+begin at `decision_ms + latency_ms`, so a decision frame can never pass them, and a
+population built on later fill frames would depend on future liquidity. A tape frame is
+**decision-eligible** for a rule when three things hold and nothing else is asked: its
+`now_ms` lies inside the rule's entry window; it carries a snapshot whose market slug is
+the round's; and `strategy._safety_reason(snapshot, config)` returns `None` for that
+snapshot (`src/btc5m/strategy.py:86`, the contemporaneous test of round, market state,
+opening reference, tick, and spot, TWAP and book freshness relative to the frame's own
+`now_ms`; B1 stores the same value as `ticks.rejection`, `src/btc5m/dataset.py:147`, and
+the evaluator recomputes it from the tape frame). No order activation, deadline, book
+activation, ladder or fill test is part of eligibility. The entry window is fixed per rule:
+a fixed-time rule or baseline (H2 to H5, the market favorite at 120, 60 and 30 s) uses the
+5,000 ms up to and including its fixed time (the same 5,000 ms as `max_book_age_ms`) and
+decides on the latest eligible frame in it; H1 and the screenshot baseline scan their stated
+windows and decide on the first eligible frame where their condition holds; E1 to E5 use
+the configured `entry_min_seconds` to `entry_max_seconds` window (`src/btc5m/config.py:21`)
+and every eligible frame runs `strategy.evaluate`. A round is **decided** when at least one
+decision-eligible frame exists for the rule, whatever follows: an entry, an order refused by
+every fill frame (`unfilled_no_frame`, `unfilled_book_before_activation`,
+`unfilled_no_protected_depth` and the other `unfilled_*` reasons), or an abstention (price
+condition, sizing refusal or no signal, each with its `not_entered_reason`). A round with
+no decision-eligible frame is `no_decision_frame` and is outside the population; the report
+counts it per rule. The filled baseline is evaluated on **every** decided round with its
+own decision-eligible frame under its own window, its own outcome token, its own order
+sized at the matched budget and the same all-or-none fill. Rounds where the baseline has
+no decision-eligible frame in its window are `baseline_undecided`; rounds it could not
 size are `baseline_not_sized` by `_quote` reason (`BELOW_MINIMUM_SIZE`,
 `INSUFFICIENT_DEPTH`, `PRICE_BAND`); rounds whose baseline order reached a fill frame but
 failed the all-or-none test are `baseline_unfilled`. Every one of those, and every round the
@@ -1187,11 +1215,26 @@ Tests:
   the excluded rounds. The same fixture under the revision 9 paired comparison would report a
   zero difference in both variants; that assertion is kept as a regression test on the
   population definition.
+- Decision eligibility (revision 12): four fixtures on the synthetic tape. (a) A round with
+  an eligible frame at T-60 (safe snapshot, favorite at 0.92 with 30 displayed) and no tape
+  frame at all between T-60 + 250 ms and T-60 + 2,000 ms: the rule orders, the entry is
+  `unfilled_no_frame`, and the round is in the population, counted as refused, at net zero
+  and cost basis zero. (b) The same decision followed only by frames whose book stamps
+  precede activation: `unfilled_book_before_activation`, same population treatment. (c)
+  The 40 excluded rounds of the filter fixture above are asserted individually to be in the
+  population with `not_entered_reason` `price_condition`, and the population size is 100.
+  (d) A round whose only frames in the window carry a book stamped 6,000 ms before
+  `now_ms` (`_safety_reason` returns `STALE_DATA`) is `no_decision_frame` for the rule and
+  `baseline_undecided` for the T-60 baseline, and neither side counts it. The fixture also
+  asserts that the eligible frame in (a) fails execution validity test 1 (its `now_ms` is
+  below `decision_ms + latency_ms`), so a definition that reused those tests would have
+  made (a) undecided.
 - Refusals preserved: a decided round whose favorite asks 0.95 with 30 displayed is
   `baseline_not_sized` (`BELOW_MINIMUM_SIZE`) at USD 5 and stays in the population at net
   zero and cost basis zero, and sizes at USD 20 (18.69, 19.46875, 0.96) and fills; a round
   whose favorite shows only 4 shares at 0.82 is `baseline_unfilled` (cause `depth`) at both
-  budgets; a round with no passing baseline frame at T-60 is `baseline_undecided`. Adding
+  budgets; a round with no decision-eligible baseline frame in the 5,000 ms up to T-60 is
+  `baseline_undecided`. Adding
   any of the three raises the decided count and the named baseline count and changes
   neither side's net or cost basis.
 - Baseline fill floor: 60 decided rounds of which the filled baseline fills 29 give

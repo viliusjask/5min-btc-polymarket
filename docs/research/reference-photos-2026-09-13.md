@@ -154,3 +154,9 @@ and the ten files in `.local/` carry the same modification times as on September
 (listed again today: all 2026-09-13 13:10). None was opened this round. The screenshot
 baseline is unchanged; it is now evaluated over each rule's decided rounds like the other
 filled baselines. No photo decision changed.
+
+## Revision 12 (September 14): no reinspection
+
+The single revision 11 finding concerns how a decided round is defined for the baseline
+comparison. It does not implicate a photo, and the ten files in `.local/` carry the same
+modification times as on September 13. None was opened this round. No photo decision changed.

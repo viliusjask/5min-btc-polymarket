@@ -98,7 +98,7 @@ P=0
 CODEX_MODEL=gpt-6-astra
 CODEX_EFFORT=high
 FABLE_MODEL=claude-fable-5-1
-OPUS_MODEL=claude-opus-4-8
+OPUS_MODEL=claude-opus-5
 SESSION_TIMEOUT="${SESSION_TIMEOUT:-4h}"
 BRIEF="$STATE/BRIEFING.md"
 child=''
@@ -206,6 +206,9 @@ while [ ! -f "$STATE/STOP" ]; do
   elif [ "$mode" = INTEGRATION ] && [ "$stage" = reviewer ] && [ "$(cat "$STATE/integration-reviewer" 2>/dev/null || echo fable)" = fable ]; then
     runner=run_claude; CLAUDE_MODEL="$FABLE_MODEL"; CLAUDE_EFFORT=high
   fi
+  if [ "$runner" = run_claude ]; then
+    read -r CLAUDE_MODEL CLAUDE_EFFORT <<< "$(claude_route "$CLAUDE_MODEL" "$CLAUDE_EFFORT")"
+  fi
   REVIEW_SESSION_KEY=''
   if [ "$stage" = reviewer ]; then
     REVIEW_SESSION_KEY=$(python3 "$ROOT/scripts/autopilot_result.py" author-key \
@@ -242,7 +245,10 @@ while [ ! -f "$STATE/STOP" ]; do
     [ "$runner" != run_claude ] || classifier=claude_events.py
     failure_kind=$(python3 "$DIR/scripts/$classifier" --failure-kind "$output")
     if [ "$failure_kind" = quota ]; then
-      log 'Assigned model quota unavailable; retrying in 10 minutes without fallback'; pause 600 || break; continue
+      if [ "$runner" = run_claude ] && claude_quota_fallback "$mode $stage" "$CLAUDE_MODEL"; then
+        continue
+      fi
+      log 'Assigned model quota unavailable; retrying in 10 minutes'; pause 600 || break; continue
     fi
     if [ "$failure_kind" = auth ]; then
       idle 'authentication required' || break; continue

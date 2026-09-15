@@ -2,6 +2,9 @@
 
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -152,3 +155,138 @@ def test_review_history_is_stage_specific_and_rejects_author_approval(tmp_path):
     with pytest.raises(ValueError, match="assigned role"):
         MODULE.review_progress(ledger, "PLAN", result(tmp_path, status="complete"))
     assert MODULE.review_progress(ledger, "PLAN")["unsuccessful_reviews"] == 1
+
+
+@pytest.mark.parametrize(
+    "mode,stage,failure,cached,recovery,expected",
+    [
+        (
+            "PLAN",
+            "author",
+            "quota",
+            False,
+            False,
+            ["claude-fable-5-1 medium 0", "claude-opus-5 high 0"],
+        ),
+        (
+            "INTEGRATION",
+            "reviewer",
+            "quota",
+            False,
+            False,
+            ["claude-fable-5-1 high 1", "claude-opus-5 high 1"],
+        ),
+        (
+            "BUILD",
+            "author",
+            "quota",
+            False,
+            True,
+            ["claude-fable-5-1 medium 0", "claude-opus-5 high 0"],
+        ),
+        ("PLAN", "author", "quota", True, False, ["claude-opus-5 high 0"]),
+        ("BUILD", "author", "quota", False, False, ["claude-opus-5 medium 0"]),
+        ("PLAN", "author", "auth", False, False, ["claude-fable-5-1 medium 0"]),
+        ("PLAN", "reviewer", "quota", False, False, ["gpt-6-astra high 1"]),
+    ],
+)
+def test_runner_routes_quota_without_changing_role_or_codex(
+    tmp_path, mode, stage, failure, cached, recovery, expected
+):
+    """Run the real wrapper with model, git and shared helper boundaries stubbed.
+
+    Shared helper expiry/classification has its own harness tests; these checks
+    cover BTC calling those interfaces, immediate retry and startup recovery.
+    """
+    root = tmp_path / "project"
+    shutil.copytree(SCRIPT.parent, root / "scripts")
+    shutil.copytree(
+        SCRIPT.parents[1] / "docs" / "autopilot-prompts", root / "docs" / "autopilot-prompts"
+    )
+    shutil.copyfile(SCRIPT.parents[1] / "docs" / "autopilot.md", root / "docs" / "autopilot.md")
+    state = root / ".autopilot"
+    state.mkdir()
+    (state / "INBOX.md").write_text("Synthetic authorized task\n")
+    (state / "mode").write_text(mode + "\n")
+    (state / "stage").write_text(stage + "\n")
+    marker = state / "limited-claude-fable-5-1"
+    if cached:
+        marker.write_text("cached quota\n")
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "lib.sh").write_text(
+        """
+log() { printf '%s\n' "$*" >> "$STATE/test.log"; }
+kill_tree() { :; }
+claude_route() {
+  if [ "$1" = claude-fable-5-1 ] && [ -f "$STATE/limited-$1" ]; then
+    echo 'claude-opus-5 high'
+  else printf '%s %s\n' "$1" "$2"; fi
+}
+claude_quota_fallback() {
+  [ "$2" = claude-fable-5-1 ] || return 1
+  echo quota > "$STATE/limited-$2"
+}
+failed_call() {
+  printf '%s %s %s\n' "$1" "$2" "$STAGE_READ_ONLY" >> "$STATE/calls"
+  printf '%s\n' "$TEST_FAILURE" > "$3"
+  [ "$(wc -l < "$STATE/calls")" -lt 2 ] || touch "$STATE/STOP"
+  return 1
+}
+run_claude() { failed_call "$CLAUDE_MODEL" "$CLAUDE_EFFORT" "$3"; }
+run_codex() { failed_call "$CODEX_MODEL" "$CODEX_EFFORT" "$3"; }
+"""
+    )
+    (shared / "events.py").write_text(
+        "import pathlib, sys; print(pathlib.Path(sys.argv[-1]).read_text().strip())\n"
+    )
+    (shared / "wip.py").write_text(
+        "import os; raise SystemExit(int(os.environ['TEST_RECOVERY']) * 3)\n"
+    )
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    commands = {
+        "git": """#!/bin/bash
+case "$3" in
+  show)
+    case "$4" in
+      *:lib.sh) cat "$TEST_SHARED/lib.sh" ;;
+      *:scripts/*_events.py) cat "$TEST_SHARED/events.py" ;;
+      *:scripts/wip_preflight.py) cat "$TEST_SHARED/wip.py" ;;
+    esac ;;
+  branch) echo chore/btc-autopilot ;;
+  rev-parse) echo head-a ;;
+esac
+exit 0
+""",
+        "gh": "#!/bin/sh\nprintf '{}\\n'\n",
+        "sleep": '#!/bin/sh\ntouch "$TEST_STATE/STOP"\n',
+    }
+    for name, content in commands.items():
+        executable = fake / name
+        executable.write_text(content)
+        executable.chmod(0o755)
+    run = subprocess.run(
+        ["bash", str(root / "scripts" / "autopilot.sh"), "run"],
+        env=dict(
+            os.environ,
+            PATH=str(fake) + os.pathsep + os.environ["PATH"],
+            TEST_SHARED=str(shared),
+            TEST_STATE=str(state),
+            TEST_FAILURE=failure,
+            TEST_RECOVERY=str(int(recovery)),
+        ),
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert run.returncode == 0, run.stderr
+    assert (state / "calls").read_text().splitlines() == expected
+    assert marker.exists() == (cached or len(expected) == 2)
+    log = (state / "test.log").read_text()
+    if len(expected) == 2:
+        assert "retrying in 10 minutes" not in log
+    elif failure == "auth":
+        assert "authentication required" in log
+    else:
+        assert "retrying in 10 minutes" in log

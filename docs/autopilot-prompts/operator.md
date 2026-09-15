@@ -22,9 +22,12 @@ Research uses public/anonymous inputs and synthetic account fixtures. Do not tou
 worktrees or their virtual environments. Financial findings must remain evidence-grounded.
 
 Assigned routing is mandatory: PLAN author Fable 5.1 medium, PLAN reviewer Astra high;
-BUILD author Opus 4.8 medium, BUILD reviewer Astra high; INTEGRATION initial reviewer Fable
+BUILD author Opus 5 medium, BUILD reviewer Astra high; INTEGRATION initial reviewer Fable
 5.1 high, fixes Astra high, independent rereview Astra high. Repeat corrections and
-independent review until approval. Do not substitute another model when a quota is exhausted.
+independent review until approval. The wrapper may replace an exhausted Fable 5.1 stage with
+explicit claude-opus-5 at high effort, including startup recovery and integration review,
+and retains that route for six hours. Opus and Astra quota failures wait; authentication
+errors never trigger fallback. Preserve the assigned author/reviewer permissions on fallback.
 Root has authorized these cross-model development/review roles, superseding the older
 same-model project convention for this unattended task. Authors have full access and approval
 policy never; reviewers are read-only. Never delegate write-capable work from a reviewer.

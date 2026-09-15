@@ -27,7 +27,7 @@ The durable cycle starts with full research re-planning despite completed histor
 
 - PLAN: Fable 5.1 medium author → Astra high independent review → Fable corrections and resumed
   Astra review until approved.
-- BUILD: Opus 4.8 medium author → Astra high independent review → Opus corrections and resumed
+- BUILD: Opus 5 medium author → Astra high independent review → Opus corrections and resumed
   Astra review until approved → wrapper-run full project gate.
 - INTEGRATION: Fable 5.1 high reviews the complete cumulative diff. Findings go to Astra high
   fixes, then a separate Astra high reviewer until approved. Clean initial Fable review
@@ -48,11 +48,15 @@ wrapper to run lock validation, all pytest tests, Ruff lint/format, mypy and she
 then recheck clean HEAD/base/remote identity before recording `.autopilot/verified`.
 
 The gate uses the shared `~/projects/autopilot/state/verification` directory with two slots
-across BTC and Alpha-Sentry. Failed verification logs go back to the author. Rate limits retry
-after ten minutes; authentication failures and repeated failures idle without model polling.
+across BTC and Alpha-Sentry. Failed verification logs go back to the author. Confirmed Fable
+quota exhaustion switches immediately to explicit `claude-opus-5` at high effort, including
+PLAN startup recovery and the independent integration review. The shared routing helper records
+`.autopilot/limited-claude-fable-5-1` for six hours across retries and restarts, then tries Fable
+5.1 again. Opus and Astra quota failures retry after ten minutes; authentication failures and
+repeated failures idle without model polling. Astra roles always stay on Astra.
 Three author attempts without a new checkpoint also idle. State, reviews, effective prompts,
 Codex events, gate logs and the local briefing live under ignored `.autopilot/` and survive
-restart. No model fallback is authorized when limits occur. Reviewers cannot settle findings by author
+restart. Reviewers cannot settle findings by author
 response alone: every changed plan/build/integration
 receives independent review of its exact commits. All commits remain in a draft PR for user review/merge.
 
@@ -84,7 +88,8 @@ remains bound to the exact cumulative current commits. Subagent delegation
 remains allowed. Stage/session records and old transcripts are retained for recovery.
 
 
-Claude authors now use medium effort and retain conversations across effort-only changes.
+Primary Claude authors use medium effort; Fable quota fallbacks use high. Author conversations
+survive effort-only changes, and saved handoffs carry current work across a model switch.
 Native compaction triggers at 40% of the effective context window (about 400k with the assigned
 1M models); between-invocation rotation is 500k. Durable author handoffs preserve current
 findings, decisions, verification and next actions. There is no shared model concurrency cap;

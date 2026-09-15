@@ -167,6 +167,11 @@ while [ ! -f "$STATE/STOP" ]; do
   fi
   if [ "$stage" = reviewer ]; then
     git -C "$ROOT" diff --no-ext-diff "$base...$head" > "$STATE/review.diff" || break
+    previous=$(python3 -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); r=json.loads(p.read_text()) if p.exists() else {}; h=r.get("history", []); print(h[-1]["reviewed_head"] if h else "")' "$STATE/review-progress-$mode.json") || break
+    : > "$STATE/correction.diff"
+    if [ -n "$previous" ] && git -C "$ROOT" merge-base --is-ancestor "$previous" "$head"; then
+      git -C "$ROOT" diff --no-ext-diff "$previous..$head" > "$STATE/correction.diff" || break
+    fi
     git -C "$ROOT" log --format='%h %s' "$base..$head" > "$STATE/review-commits.txt" || break
     if ! timeout 30 gh pr view "$BRANCH" --repo "$GH_REPO" --json body,comments,reviews > "$STATE/pr-review-context.json.tmp" 2>/dev/null; then
       printf '%s\n' '{"note":"No accessible PR context; evaluate local committed evidence."}' > "$STATE/pr-review-context.json.tmp"
@@ -176,14 +181,16 @@ while [ ! -f "$STATE/STOP" ]; do
   name="$(date +%Y%m%d-%H%M%S-%N)-$mode-$stage"
   result="$STATE/logs/$name.json"
   output="$STATE/logs/$name.last.txt"
+  review_context=$(python3 "$ROOT/scripts/autopilot_result.py" review-context "$STATE/review-progress-$mode.json" "$mode") || break
   prompt=$(cat "$ROOT/docs/autopilot-prompts/$stage.md")
+  prompt+=$'\n'"$review_context"
   prompt+=$'\n'"Mode: $mode. Assigned branch: $BRANCH. Base branch: $BASE."
   if [ "$wip_recovery" = 1 ]; then
     prompt+=$'\n'"LOCAL WORK RECOVERY REQUIRED. Read $STATE/wip-inventory.json. Reconcile every outstanding local branch and dirty worktree under the author recovery rules. Use python3 $DIR/scripts/wip_preflight.py scan/check/record; target HEAD, manifest $STATE/wip-dispositions.json. After your final commit and push, scan a fresh inventory and record exact dispositions. Reassess the research plan against the recovered implementation. The wrapper will not advance to review until check passes."
   fi
   prompt+=$'\n'"reviewed_head=$head reviewed_base=$base"
   prompt+=$'\n'"Local work inventory and author dispositions: $STATE/wip-inventory.json, $STATE/wip-dispositions.json. Independently verify inclusion and any deferrals during PLAN review."
-  prompt+=$'\n'"Prior review if present: $STATE/review.json. Wrapper snapshots of exact commits: $STATE/review.diff, $STATE/review-commits.txt, $STATE/pr-review-context.json. Output artifact: $result."
+  prompt+=$'\n'"Prior review if present: $STATE/review.json. Correction delta (empty on initial/no-change review): $STATE/correction.diff. Wrapper snapshots of exact commits: $STATE/review.diff, $STATE/review-commits.txt, $STATE/pr-review-context.json. Output artifact: $result."
   printf '%s\n' "running $mode $stage" > "$STATE/status"
   prompt+=$'\n'"Objective: $STATE/INBOX.md. Verification feedback if present: $STATE/gate-failure.log. Briefing: $STATE/BRIEFING.md."
   STAGE_SANDBOX=danger-full-access
@@ -199,6 +206,11 @@ while [ ! -f "$STATE/STOP" ]; do
   elif [ "$mode" = INTEGRATION ] && [ "$stage" = reviewer ] && [ "$(cat "$STATE/integration-reviewer" 2>/dev/null || echo fable)" = fable ]; then
     runner=run_claude; CLAUDE_MODEL="$FABLE_MODEL"; CLAUDE_EFFORT=high
   fi
+  REVIEW_SESSION_KEY=''
+  if [ "$stage" = reviewer ]; then
+    REVIEW_SESSION_KEY=$(python3 "$ROOT/scripts/autopilot_result.py" author-key \
+      "$STATE/reviewer-session-stage.json" "$mode") || break
+  fi
   AUTHOR_SESSION_KEY=''
   AUTHOR_CORRECTION_PROMPT=''
   if [ "$stage" = author ]; then
@@ -206,6 +218,7 @@ while [ ! -f "$STATE/STOP" ]; do
       "$STATE/author-session-stage.json" "$mode") || break
     AUTHOR_CORRECTION_PROMPT="Continue the same $mode author stage on $BRANCH. Current head=$head, base=$base. Preserve interrupted edits. Address the current independent findings and verification feedback; inspect affected code and changed sections. Do not repeat completed research or reread unchanged photos. Update evidence/briefing, verify the affected work, commit and push before handoff. Delegation to bounded subagents remains allowed; retain independent author/reviewer roles."
     [ ! -s "$STATE/review.json" ] || AUTHOR_CORRECTION_PROMPT+=$'\n'"Latest review (check its head/stage before treating it as current): $(cat "$STATE/review.json")"
+    AUTHOR_CORRECTION_PROMPT+=$'\n'"$review_context"
     AUTHOR_CORRECTION_PROMPT+=$'\n'"Current task/authority: $STATE/INBOX.md. Gate feedback: $STATE/gate-failure.log. Briefing: $BRIEF. Return the current structured result contract; reviewed_head=$head reviewed_base=$base."
     if [ "$wip_recovery" = 1 ]; then
       AUTHOR_CORRECTION_PROMPT+=$'\n'"Startup recovery is active: inspect $STATE/wip-inventory.json; reconcile new items, preserve known prior dispositions, then refresh and record exact dispositions after your final commit/push using $DIR/scripts/wip_preflight.py. Do not redo unchanged completed recovery work."
@@ -308,6 +321,7 @@ while [ ! -f "$STATE/STOP" ]; do
     cp "$result" "$STATE/author.json"
     printf '%s\n' reviewer > "$STATE/stage"
   else
+    python3 "$ROOT/scripts/autopilot_result.py" record-review "$STATE/review-progress-$mode.json" "$mode" "$result" || break
     cp "$result" "$STATE/review.json"
     # Only accepted current-revision evidence completes the initial Fable review.
     [ "$mode" != INTEGRATION ] || printf '%s\n' astra > "$STATE/integration-reviewer"

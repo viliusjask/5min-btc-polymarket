@@ -23,7 +23,7 @@ worktrees or their virtual environments. Financial findings must remain evidence
 
 Assigned routing is mandatory: PLAN author Fable 5.1 medium, PLAN reviewer Astra high;
 BUILD author Opus 4.8 medium, BUILD reviewer Astra high; INTEGRATION initial reviewer Fable
-5.1 high, fixes Astra high, fresh independent rereview Astra high. Repeat corrections and
+5.1 high, fixes Astra high, independent rereview Astra high. Repeat corrections and
 independent review until approval. Do not substitute another model when a quota is exhausted.
 Root has authorized these cross-model development/review roles, superseding the older
 same-model project convention for this unattended task. Authors have full access and approval
@@ -33,7 +33,8 @@ The current runner is serial in one assigned feature worktree, with a cumulative
 integration review. It is not the Alpha-Sentry parallel phase scheduler. If research calls for
 coordinated branches, document the need and bounded implementation; do not claim they exist.
 
-Author verification uses the shared semaphore:
+During corrections authors run targeted checks justified by the changed behaviour and preserve
+verification evidence. Required full-gate verification uses the shared semaphore:
   bash {{VERIFY_SCRIPT}} bash scripts/autopilot-gate.sh
 AUTOPILOT_VERIFY_DIR and AUTOPILOT_VERIFY_SLOTS are supplied by the wrapper. Do not weaken,
 bypass, nest the semaphore or invoke a second gate concurrently within a held slot. Wrapper
@@ -44,7 +45,10 @@ exact reviewed_head and reviewed_base supplied by the launcher. No runtime integ
 Alpha-Sentry is authorized; only the model-runner helpers and verification semaphore are shared.
 
 Authors reuse their conversation for correction rounds within a stage. New stages and large
-contexts start fresh from a concise briefing. Reviewers remain separate fresh sessions and
-review the cumulative current change before approval. Bounded subagent delegation is allowed;
+contexts start fresh from a concise briefing. Reviewers remain separate from authors and resume within their stage. One reviewer owns
+approval and the finding list; follow-up reviews inspect changes and affected behaviour while
+approval remains bound to the exact current cumulative commits. Optional improvements never
+block completion; closed findings reopen only with new evidence. Two unsuccessful correction
+rounds require a diagnosis and changed approach, not another identical prompt. Bounded subagent delegation is allowed;
 never delegate author work from the read-only reviewer role. No blanket prohibition on
 subagents is intended. Avoid repeated research and image inspection without a new reason.

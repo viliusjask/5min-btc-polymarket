@@ -60,7 +60,54 @@ def author_session_key(path: Path, mode: str) -> str:
     return record["key"]
 
 
+def review_progress(path: Path, mode: str, result: Path | None = None) -> dict:
+    """Persist reviewer-owned findings; commit churn must not reset failed rounds."""
+    if mode not in {"PLAN", "BUILD", "INTEGRATION"}:
+        raise ValueError("invalid review stage")
+    record = json.loads(path.read_text()) if path.exists() else {}
+    if record.get("mode") != mode:
+        record = {"mode": mode, "unsuccessful_reviews": 0, "history": []}
+    if result is not None:
+        review = json.loads(result.read_text())
+        stage_status(result, "reviewer", review["reviewed_head"], review["reviewed_base"])
+        # An interrupted wrapper can replay a receipt; count each receipt once.
+        receipt = str(result.resolve())
+        if not any(item["receipt"] == receipt for item in record["history"]):
+            record["unsuccessful_reviews"] = (
+                record["unsuccessful_reviews"] + 1 if review["status"] == "changes_requested" else 0
+            )
+            record["history"].append({"receipt": receipt, **review})
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(record, indent=2) + "\n")
+            temporary.replace(path)
+    return record
+
+
+def review_context(path: Path, mode: str) -> str:
+    record = review_progress(path, mode)
+    count = record["unsuccessful_reviews"]
+    text = f"Reviewer-owned history: {path}. Unsuccessful reviews in this stage: {count}."
+    if record["history"]:
+        text += " Latest stage-specific verdict: " + json.dumps(record["history"][-1])
+    if count >= 3:
+        text += (
+            " DIAGNOSIS REQUIRED: at least two correction rounds failed. Before another fix,"
+            " identify misunderstanding, incomplete fix, contradictory requirement, or unsuitable"
+            " task size for each remaining blocker, then choose a specific changed approach."
+            " Record the diagnosis and verification evidence in the briefing. The reviewer must"
+            " assess it; do not autoapprove or repeat unchanged instructions."
+        )
+    return text
+
+
 def main() -> int:
+    if len(sys.argv) == 4 and sys.argv[1] == "review-context":
+        print(review_context(Path(sys.argv[2]), sys.argv[3]))
+        return 0
+    if len(sys.argv) == 5 and sys.argv[1] == "record-review":
+        review_progress(Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4]))
+        return 0
     if len(sys.argv) == 4 and sys.argv[1] == "author-key":
         print(author_session_key(Path(sys.argv[2]), sys.argv[3]))
         return 0

@@ -25,12 +25,12 @@ classified during execution. Secrets are not read or copied.
 
 The durable cycle starts with full research re-planning despite completed historical plans:
 
-- PLAN: Fable 5.1 medium author → Astra high independent review → Fable corrections and fresh
+- PLAN: Fable 5.1 medium author → Astra high independent review → Fable corrections and resumed
   Astra review until approved.
-- BUILD: Opus 4.8 medium author → Astra high independent review → Opus corrections and fresh
+- BUILD: Opus 4.8 medium author → Astra high independent review → Opus corrections and resumed
   Astra review until approved → wrapper-run full project gate.
 - INTEGRATION: Fable 5.1 high reviews the complete cumulative diff. Findings go to Astra high
-  fixes, then a separate fresh Astra high reviewer until approved. Clean initial Fable review
+  fixes, then a separate Astra high reviewer until approved. Clean initial Fable review
   may proceed directly to verification. Gate failures also require Astra fixes and rereview.
 
 The final integration gate reruns the full suite on exact reviewed commits before completion.
@@ -54,7 +54,7 @@ Three author attempts without a new checkpoint also idle. State, reviews, effect
 Codex events, gate logs and the local briefing live under ignored `.autopilot/` and survive
 restart. No model fallback is authorized when limits occur. Reviewers cannot settle findings by author
 response alone: every changed plan/build/integration
-receives a fresh independent review. All commits remain in a draft PR for user review/merge.
+receives independent review of its exact commits. All commits remain in a draft PR for user review/merge.
 
 ## Research scope
 
@@ -71,15 +71,16 @@ Startup inventories all local branches and dirty worktrees through the pinned sh
 `scripts/wip_preflight.py`. Missing or stale dispositions reopen PLAN recovery automatically;
 they do not silently select fork/main or require a human checkpoint. The author reconciles
 relevant existing work into its assigned branch, records exact evidence in
-`.autopilot/wip-dispositions.json`, and revises the plan for fresh Astra review. Original
+`.autopilot/wip-dispositions.json`, and revises the plan for independent Astra review. Original
 worktrees and runtime data remain intact. New source work is still gated by plan approval.
 
 Author conversations persist through correction/quota rounds using a stable stage key in
 `.autopilot/author-session-stage.json`; timestamped log names do not create new author
 conversations. PLAN, BUILD and INTEGRATION authors have distinct stage keys. The shared
 runner binds sessions to worktree, branch, model and effort and rotates overly large contexts.
-Resumed prompts carry current findings and task changes. Reviewers always start separately
-and freshly; every approving review covers the cumulative current change. Subagent delegation
+Resumed prompts carry current findings and task changes. Reviewers start separately from authors, then resume within the stage using a distinct
+reviewer key. Correction reviews focus on the changes and affected behaviour while approval
+remains bound to the exact cumulative current commits. Subagent delegation
 remains allowed. Stage/session records and old transcripts are retained for recovery.
 
 
@@ -107,3 +108,21 @@ Codex calls also use automatic Headroom routing, with ChatGPT subscription authe
 HTTP Responses streaming, unchanged Astra/high and reviewer permissions, and native remote
 compaction preserved. The local proxy records private per-invocation metrics alongside the
 Claude metrics. This is scoped to these autopilot launchers, not global CLI configuration.
+
+## Review convergence
+
+One independent reviewer owns the finding list and approval; there is no routine second judge.
+A second opinion is exceptional and must answer a substantive disagreement or specialist question.
+Blocking findings identify a concrete trigger, consequence or unmet agreed requirement, and
+supporting evidence. Optional improvements never block approval. Closed findings reopen only
+when new evidence invalidates their resolution. Authors cannot settle their own objections.
+
+The runner retains reviewer-owned history in `.autopilot/review-progress-<MODE>.json`, including
+exact commits and findings, and supplies `.autopilot/correction.diff` for targeted follow-up.
+After the initial rejection and two unsuccessful correction rounds it explicitly requires a
+diagnosis and changed approach. New commits do not reset that counter; independent approval
+does. Failed/quota attempts are not review rounds. This never automatically grants approval.
+Verification records retain commands, commits, results and logs so correction stages can reuse
+valid evidence and run targeted checks. Required broader gates still run after approval.
+Evaluate savings using accepted completed work and later defects, alongside all author,
+reviewer and delegated usage; raw token totals or number of comments are not delivery metrics.

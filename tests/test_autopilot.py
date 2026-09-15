@@ -115,3 +115,40 @@ def test_invalid_stage_cannot_replace_saved_author_session(tmp_path):
     with pytest.raises(ValueError, match="invalid author stage"):
         MODULE.author_session_key(path, "reviewer")
     assert MODULE.author_session_key(path, "PLAN") == plan
+
+
+def test_failed_corrections_require_diagnosis_despite_new_commits(tmp_path):
+    ledger = tmp_path / "reviews.json"
+    for index in range(3):
+        review = tmp_path / f"review-{index}.json"
+        review.write_text(
+            result(
+                tmp_path,
+                status="changes_requested",
+                findings=["F1: defect"],
+                reviewed_head=f"new-doc-commit-{index}",
+            ).read_text()
+        )
+        MODULE.review_progress(ledger, "PLAN", review)
+    assert "DIAGNOSIS REQUIRED" in MODULE.review_context(ledger, "PLAN")
+    assert MODULE.review_progress(ledger, "PLAN")["unsuccessful_reviews"] == 3
+    # Retrying wrapper bookkeeping after interruption is not another review round.
+    MODULE.review_progress(ledger, "PLAN", review)
+    assert MODULE.review_progress(ledger, "PLAN")["unsuccessful_reviews"] == 3
+    approved = tmp_path / "approved.json"
+    approved.write_text(result(tmp_path).read_text())
+    record = MODULE.review_progress(ledger, "PLAN", approved)
+    assert record["unsuccessful_reviews"] == 0
+    assert len(record["history"]) == 4
+    assert "DIAGNOSIS REQUIRED" not in MODULE.review_context(ledger, "PLAN")
+
+
+def test_review_history_is_stage_specific_and_rejects_author_approval(tmp_path):
+    ledger = tmp_path / "reviews.json"
+    MODULE.review_progress(
+        ledger, "PLAN", result(tmp_path, status="changes_requested", findings=["F1: plan blocker"])
+    )
+    assert MODULE.review_progress(ledger, "BUILD")["history"] == []
+    with pytest.raises(ValueError, match="assigned role"):
+        MODULE.review_progress(ledger, "PLAN", result(tmp_path, status="complete"))
+    assert MODULE.review_progress(ledger, "PLAN")["unsuccessful_reviews"] == 1

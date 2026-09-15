@@ -1,7 +1,7 @@
 # Unattended BTC development
 
 This project reuses only the Codex/Claude execution, failure classification and verification semaphore
-helpers pinned to `405ae9d2c1f3808af7c773ebb8880e88283f1207` in the local
+helpers pinned to `c19703a6b15b410684f9c4c64e4a37998fb1b6f8` in the local
 `~/projects/autopilot` repository. It does not run Alpha-Sentry's phase scheduler or merge code.
 The assigned worktree is `.worktrees/autopilot`, branch `chore/btc-autopilot`. All pushes and
 PRs target `viliusjask/5min-btc-polymarket` through **fork**, never upstream **origin**.

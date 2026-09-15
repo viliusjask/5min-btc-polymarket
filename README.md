@@ -108,7 +108,32 @@ Suggested baseline controls (adapt to your risk profile):
 This repository is educational/operational infrastructure, not financial advice.
 Use your own risk limits, daily loss caps, and capital controls.
 
+## Queued research — 2026-09-15
+
+Planning only; no runner, profile or autopilot change is authorized by this note.
+The sibling [strategy-lab plan](../onchain-strategy-lab/docs/SHORT_HORIZON.md#queued-after-article-review--2026-09-15)
+queues a fixed signed buy/sell imbalance rule versus a Hawkes trade-arrival model.
+Consider an isolated paper comparison here only if that experiment passes its
+fresh-data, after-cost acceptance gates. A spot-market result does not validate
+a five-minute binary-contract strategy.
+
+Before that comparison, verify the canonical runner's actual entry rule and use it
+as the fixed control; README strategy descriptions are not implementation evidence.
+Align BTC trade receipt times, Polymarket quotes, contract opening/expiry and the
+settlement reference. Freeze horizon, sizing, entry/exit rules and execution delays;
+include spreads, fees, depth, missed fills and expiry/exit feasibility. Compare
+cash and the current rule under identical limits. Require incremental net value
+on independent fresh events, including worse execution, before proposing integration.
+Keep the experiment separate from both existing autopilot runs. Paper evidence is
+not authorization for live orders or promotion into the execution path.
+
+Inventory-aware market making is deferred until queue/fill and adverse-selection
+data exist; the stock-price assumptions in Avellaneda–Stoikov cannot be applied
+unchanged to bounded binary prices near settlement. No new dashboard or agent
+framework is planned from the article.
+
 ## Contributing
+
 - Fork the repository
 - Create a feature branch
 - Commit changes

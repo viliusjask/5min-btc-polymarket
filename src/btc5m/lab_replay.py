@@ -19,6 +19,7 @@ from btc5m.lab_variants import Valuations, Variant, evaluate_variant
 from btc5m.ledger import Ledger, LedgerError
 from btc5m.pairing import pair_decision
 from btc5m.paper import PaperBroker
+from btc5m.storage import register_event_reader
 from btc5m.strategy import _quote, _safety_reason, _skip, fee_for
 from btc5m.streams import PublicStreams, PublicTrade
 
@@ -161,6 +162,7 @@ class Replay:
             # replay connection uses nested contexts; baseline/live ledgers are unchanged.
             self.ledger.db.close()
             self.ledger.db = sqlite3.connect(path, timeout=5, factory=NestedConnection)
+            register_event_reader(self.ledger.db)
             # This journal is a reproducible cache of a FULL-synchronized input tape.
             # NORMAL preserves transaction atomicity; a power loss may discard a suffix
             # of cache frames, whose surviving cursor then replays them from the tape.
@@ -193,9 +195,7 @@ class Replay:
                 variant.config,
                 clock=lambda: self.now_ms / 1000,
                 final_reference=self.final_reference,
-                streams=PublicStreams(variant.config, clock=lambda: self.now_ms / 1000)
-                if variant.config.strategy.mode in PAIR_STRATEGIES
-                else None,
+                streams=PublicStreams(variant.config, clock=lambda: self.now_ms / 1000),
             )
             # Replay has the exact intervening input sequence after a process restart.
             # A live source-session change still invalidates passive queue continuity.
@@ -334,6 +334,15 @@ class Replay:
                     "SELECT COALESCE(MAX(id),0) FROM events"
                 ).fetchone()[0]
                 research = frame.research or {}
+                external = research.get("external_history")
+                if external is not None and (
+                    not isinstance(external, dict)
+                    or not isinstance(external.get("provider"), str)
+                    or not isinstance(external.get("limitations"), list)
+                    or not external["limitations"]
+                    or any(not isinstance(value, str) for value in external["limitations"])
+                ):
+                    raise LedgerError("INVALID_EXTERNAL_HISTORY_PROVENANCE")
                 self.engine.flow = research.get("flow", {})
                 observe_flow(snap, self.variant, self.engine.flow, self.engine.signal_state)
                 self._streams(research.get("streams"))
@@ -350,7 +359,11 @@ class Replay:
                 if self.engine.pending_candidate:
                     affected.add(self.engine.pending_candidate.slug)
                 if gap or snap is None:
-                    if affected:
+                    # A rejected oracle/model snapshot does not erase a separately
+                    # recorded execution stream. Live paper also lets an exit use
+                    # that book while new entries wait for valid forecasting data.
+                    # Missing frames/stream evidence still invalidate pending fills.
+                    if affected and (gap or not isinstance(research.get("streams"), dict)):
                         self.broker.observation_gap(frame.now_ms, "LAB_CAPTURE_GAP")
                     self.engine._cancel_pending("LAB_CAPTURE_GAP", None, frame.now_ms)
                     # Before any market data, there is no claim about the missing round.
@@ -369,6 +382,20 @@ class Replay:
                     row["execution"][result.reason] = row["execution"].get(result.reason, 0) + 1
                     row["last_ms"], row["last_reason"] = frame.now_ms, result.reason
                     self._save_round(row)
+                # Imported execution assumptions qualify the result; they do not
+                # constitute a transport failure or cancel an otherwise valid order.
+                if external is not None:
+                    external_slugs = set(affected)
+                    if snap and raw and raw.reason != "STUDY_ENTRY_WINDOW":
+                        external_slugs.add(snap.market.slug)
+                    for slug in external_slugs:
+                        row = self._round(slug)
+                        row["uncertain"] = True
+                        row["external_provider"] = external["provider"]
+                        row["external_limitations"] = sorted(
+                            set(row.get("external_limitations", [])) | set(external["limitations"])
+                        )
+                        self._save_round(row)
                 # Transport/queue uncertainty can occur between otherwise timely
                 # capture frames. Propagate the broker's evidence to study quality.
                 for (raw_event,) in self.ledger.db.execute(

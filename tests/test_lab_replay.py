@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import asdict, replace
 from decimal import Decimal
 
 import pytest
@@ -11,6 +12,66 @@ from btc5m.lab_tape import Frame
 from btc5m.lab_variants import Valuations, Variant
 
 D = Decimal
+
+
+@pytest.mark.parametrize("book_state", ["fresh", "stale", "pending"])
+def test_directional_exit_uses_independent_book_when_oracle_snapshot_is_missing(
+    tmp_path, book_state
+):
+    async def run():
+        variant = Variant("value", "control", "Value", Config())
+        snap = make_snapshot()
+        path = tmp_path / "ledger.sqlite"
+        runner = Replay(path, variant, "tape", 0)
+        for ident in range(1, 4):
+            current = make_snapshot(now_ms=snap.now_ms + (ident - 1) * 5000)
+            await runner.apply(
+                Frame(ident, current.now_ms, current, {}, "CAPTURED"), Valuations(current)
+            )
+        assert runner.ledger.active_positions()
+        now = snap.now_ms + 15000
+        independent = make_snapshot(ask=D(".50"), now_ms=now).up_book
+        if book_state == "stale":
+            independent = replace(independent, timestamp_ms=now - 6000, received_ms=now - 6000)
+        raw = {
+            "streams": {
+                "session_id": "recorded-session",
+                "generation": 1,
+                "books": {independent.token_id: asdict(independent)},
+                "pending_books": {independent.token_id: now} if book_state == "pending" else {},
+                "trades": [],
+            }
+        }
+        await runner.apply(Frame(4, now, None, {}, "STALE_ORACLE", research=raw), None)
+        sells = [
+            json.loads(row[0])
+            for row in runner.ledger.db.execute(
+                "SELECT data FROM intents WHERE json_extract(data,'$.side')='SELL'"
+            )
+        ]
+        assert bool(sells) is (book_state == "fresh")
+        if sells:
+            assert sells[0]["reason"] == "STOP"
+        # A usable sale book does not establish the missing forecasting path.
+        row = json.loads(runner.ledger.db.execute("SELECT data FROM lab_rounds").fetchone()[0])
+        assert row["uncertain"]
+        runner.close()
+        resumed = Replay(path, variant, "tape", 0)
+        assert resumed.broker.streams is not None
+        assert resumed.broker.streams.session_id == "recorded-session"
+        assert resumed.broker.streams.books[independent.token_id] == independent
+        if book_state == "fresh":
+            next_book = replace(independent, timestamp_ms=now + 1000, received_ms=now + 1000)
+            raw["streams"]["books"][independent.token_id] = asdict(next_book)
+            await resumed.apply(Frame(5, now + 1000, None, {}, "STALE_ORACLE", research=raw), None)
+            sold = resumed.ledger.db.execute(
+                "SELECT COUNT(*) FROM fills f JOIN intents i ON f.intent_id=i.id "
+                "WHERE json_extract(i.data,'$.side')='SELL'"
+            ).fetchone()[0]
+            assert sold > 0
+        resumed.close()
+
+    asyncio.run(run())
 
 
 def test_replay_restart_keeps_confirmation_and_does_not_duplicate_fills(tmp_path):

@@ -14,6 +14,26 @@ from btc5m.paper import PaperBroker
 from btc5m.service import atomic_json, notify
 
 
+def test_storage_timer_is_bounded_independent_and_never_loads_account_keys(tmp_path):
+    import runpy
+
+    installer = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/install_paper_service.py")
+    )
+    content = installer["unit"](
+        tmp_path,
+        tmp_path / "paper",
+        tmp_path / "config.toml",
+        storage=True,
+        env_file=tmp_path / "never-read.env",
+    )
+    timer = installer["storage_timer"]()
+    assert '"storage" "maintain"' in content and '"--enable-new"' in content
+    assert "Type=oneshot" in content and "WatchdogSec" not in content
+    assert "--env-file" not in content and "--execute" not in content
+    assert "OnUnitInactiveSec=60s" in timer and "WantedBy=timers.target" in timer
+
+
 def test_lab_service_is_continuous_public_only_and_separate_from_collector(tmp_path):
     import runpy
 

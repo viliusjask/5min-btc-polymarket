@@ -22,3 +22,7 @@ dist/
 !.env.example
 .superpowers/
 .mypy_cache/
+
+# Local unattended development state (never credentials)
+.autopilot/
+.local/

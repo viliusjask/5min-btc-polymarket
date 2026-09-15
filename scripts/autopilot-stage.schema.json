@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "reviewed_head", "reviewed_base", "findings"],
+  "properties": {
+    "status": {"type": "string", "enum": ["continue", "waiting", "complete", "approved", "changes_requested"]},
+    "summary": {"type": "string"},
+    "reviewed_head": {"type": "string"},
+    "reviewed_base": {"type": "string"},
+    "findings": {"type": "array", "items": {"type": "string"}}
+  }
+}

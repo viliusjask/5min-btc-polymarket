@@ -531,8 +531,21 @@ def compact_copy(
         closing(_open(source)) as original,
         closing(_open(destination, readonly=False)) as copied,
     ):
-        _paper(original)
-        original.backup(copied, pages=256, sleep=0.01)
+        # Pin a WAL read snapshot before stepping: separate-connection commits
+        # otherwise restart incremental backup indefinitely on a busy collector.
+        # Release it before compression so the source WAL can checkpoint again.
+        original.execute("BEGIN")
+        try:
+            _paper(original)
+            original.backup(
+                copied,
+                pages=256,
+                sleep=0.01,
+                # Returning to Python between steps also permits Ctrl-C.
+                progress=lambda _status, _remaining, _total: None,
+            )
+        finally:
+            original.rollback()
         copied.execute("PRAGMA journal_mode=DELETE")
         copied.execute("PRAGMA synchronous=FULL")
         count, highwater, digest = _event_digest(copied)
@@ -551,7 +564,7 @@ def compact_copy(
             "highwater": highwater,
             "event_sha256": digest,
             "created_ms": time.time_ns() // 1000000,
-            "wallet": original.execute("SELECT value FROM meta WHERE key='wallet'").fetchone()[0],
+            "wallet": copied.execute("SELECT value FROM meta WHERE key='wallet'").fetchone()[0],
             "source_guard": source_guard,
         }
         enable_compaction(copied)

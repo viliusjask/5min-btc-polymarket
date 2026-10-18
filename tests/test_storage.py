@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -26,6 +27,127 @@ def populated(tmp_path, count=19):
             ],
         )
     return ledger
+
+
+def test_online_copy_finishes_during_wal_appends_then_guarded_sync_keeps_exact_tail(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from btc5m import storage
+
+    ledger = populated(tmp_path, count=4000)
+    source, target = ledger.path, tmp_path / "compact.sqlite"
+    expected = ledger.db.execute("SELECT * FROM events ORDER BY id").fetchall()
+    assert ledger.db.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+    real_open = storage._open
+    real_enable = storage.enable_compaction
+    steps, committed = [], []
+
+    def append():
+        with closing(sqlite3.connect(source, timeout=0.5)) as db, db:
+            cursor = db.execute(
+                "INSERT INTO events(kind,at_ms,data) VALUES ('DECISION',9000,'{\"tail\":true}')"
+            )
+            db.execute("INSERT OR REPLACE INTO measurements VALUES ('latest','{\"value\":2}')")
+            return cursor.lastrowid
+
+    def enable(db):
+        # The source snapshot must not pin an ever-growing WAL during compression.
+        assert ledger.db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (0, 0, 0)
+        return real_enable(db)
+
+    class InterleavedSource:
+        def __init__(self, db):
+            self.db = db
+
+        def __getattr__(self, name):
+            return getattr(self.db, name)
+
+        def backup(self, destination, **kwargs):
+            original_progress = kwargs.pop("progress", None)
+
+            def progress(status, remaining, total):
+                steps.append((remaining, total))
+                # Bound a broken backup by steps, not by machine-dependent wall time.
+                assert len(steps) < 20, "backup restarted after each concurrent commit"
+                if remaining:
+                    committed.append(writer.submit(append).result(timeout=2))
+                if original_progress is not None:
+                    original_progress(status, remaining, total)
+
+            return self.db.backup(destination, progress=progress, **kwargs)
+
+    def opened(path, **kwargs):
+        db = real_open(path, **kwargs)
+        return InterleavedSource(db) if path == source else db
+
+    monkeypatch.setattr(storage, "_open", opened)
+    monkeypatch.setattr(storage, "enable_compaction", enable)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as writer:
+            result = storage.compact_copy(source, target, before_ms=20000, guarded=True)
+        assert len(committed) >= 2
+        assert all(left[0] > right[0] for left, right in zip(steps, steps[1:], strict=False))
+        assert result["highwater"] == 4000
+        with closing(real_open(target)) as copied:
+            assert copied.execute("SELECT * FROM events ORDER BY id").fetchall() == expected
+            assert copied.execute("SELECT * FROM measurements").fetchall() == []
+        expected += ledger.db.execute("SELECT * FROM events WHERE id>4000 ORDER BY id").fetchall()
+        with storage.prepare_guarded_sync(source, target) as prepared:
+            ledger.close()
+            synced = prepared.sync()
+        assert synced["appended_events"] == len(committed)
+        with closing(real_open(target)) as copied:
+            assert copied.execute("SELECT * FROM events ORDER BY id").fetchall() == expected
+            assert copied.execute("SELECT * FROM measurements").fetchall() == [
+                ("latest", '{"value":2}')
+            ]
+    finally:
+        ledger.close()
+
+
+def test_interrupted_online_copy_releases_source_snapshot_and_preserves_original(tmp_path, monkeypatch):
+    from btc5m import storage
+
+    ledger = populated(tmp_path, count=4000)
+    source, target = ledger.path, tmp_path / "incomplete.sqlite"
+    expected = ledger.db.execute("SELECT * FROM events ORDER BY id").fetchall()
+    real_open = storage._open
+
+    class InterruptedSource:
+        def __init__(self, db):
+            self.db = db
+
+        def __getattr__(self, name):
+            return getattr(self.db, name)
+
+        def backup(self, destination, **kwargs):
+            def interrupted(_status, _remaining, _total):
+                raise KeyboardInterrupt
+
+            kwargs["progress"] = interrupted
+            return self.db.backup(destination, **kwargs)
+
+    def opened(path, **kwargs):
+        db = real_open(path, **kwargs)
+        return InterruptedSource(db) if path == source else db
+
+    try:
+        with monkeypatch.context() as context:
+            context.setattr(storage, "_open", opened)
+            with pytest.raises(KeyboardInterrupt):
+                storage.compact_copy(source, target, before_ms=20000)
+        assert target.exists()  # Retained as explicitly incomplete, never installed.
+        assert ledger.db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (0, 0, 0)
+        assert ledger.db.execute("SELECT * FROM events ORDER BY id").fetchall() == expected
+        with ledger.db:
+            ledger.db.execute("INSERT INTO events(kind,at_ms,data) VALUES ('DECISION',30000,'{}')")
+        assert storage.compact_copy(source, tmp_path / "retry.sqlite", before_ms=20000)[
+            "events"
+        ] == 4001
+    finally:
+        ledger.close()
 
 
 def test_compaction_preserves_sql_rows_ids_and_resume_across_chunk_boundaries(tmp_path):

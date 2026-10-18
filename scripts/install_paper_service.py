@@ -29,8 +29,9 @@ def unit(
     port=8765,
     env_file=None,
     order_flow=False,
+    storage=False,
 ):
-    if dashboard and lab:
+    if sum((dashboard, lab, storage)) > 1:
         raise ValueError("select one service role")
     command = [
         checkout / ".venv/bin/btc5m",
@@ -64,12 +65,23 @@ def unit(
         command += ["--capture-flow"]
     if dashboard and env_file:
         command += ["--account", "--env-file", env_file]
+    if storage:
+        command = [
+            checkout / ".venv/bin/btc5m",
+            "storage",
+            "maintain",
+            "--runtime",
+            runtime,
+            "--enable-new",
+        ]
     return "\n".join(
         [
             "[Unit]",
             "Description=BTC5m "
             + (
-                "read-only dashboard"
+                "lossless paper storage maintenance"
+                if storage
+                else "read-only dashboard"
                 if dashboard
                 else "paper experiment lab"
                 if lab
@@ -78,12 +90,12 @@ def unit(
             "StartLimitIntervalSec=0",
             "",
             "[Service]",
-            "Type=" + ("simple" if dashboard else "notify"),
+            "Type=" + ("oneshot" if storage else "simple" if dashboard else "notify"),
             "WorkingDirectory=" + quote(checkout),
             "ExecStart=" + " ".join(quote(value, command=True) for value in command),
-            "Restart=on-failure",
+            "Restart=" + ("no" if storage else "on-failure"),
             "RestartSec=10",
-            "TimeoutStartSec=" + ("300" if lab else "120"),
+            "TimeoutStartSec=" + ("300" if lab or storage else "120"),
             "TimeoutStopSec=90",
             "KillSignal=SIGTERM",
             "KillMode=control-group",
@@ -93,10 +105,13 @@ def unit(
             "Environment=PYTHONDONTWRITEBYTECODE=1",
             "StandardOutput=journal",
             "StandardError=journal",
-            "SyslogIdentifier=btc5m-" + ("dashboard" if dashboard else "lab" if lab else "paper"),
+            "LogRateLimitIntervalSec=60s",
+            "LogRateLimitBurst=120",
+            "SyslogIdentifier=btc5m-"
+            + ("storage" if storage else "dashboard" if dashboard else "lab" if lab else "paper"),
             *(
                 []
-                if dashboard
+                if dashboard or storage
                 else [
                     "NotifyAccess=main",
                     "WatchdogSec=120",
@@ -107,6 +122,25 @@ def unit(
             "",
             "[Install]",
             "WantedBy=default.target",
+            "",
+        ]
+    )
+
+
+def storage_timer():
+    return "\n".join(
+        [
+            "[Unit]",
+            "Description=Periodic BTC5m paper history compression",
+            "",
+            "[Timer]",
+            "OnBootSec=30s",
+            "OnUnitInactiveSec=60s",
+            "AccuracySec=5s",
+            "Unit=btc5m-storage.service",
+            "",
+            "[Install]",
+            "WantedBy=timers.target",
             "",
         ]
     )
@@ -130,6 +164,11 @@ def main():
         action="store_true",
         help="enable flow capture and a separate btc5m-flow-lab worker; preserve the original lab service",
     )
+    parser.add_argument(
+        "--storage-only",
+        action="store_true",
+        help="install only compact-history maintenance; every active reader must support its decoder",
+    )
     args = parser.parse_args()
     checkout = Path(__file__).resolve().parents[1]
     runtime, config = args.runtime.resolve(), args.config.resolve()
@@ -145,7 +184,13 @@ def main():
     directory = Path.home() / ".config/systemd/user"
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
-    services = [("btc5m-paper", False, False), ("btc5m-dashboard", True, False)]
+    if args.storage_only and (args.lab or args.order_flow):
+        parser.error("--storage-only cannot repoint a lab or collector")
+    services = (
+        [("btc5m-storage", False, False)]
+        if args.storage_only
+        else [("btc5m-paper", False, False), ("btc5m-dashboard", True, False)]
+    )
     if args.lab:
         services.append(("btc5m-lab", False, True))
     if args.order_flow:
@@ -163,10 +208,17 @@ def main():
                 port=args.port,
                 env_file=args.env_file.resolve() if args.env_file else None,
                 order_flow=args.order_flow and (not lab or name == "btc5m-flow-lab"),
+                storage=args.storage_only,
             )
         )
         os.chmod(temporary, 0o600)
         temporary.replace(target)
+    if args.storage_only:
+        timer = directory / "btc5m-storage.timer"
+        temporary = timer.with_suffix(".tmp")
+        temporary.write_text(storage_timer())
+        os.chmod(temporary, 0o600)
+        temporary.replace(timer)
     # Older systemd user verification creates manager sockets. Isolate its runtime
     # so a syntax check cannot replace the running user's control socket.
     with tempfile.TemporaryDirectory(prefix="btc5m-unit-check-") as verify_runtime:
@@ -176,17 +228,20 @@ def main():
                 "--user",
                 "verify",
                 *(str(directory / (name + ".service")) for name, _, _ in services),
+                *([str(directory / "btc5m-storage.timer")] if args.storage_only else []),
             ],
             env={**os.environ, "XDG_RUNTIME_DIR": verify_runtime},
             check=True,
         )
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    subprocess.run(
-        ["systemctl", "--user", "enable", *(name + ".service" for name, _, _ in services)],
-        check=True,
+    enabled = (
+        ["btc5m-storage.timer"]
+        if args.storage_only
+        else [name + ".service" for name, _, _ in services]
     )
+    subprocess.run(["systemctl", "--user", "enable", *enabled], check=True)
     print("Installed and enabled. Start after the previous owners release these journals/port:")
-    print("systemctl --user start " + " ".join(name + ".service" for name, _, _ in services))
+    print("systemctl --user start " + " ".join(enabled))
 
 
 if __name__ == "__main__":

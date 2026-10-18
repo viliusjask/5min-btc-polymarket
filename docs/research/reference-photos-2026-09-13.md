@@ -1,0 +1,170 @@
+# Reference photo inspection, September 13, 2026
+
+The user supplied ten phone screenshots in the ignored local directory `.local/` as project
+inspiration. This register records what each image shows, whether the idea was already
+handled in earlier research, what was independently checked, and the decision. Raw images
+are not copied into the repository. File names are the user's; content summaries are ours.
+All ten files opened and were legible; none was unreadable.
+
+Decision codes: **accept** (already implemented or adopted), **test** (registered as a
+hypothesis in [the research plan](../plans/profitable-subset-research.md)), **defer**
+(needs an unavailable prerequisite), **reject** (out of scope or unverifiable and not useful).
+
+| File | Visible source | What it claims | Prior coverage | Decision |
+|---|---|---|---|---|
+| `VuKZUhPe.jpg` | X post by @igus_ai ("gus"), translated from Spanish | Took an open-source GitHub bot, tweaked it in Claude Code, USD 250 became USD 13,000; USD 600 after the first night | Historical: [trader evidence](trader-sentiment.md), [upstream assessment](upstream-assessment.md) | reject the return claim; accept the mechanism only as the baseline below |
+| `SvBga7VA.jpg` | Continuation of the same post | Rule: wait until about two minutes before the round closes; require a USD 70 to 100 BTC move in the round; buy with the move at 0.80 to 0.99; "cover just a small part of the position only if the market gets too imbalanced". The parenthetical example is cut off by the reply bar; only "(e.g. 95/5)" is partly visible on a second look on September 13. Neither the hedge trigger nor its size is stated | Historical: the `momentum` comparator implements a modified version; the literal rule is not registered | test the no-hedge rule as the "screenshot literal (approximation)" baseline (B2 in the plan); defer the hedge variant because its trigger and size are undefined |
+| `5K48FChw.jpg` | Continuation: link to `github.com/Novals83/5min-...`, a PowerShell log, a quoted @MikuBTC video, dated 05 Sep 26, 164K views | Log rows show fills at 0.81 to 0.96 settling at 1.00 with the sizes 260, 201, 137, 225, 48, 82 and 50 shares; one row reads "book flipped 95/5 -> micro-hedge -1.69" on the 48-share 0.81 fill. That single row is the only quantitative trace of the hedge (a USD 1.69 cost on a USD 38.88 position, about 4%) | Historical: the upstream repository was audited; its tracked code cannot place the shown orders | reject as evidence; the log is not a trade export and the repository lacks the runner |
+| `Cs8y9ttZ.jpg` | X post by @Dan1ro0 ("Daniro"), 21h old at 21:24 local | "Grok Bot" harvests BTC volatility, USD 2,701 a day, USD 40,522 after 4,127 predictions, 11 setups an hour, six agents; buy Up and Down at different times so the pair costs under 100 cents | Historical: [inventory ruling](inventory-strategy-ruling.md); `passive_pairs`/`inventory_pairs` implemented | accept as implemented; test only the maker-rebate sensitivity (H7) |
+| `hnvzzqwv.jpg` | Continuation | Paired = min(Qup, Qdown); the remainder stays directional while "agents still see an edge"; account AdanaKebab, 4,127 predictions, 52% win rate, three largest wins about USD 2,000 each | Historical: the September 6 check found about USD 40,352 venue profit at AdanaKebab; strategy attribution unverified | accept as implemented; no new mechanism |
+| `EMSBUVWN.jpg` | X post by @0xboan ("boan"), 19h old | Funded "Grok Bot" with 0 ETH on Robinhood; 0 to 2.31 ETH in 24 hours; it launches fresh tokens and "collects its cut off every trade against them, win or lose for the buyer" | New | reject |
+| `qg8QEf1H.jpg` | Continuation | 82% win rate, balance flat for two hours at hour eight, "fee income never stopped", one evening setup, a dashboard screenshot | New | reject |
+| `R8zPrPEz.jpg` | X post by @Argona0x, 1d old | "STAMPEDE" watches wallets on Robinhood Chain launchpads; USD 100 to 2,640 in 41 minutes; a runner is a herd of wallets leaving one coin and entering the next; counts 54 wallets making the same move in 8 minutes | New | reject the venue; test the one transferable feature (wallet breadth, H6f) if archived trades carry a trader identifier |
+| `a-JU3iOe.jpg` | Continuation | The video is "a recorded replay of one real hour at 20x"; "three of those back to back" gives USD 1,839,000 | New | reject |
+| `C9OMqXbN.jpg` | X post by @harrychow_ | Hiring a USD 300K intern for Pinetree Research; apply by building with the Solari SDK | New | reject; not a trading idea |
+
+## What was independently checked
+
+- The current five-minute BTC market on September 13 (`btc-updown-5m-1789295700`, Gamma market
+  4493717) still resolves on the Chainlink BTC/USD 60-second TWAP against the price at the start
+  of the range. The bot's settlement model therefore still matches the live rule. Gamma also
+  reports a 0.001 price tick, a 5-share minimum order, and liquidity rewards needing 50 shares
+  within a 4.5-cent spread. Rewards are irrelevant to a USD 5 trade budget.
+- Polymarket's fee page still states `fee = C x feeRate x p x (1 - p)` with crypto `feeRate`
+  0.07, zero maker fees and a daily maker rebate of 20% of collected fees. A third-party article
+  claims 25%; the official page is used. [Fee documentation](https://docs.polymarket.com/trading/fees).
+- Grok Bot is a real SpaceXAI agent product and Robinhood Chain went live on July 1, 2026
+  per public coverage. The memecoin profit claims in the boan and Argona posts have no wallet
+  identifier, no trade export and no independent record. They were not verified. The boan
+  mechanism (launch tokens, take a cut from buyers "win or lose") is not a trading strategy
+  we can evaluate or should copy.
+- The gus post's claimed return remains unverified, as on September 6. The @MikuBTC video
+  and the 164K view count are audience numbers, not trading records.
+- The Daniro figures in the new screenshots (USD 40,522 after 4,127 predictions) are
+  consistent with the September 6 venue check (about USD 40,352). A 52% per-prediction win
+  rate with positive total profit is consistent with a paired-inventory or maker account; it
+  says nothing about whether a USD 5 taker bot can obtain the same fills.
+
+## What is new since September 6
+
+The only new trading content is the memecoin material (boan, Argona), which concerns a
+different chain, different instruments and, in boan's case, a fee-extraction mechanism rather
+than a forecast. The BTC-specific ideas (gus rule, Daniro pairing) were already assessed and
+implemented in modified form. The two useful residues are:
+
+1. Register the literal gus rule as a baseline so the modified `momentum` rule is compared
+   with the idea that motivated it, not only with the market.
+2. Treat maker economics (zero fee plus rebate) as a sensitivity scenario for the pairing
+   strategies, because the AdanaKebab statistics fit a maker profile better than a taker one.
+   The rebate applies only to filled maker orders and is a pro-rata share of a per-market
+   pool; the plan's H7 credits it on passive fills only.
+
+The gus hedge ("cover a small part ... e.g. 95/5") has no defined trigger or size in either
+photo, so it is deferred rather than guessed. The plan records one bounded interpretation
+for a possible later trial and labels the no-hedge baseline an approximation.
+
+Neither residue is evidence of profitability. See the plan for how they are tested.
+
+## Third inspection, plan revision 3 (September 13)
+
+All ten files opened and were legible again. No new mechanism appeared. One detail in
+`5K48FChw.jpg` was checked arithmetically this time: every profit row equals shares times
+(1.00 minus fill price) exactly (260 x 0.05 = 13.00, 201 x 0.09 = 18.09, 137 x 0.11 = 15.07,
+225 x 0.04 = 9.00, 48 x 0.19 = 9.12, 82 x 0.11 = 9.02, 50 x 0.16 = 8.00) and every balance
+line adds the shown profit and the one hedge cost without any fee. The log therefore
+ignores the venue taker fee (about USD 0.86 on the 260-share 0.95 fill alone), enters seven
+consecutive rounds with seven wins, and sizes each trade at roughly half the shown balance
+(260 x 0.95 = USD 247 of a USD 455 balance). This strengthens the rejection of the log as
+evidence and confirms why the plan applies `fee_for` on every executed leg and keeps a
+per-round USD budget rather than a balance fraction.
+
+## Fourth inspection, plan revision 4 (September 13)
+
+All ten files opened and were legible again. No new mechanism or claim appeared beyond
+what the sections above record. The revision 4 changes (per-attempt activation, separate
+entry and exit timing, two bootstrap populations) come from the independent review of the
+plan, not from the photos. The gus thread's "last two minutes" and "0.80 to 0.99" entry
+band remain the only executable details in any BTC photo, and they are already the
+screenshot-literal baseline.
+
+## Fifth inspection, plan revision 5 (September 13)
+
+All ten files opened and were legible again. No new mechanism or claim appeared. The
+revision 5 changes (a stressed exit timeline with its own valid first fill, and per-day
+entered counts for the bootstrap) come from the independent review of the plan, not from
+the photos. Nothing in any photo bears on exit retry timing or on how unlabeled rounds are
+counted, so no photo decision changed.
+
+## Sixth inspection, plan revision 6 after local-work recovery (September 13)
+
+All ten files opened and were legible again. No new mechanism or claim appeared. One
+wording detail was re-read because revision 6 registers the screenshot baseline against a
+larger evidence base: the gus post says "check that BTC has already moved between $70 and
+$100 during that interval", and every PowerShell row in `5K48FChw.jpg` prints the move as
+"BTC +$78 in window". Both phrasings admit two readings: the move since the round opened,
+or the move inside the final two-minute window. The baseline keeps the opening-reference
+reading, because each log row shows one number per round and the tutorial thread speaks of
+the round's direction being "well defined" by then. The final-window reading is already
+covered by the existing 60-second continuation family in the lab (`momentum` recent-move
+policy), so it is not registered as a second baseline; the plan states the reading it uses.
+The revision 6 changes (recovered importer, storage and replay work; the strategy audit;
+book-only exit validity) come from the reconciled local branches and the September 8
+research, not from the photos, so no photo decision changed.
+
+## Seventh inspection, plan revision 7 (September 14)
+
+All ten files opened and were legible again. No new mechanism or claim appeared, and no
+revision 6 finding implicated a photo. The five findings concern the evaluator's exit book
+source, the existing-rule comparators, the holdout gate, the stop validator and the research
+fingerprint; each is answered from the code, not from the photos. One photo detail was
+re-read for the stop validation: the PowerShell log in `5K48FChw.jpg` fills at 0.81 to 0.96
+and the gus post buys "between $0.80 and $0.99", so the screenshot baseline's band lies far
+above the 0.08 stop and is unaffected by the corrected lower-edge rule; that baseline holds
+to settlement and registers no stop in any case. No photo decision changed.
+
+## Revision 8 (September 14): no reinspection
+
+The three revision 7 findings concern the evaluator's fidelity to the paper broker and the
+engine (all-or-none entries, floor-protected exit quotes, confirmation across snapshot-free
+frames). None implicates a photo, and the ten files in `.local/` carry the same
+modification times as on September 13. Under the stage rule that images are reinspected only
+when changed or implicated by a finding, none was opened this round. No photo decision changed.
+
+## Revision 9 (September 14): no reinspection
+
+The two revision 8 findings concern the evaluator's baseline budgets and ranking metric and
+a fixture's arithmetic. Neither implicates a photo, and the ten files in `.local/` carry
+the same modification times as on September 13. None was opened this round. The screenshot
+baseline is now registered at both budgets; at USD 5 it cannot buy an ask above 0.934, so
+its 0.95 to 0.99 range remains tradable only at USD 20, as recorded in revision 8. No photo
+decision changed.
+
+## Revision 10 (September 14): no reinspection
+
+The two revision 9 findings concern the no-trade baseline's place in the decision rule and
+the dataset's label validation. Neither implicates a photo, and the ten files in `.local/`
+carry the same modification times as on September 13. None was opened this round. No photo
+decision changed.
+
+## Revision 11 (September 14): no reinspection
+
+The two revision 10 findings concern the population over which a rule is compared with the
+filled baselines and the expected side of one label fixture. Neither implicates a photo,
+and the ten files in `.local/` carry the same modification times as on September 13
+(listed again today: all 2026-09-13 13:10). None was opened this round. The screenshot
+baseline is unchanged; it is now evaluated over each rule's decided rounds like the other
+filled baselines. No photo decision changed.
+
+## Revision 12 (September 14): no reinspection
+
+The single revision 11 finding concerns how a decided round is defined for the baseline
+comparison. It does not implicate a photo, and the ten files in `.local/` carry the same
+modification times as on September 13. None was opened this round. No photo decision changed.
+
+## Revision 13 (September 14): no reinspection
+
+The two revision 12 findings concern the timing of fixed-time decisions and the decision
+schedule of each hypothesis family. Neither implicates a photo, and the ten files in
+`.local/` carry the same modification times as on September 13. None was opened this
+round. The screenshot baseline is now labelled a scanning-schedule baseline over its 120 to
+90 s window, which is how it was already described. No photo decision changed.

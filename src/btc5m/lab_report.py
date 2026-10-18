@@ -38,8 +38,10 @@ def replay_report(replay: Replay, *, before_ms: int | None = None) -> dict[str, 
     for row in screens:
         events.update(row["execution"])
     reasons: Counter[str] = Counter()
+    external_limitations: Counter[str] = Counter()
     for row in screens:
         reasons.update(row["reasons"])
+        external_limitations.update(row.get("external_limitations", []))
     orders = []
     outcomes: Counter[str] = Counter()
     for raw, state in ledger.db.execute(
@@ -163,6 +165,8 @@ def replay_report(replay: Replay, *, before_ms: int | None = None) -> dict[str, 
         },
         "unresolved_rounds": sum(r["unresolved"] for r in rounds.values()),
         "uncertain_rounds": sum(r.get("uncertain", False) for r in screens),
+        "external_history_rounds": sum(bool(r.get("external_limitations")) for r in screens),
+        "external_limitations": dict(external_limitations),
         "observed_rounds": sum(r["screens"] > 0 for r in screens),
         "funnel": {
             "screens": sum(r["screens"] for r in screens),

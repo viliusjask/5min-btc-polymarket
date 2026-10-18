@@ -494,3 +494,152 @@ def test_build_holdout_refuses_without_matching_selection_then_isolates_rounds(t
     holdout_slugs = {r[0] for r in holdout}
     assert all(r[1] == "holdout" and r[2] >= record["holdout_start_ms"] for r in holdout)
     assert holdout_slugs and holdout_slugs.isdisjoint(dev_slugs)
+
+
+def _capture_labeled(path, specs, *, heartbeat_s):
+    """Append one tradable frame per round, then each round's label frame.
+
+    specs: iterable of (start_s, label) where label is the dict the recorder writes,
+    None for the recorder's conflicted marker, or "absent" for no label frame at all.
+    Every round's snapshot carries reference_price 80000 (from make_snapshot).
+    """
+    events: list[tuple[int, str, object]] = []
+    for start_s, label in specs:
+        events.append(((start_s + 60) * 1000, "snap", (start_s, 60)))
+        if label != "absent":
+            events.append(((start_s + 305) * 1000, "label", (start_s, label)))
+    events.append((heartbeat_s * 1000, "beat", None))
+    events.sort(key=lambda event: event[0])
+    with Tape(path) as tape:
+        for now_ms, kind, payload in events:
+            if kind == "snap":
+                start_s, off = payload
+                tape.append(now_ms, _snapshot(start_s, (start_s + off) * 1000))
+            elif kind == "label":
+                start_s, label = payload
+                tape.append(now_ms, None, labels={f"btc-updown-5m-{start_s}": label})
+            else:
+                tape.append(now_ms, None)
+    return path
+
+
+def test_label_status_orders_checks_by_first_failure():
+    ls = dataset.label_status
+    ok = {"condition_id": "c", "opening": "80000", "final": "80500"}
+    assert ls("c", "80000", ok, present=True) == "official"
+    assert ls("c", "80000", None, present=False) == "missing"
+    assert ls("c", "80000", None, present=True) == "conflicted"
+    assert ls("c", "80000", {**ok, "condition_id": "d"}, present=True) == "identity_mismatch"
+    # Identity is checked before price: a wrong condition wins over a bad opening.
+    bad_ident = {"condition_id": "d", "opening": "NaN", "final": "80500"}
+    assert ls("c", "80000", bad_ident, present=True) == "identity_mismatch"
+    for bad in ("NaN", "Infinity", "0", "-5"):
+        assert ls("c", "80000", {**ok, "opening": bad}, present=True) == "invalid_price"
+        assert ls("c", "80000", {**ok, "final": bad}, present=True) == "invalid_price"
+    assert ls("c", "80000", {"condition_id": "c", "final": "80500"}, present=True) == "invalid_price"
+    assert ls("c", None, ok, present=True) == "no_reference"
+    assert ls("c", "80001", ok, present=True) == "anchor_mismatch"
+    # A reference within ANCHOR_TOLERANCE (1e-8) of the opening still settles.
+    assert ls("c", "80000.00000001", ok, present=True) == "official"
+
+
+def test_build_stores_label_validation_columns_and_manifest_counts(tmp_path):
+    base = START
+    specs = [
+        (base + 0, {"condition_id": "condition", "opening": "80000", "final": "80500"}),
+        (base + 3600, {"condition_id": "condition", "opening": "80001", "final": "80500"}),
+        (base + 7200, {"condition_id": "other", "opening": "80000", "final": "80500"}),
+        (base + 10800, None),
+        (base + 14400, "absent"),
+    ]
+    source = tmp_path / "capture.sqlite"
+    _capture_labeled(source, specs, heartbeat_s=base + 50000)
+    freeze = tmp_path / "freeze.json"
+    record = dataset.freeze(source, freeze, now_ms=(base + 50000) * 1000)
+    out = tmp_path / "dev"
+    manifest = dataset.build(source, freeze, out, train_end_ms=record["validation_end_ms"])
+
+    rows = {
+        row[0]: row[1:]
+        for row in _read(
+            out / "dataset.sqlite",
+            "SELECT slug,condition_id,label_condition_id,label_opening,final_label,label_status "
+            "FROM rounds",
+        )
+    }
+
+    def row(off):
+        return rows[f"btc-updown-5m-{base + off}"]
+
+    assert row(0) == ("condition", "condition", "80000", "80500", "official")
+    # Opening is stored verbatim even when the anchor test fails.
+    assert row(3600) == ("condition", "condition", "80001", "80500", "anchor_mismatch")
+    assert row(7200) == ("condition", "other", "80000", "80500", "identity_mismatch")
+    assert row(10800) == ("condition", None, None, None, "conflicted")
+    assert row(14400) == ("condition", None, None, None, "missing")
+
+    assert manifest["label_status_per_split"]["train"] == {
+        "official": 1,
+        "anchor_mismatch": 1,
+        "identity_mismatch": 1,
+        "conflicted": 1,
+        "missing": 1,
+    }
+    # "rounds without a label" is now every status other than official.
+    assert manifest["unlabeled_per_split"] == {"train": 4}
+
+
+def test_label_status_matches_paper_broker_resolve(tmp_path):
+    import asyncio
+    import random
+
+    from btc5m.config import Config
+    from btc5m.ledger import Ledger
+    from btc5m.paper import PaperBroker
+    from test_pair_execution import WALLET
+
+    base_market = make_snapshot().market
+    ledger = Ledger(tmp_path / "paper.sqlite", WALLET, environment="paper")
+    broker = PaperBroker(ledger, Config(), clock=lambda: 0.0)
+    rng = random.Random(20260915)
+    refs = ["80000", "80000.00000001", "79999.5", None]
+    conds = ["condition", "other"]
+    openings = ["80000", "80001", "79999.5", "NaN", "0", "-5", "Infinity"]
+    finals = ["80000", "80000.5", "79999.5", "NaN", "Infinity"]
+    for _ in range(50):
+        ref, cond = rng.choice(refs), rng.choice(conds)
+        opening, final = rng.choice(openings), rng.choice(finals)
+        label = {"condition_id": cond, "opening": opening, "final": final}
+        status = dataset.label_status("condition", ref, label, present=True)
+        market = replace(
+            base_market,
+            condition_id="condition",
+            reference_price=(Decimal(ref) if ref is not None else None),
+        )
+
+        def _ref(market_arg, o=opening, f=final, c=cond):
+            return None if c != market_arg.condition_id else (Decimal(o), Decimal(f))
+
+        broker.final_reference = _ref
+        evidence = asyncio.run(broker.resolve(market))
+        context = (ref, cond, opening, final, status, evidence)
+        assert (status == "official") == (evidence is not None), context
+        if status == "official":
+            assert evidence.numerators[0] == int(Decimal(final) >= Decimal(opening)), context
+
+
+def test_label_columns_are_part_of_content_hash(tmp_path):
+    # Same final label, different opening: official vs anchor_mismatch. The only rows that
+    # differ are the new label_opening and label_status columns, so the hash must move.
+    def build_with(opening):
+        directory = tmp_path / f"o{opening}"
+        source = directory / "capture.sqlite"
+        source.parent.mkdir()
+        label = {"condition_id": "condition", "opening": opening, "final": "80500"}
+        _capture_labeled(source, [(START, label)], heartbeat_s=START + 50000)
+        freeze = directory / "freeze.json"
+        record = dataset.freeze(source, freeze, now_ms=(START + 50000) * 1000)
+        dataset.build(source, freeze, directory / "dev", train_end_ms=record["validation_end_ms"])
+        return dataset.content_hash(directory / "dev" / "dataset.sqlite")
+
+    assert build_with("80000") != build_with("80001")

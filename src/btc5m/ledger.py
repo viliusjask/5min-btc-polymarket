@@ -35,6 +35,7 @@ from btc5m.execution_types import (
     ResolutionEvidence,
     SigningDomain,
 )
+from btc5m.storage import register_event_reader
 
 D = Decimal
 TERMINAL = ("SETTLED", "REJECTED")
@@ -136,6 +137,11 @@ class Ledger:
         self._lock: int | None = None
         if readonly:
             self.db = sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True, timeout=5)
+            try:
+                register_event_reader(self.db)
+            except BaseException:
+                self.close()
+                raise
         else:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(self.path.parent, 0o700)
@@ -150,6 +156,11 @@ class Ledger:
             os.close(fd)
             os.chmod(self.path, 0o600)
             self.db = sqlite3.connect(self.path, timeout=5)
+            try:
+                register_event_reader(self.db)
+            except BaseException:
+                self.close()
+                raise
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA synchronous=FULL")
             self.db.executescript("""

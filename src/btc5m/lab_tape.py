@@ -341,7 +341,7 @@ class Tape:
                             "archive": archive,
                         }
                     ).encode(),
-                    1,
+                    6,
                 )
                 cursor = self.db.execute(
                     "INSERT INTO frames(now_ms,slug,payload,checksum) VALUES (?,?,?,?)",

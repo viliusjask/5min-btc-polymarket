@@ -1,3 +1,577 @@
+# Progress: research re-plan, revision 13 after the eleventh independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`c32e3d3` (revision 12) returned one P1 and one P2 finding, both checked against the
+plan's own text and accepted. Revision 13 of [the plan](plans/profitable-subset-research.md)
+answers them in a table at the top and adds a decision schedule table:
+
+- **Backdated fixed-time decisions (P1).** Revision 12 let a fixed-time rule decide on the
+  latest eligible frame before its time T, so a frame at T - 200 ms could decide and a fresh
+  book at T + 100 ms could fill under 250 ms latency. A fixed-time decision now happens on
+  the first decision-eligible frame at or after T inside a processing window of
+  `[T, T + 5,000 ms]`; the feature snapshot and the decision timestamp are the same frame,
+  and activation and deadline are measured from it. The reviewer's fixture is registered:
+  frames at T - 200, T + 100 (snapshot-free, fresh book), T + 400 and T + 700 decide on
+  T + 400 and fill on T + 700, and the test asserts no fill on T + 100; a variant with an
+  eligible T + 100 frame decides there and cannot fill on that frame.
+- **Decision schedules per family (P2).** H1 to H4 are registered with entry windows, not
+  fixed times. The plan now has a schedule table: scanning families (H1 to H4, the
+  screenshot baseline, E1 to E5) run their condition on every eligible frame of the window
+  and decide on the first qualifying frame, one order per round; a round with eligible
+  frames and no qualifying frame is decided with `no_signal`; fixed-time families (H5, the
+  market favorite at 120, 60 and 30 s) use the processing-window rule. Grid rows name their
+  schedule. Fixtures: an H1 signal on the third eligible frame orders there and not
+  earlier; an H1 round with no signal is decided and in the population; an H4 signal on the
+  last eligible frame with no fill frame after it is `unfilled_no_frame` and decided; an H3
+  round with only stale frames is `no_decision_frame`.
+
+No photo was reinspected this round: neither finding implicates a photo, and the ten files
+are unchanged since September 13. Docs only; no code, runtime data, service or credential
+was touched. Author gate through the shared semaphore: see the briefing for the result.
+
+Next: independent PLAN review of revision 13 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record, the label validation columns
+and the holdout gate.
+
+# Progress: research re-plan, revision 12 after the tenth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`fa9082d` (revision 11) returned one P1 finding, checked against the plan's execution
+validity table and accepted. Revision 12 of [the plan](plans/profitable-subset-research.md)
+answers it in a table at the top and rewrites the population paragraph:
+
+- **Decision eligibility (P1).** Revision 11 defined a decided round as one on which the
+  rule reached a frame passing the execution validity tests, but those tests start at
+  `decision_ms + latency_ms`, so a decision frame can never pass them, and a population
+  built on later fill frames would depend on future liquidity and drop refusals. A frame is
+  now decision-eligible when its `now_ms` is inside the rule's entry window, it carries the
+  round's snapshot, and `strategy._safety_reason` returns `None` on that snapshot
+  (`src/btc5m/strategy.py:86`, the value B1 stores as `ticks.rejection`). No order,
+  activation, deadline, book-activation, ladder or fill test is involved. Entry windows are
+  fixed per rule (5,000 ms up to a fixed decision time; H1 and screenshot scan windows; the
+  configured `entry_min_seconds` to `entry_max_seconds` window for E1 to E5). A round is
+  decided when at least one eligible frame exists, whatever follows; `baseline_undecided`
+  uses the same definition under the baseline's own window. Four fixtures: a valid decision
+  followed by no fill frame (`unfilled_no_frame`) or only pre-activation books stays in the
+  population at net zero; the filter fixture's 40 price-condition abstentions are asserted
+  to be in the population; a round whose window frames all fail `_safety_reason` is
+  `no_decision_frame` and `baseline_undecided`; and the eligible frame in the first case is
+  asserted to fail execution validity test 1, proving the two definitions differ.
+
+No photo was reinspected this round: the finding does not implicate a photo, and the ten
+files are unchanged since September 13. Docs only; no code, runtime data, service or
+credential was touched. The runner commits between revisions 11 and 12 (`a3ba2e3` to
+`edb2cbc`) are root's tooling changes and are unrelated to the plan. Author gate through
+the shared semaphore: see the briefing for the exact result.
+
+Next: independent PLAN review of revision 12 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record, the label validation columns
+and the holdout gate.
+
+# Progress: research re-plan, revision 11 after the ninth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`431cd2f` (revision 10) returned one P1 and one P2 finding. Both were checked and accepted.
+Revision 11 of [the plan](plans/profitable-subset-research.md) answers them in a table at
+the top and rewrites the affected sections:
+
+- **Baseline comparison population (P1).** Revision 9 compared a rule with each filled
+  baseline on paired rounds, the rule's entered rounds on which the baseline also filled.
+  H5 ("buy the favorite at T-60 when the ask is in the band") and `market_favorite_60@20`
+  ("buy the favorite at T-60") place the same order on every round H5 enters, so on paired
+  rounds their nets are identical and the comparison could never score the band. The
+  population is now the rule's **decided rounds**: every round on which the rule reached a
+  frame passing the execution validity tests inside its entry window, whether it entered,
+  was refused or abstained. The filled baseline is evaluated on every decided round with
+  its own frame, token, capital-matched order and all-or-none fill; `baseline_undecided`,
+  `baseline_not_sized` by reason, `baseline_unfilled` and the rule's own abstentions and
+  refusals stay in the population at net zero and cost basis zero. Each side's metric is
+  net per USD of cost basis over its own filled rounds in that population; the floor is 30
+  baseline-filled rounds (`insufficient_baseline_fills`). The report adds the
+  shared/rule-only/baseline-only/opposed decomposition and net per decided round. The
+  reviewer's fixture is registered with numbers computed today from `strategy._quote` and
+  `fee_for`: 100 decided rounds, a band rule entering 60 at 0.92 (cost basis 18.704160
+  each), the favorite at 0.80 on the 40 excluded rounds; with 28 of 40 excluded wins the
+  baseline's metric is -0.0391085 against the rule's 0.0268583 and the rule beats it; with
+  35 of 40 the baseline's 0.0476981 wins and the verdict is `baseline_not_beaten`; the 60
+  shared rounds carry identical nets in both variants. Random side stays on the rule's
+  entered rounds on purpose (it measures the side choice, not the selection).
+- **Corrected-anchor label fixture (P2).** The revision 10 fixture kept final 80000.5,
+  moved the opening to 80000 and expected Down; `PaperBroker.resolve` returns Up for
+  `final >= opening` (`src/btc5m/paper.py:491`). The case now expects Up and a win for the
+  entered Up round; a separate Down case (opening 80000, final 79999.5) expects a full
+  loss; both are checked against `PaperBroker.resolve` in the fixture.
+
+No photo was reinspected this round: neither finding implicates a photo, and the ten files
+are unchanged since September 13 (the register records the reason). Docs only; no code,
+runtime data, service or credential was touched. Author gate through the shared semaphore:
+see the briefing for the exact result.
+
+Next: independent PLAN review of revision 11 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record, the label validation columns
+and the holdout gate.
+
+# Progress: research re-plan, revision 10 after the eighth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`51550f7` (revision 9) returned two P1 findings. Both were checked against the code and
+accepted. Revision 10 of [the plan](plans/profitable-subset-research.md) answers them in a
+table at the top and rewrites the affected sections:
+
+- **No-trade baseline (P1).** Revision 9 applied the paired-round comparison and its
+  30-round floor to every baseline, and the first registered baseline is no trade, which
+  never fills and deploys no cost basis (`summarize` would return `None` for its metric), so
+  no candidate could pass. The baseline set is now split: no trade is compared over the
+  rule's full sensitivity population (the rule beats it exactly when the stressed run's
+  `sensitivity.net` over every entered round is above zero), exempt from pairing and from
+  the cost-basis division, with `kind: no_trade` and `paired` null in its comparison record;
+  pairing, `baseline_not_sized`, `baseline_unfilled`, the 30-round floor and
+  `BASELINE_BUDGET_MISMATCH` apply to the four filled baselines only. A new fixture runs the
+  complete baseline criterion (no trade plus four filled baselines at the rule's budget) and
+  five single-change variants that each fail with the named reason, and drives the full
+  decision rule once.
+- **Label identity and anchor validation (P1).** `_finalize_rounds` keeps only
+  `label["final"]` (`src/btc5m/dataset.py:395-400`) although the tape label carries
+  `condition_id`, `opening` and `final` (`src/btc5m/comparison.py:346-350`), and the
+  `rounds` table has no `condition_id` column. The paper broker settles only when the
+  label's condition matches, both prices are finite and positive, and the opening equals
+  `market.reference_price` within `ANCHOR_TOLERANCE` (`src/btc5m/paper.py:477-500`,
+  `src/btc5m/market_data.py:356-371`). Without the opening, the evaluator would have to
+  compare the final with the captured anchor, which is the reviewer's failure (captured
+  80000, official 80001, final 80000.5 scored Up although the official outcome is Down).
+  B1 now stores `condition_id`, `label_condition_id`, `label_opening`, `final_label` and
+  `label_status` (`official`, `missing`, `conflicted`, `identity_mismatch`,
+  `invalid_price`, `no_reference`, `anchor_mismatch`, in that test order), validated at
+  extraction with the broker's tests and `ANCHOR_TOLERANCE` imported from `market_data`;
+  the evaluator settles only `official` rounds with the side `final >= opening` on the
+  label's own prices, and any other status leaves an entered round unresolved (observed
+  null, sensitivity payout 0). Fixtures: the reviewer's mismatched opening, a wrong
+  condition, valid equality settlement, invalid prices, a conflicted `None` label, a missing
+  label, and a 50-case parity test against `PaperBroker.resolve`.
+
+No photo was reinspected this round: neither finding implicates a photo, and the ten files
+are unchanged since September 13 (the register records the reason). Docs only; no code,
+runtime data, service or credential was touched. Author gate through the shared semaphore:
+see the briefing for the exact result.
+
+Next: independent PLAN review of revision 10 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record, the label validation columns
+and the holdout gate.
+
+# Progress: research re-plan, revision 9 after the seventh independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`cffc984` (revision 8) returned one P1 and one P2 finding. Both were checked and accepted.
+Revision 9 of [the plan](plans/profitable-subset-research.md) answers them in a table at
+the top and rewrites the affected sections:
+
+- **Capital-matched baselines and a per-USD metric (P1).** Every baseline used the USD 20
+  hypothesis budget while E1 to E5 use the production USD 5, and both the baseline
+  criterion and the overfitting ranking compared dollar net per entered round. The sizing
+  check shows why that decides things: a 0.82 ask with 30 displayed sizes to principal 4.15
+  at USD 5 and 18.26 at USD 20, so one winning round nets 0.8587 or 3.7782 for the same
+  economics (a factor of 4.4), while net per USD of cost basis is 0.2043 at both. The plan
+  now registers every baseline once per budget (`@5`, `@20`), compares a rule only with the
+  baselines at its own budget (`BASELINE_BUDGET_MISMATCH` otherwise), uses net per USD of
+  cost basis for the comparison and the overfitting ranking (`summarize` returns
+  `cost_basis_deployed` and `net_per_cost_basis`), and compares on paired rounds, the
+  rule's entered rounds on which the baseline's own capital-matched order also filled
+  all-or-none. Sizing refusals are preserved and counted (`baseline_not_sized` by reason,
+  `baseline_unfilled`), never scaled: at USD 5 the `_quote` ceiling is 4.67 / 5 = 0.934
+  whatever the band, so a USD 5 baseline cannot buy an ask above 0.934 (0.934 sizes,
+  0.935 is `BELOW_MINIMUM_SIZE`, checked today). Fewer than 30 paired rounds is
+  `insufficient_pairing` and fails the criterion. The sign-based criteria are unchanged.
+  Fixtures: identical economics at both budgets give equal net per USD of cost basis to four
+  decimals and the same verdict; refused rounds leave the pair untouched; permuting budgets
+  across the grid leaves the overfitting table unchanged; 29 paired rounds fail, 30 compare.
+- **Minimum-share fixture (P2).** The fixture raised the minimum from 5.00000 to 5.00010,
+  which is below the 5.0609756... executable shares (4.15 / 0.82), so `PaperBroker._immediate`
+  (`src/btc5m/paper.py:281-282`) would have filled and the parity check could not pass. The
+  minimum is now raised to 5.07, and an exact-limit variant is added: 30 at 0.83 fills
+  exactly 5 shares for 4.15 with fee 0.049385 under the true minimum, and 5.00010 refuses
+  there. The plan also records that an unmodified `_quote` order can never fail on the
+  minimum alone (the principal is reduced to an exact share amount at the limit,
+  `src/btc5m/strategy.py:304-323`), so a nonzero `minimum_shares` count on production
+  orders is a consistency failure (`ORDER_MINIMUM_INCONSISTENT`).
+
+No photo was reinspected this round: neither finding implicates a photo, and the ten files
+are unchanged since September 13 (the register records the reason). Docs only; no code,
+runtime data, service or credential was touched. Author gate through the shared semaphore:
+see the briefing for the exact result.
+
+Next: independent PLAN review of revision 9 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record and the holdout gate.
+
+# Progress: research re-plan, revision 8 after the sixth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`4cbfb14` (revision 7) returned three P1 findings, all on how faithfully the existing-rule
+comparators follow the paper broker and the engine. Each was checked against the code and
+accepted. Revision 8 of [the plan](plans/profitable-subset-research.md) answers them in a
+table with file and line evidence and replaces the fill model for every rule:
+
+- **All-or-none entries (P1).** `PaperBroker._immediate` discards every fill when principal
+  remains or the executable quantity is below the order's minimum receive quantity
+  (`src/btc5m/paper.py:281-282`). Revision 7 walked a USD budget to whole shares and
+  accepted partial entries, so the evaluator could enter rounds the bot never trades. Now
+  every entry is the production protected order (`buy_principal`,
+  `minimum_receive_shares`, `price_limit`, the fields `reserve_entry` writes at
+  `src/btc5m/ledger.py:562-577`), executed by `rule_eval.fill_immediate`, which repeats
+  `_immediate` line for line and is parity-tested against it. E1 to E5 take the order from
+  `strategy.evaluate`; hypotheses and baselines take it from `strategy._quote` under a
+  documented sizing configuration (USD 20 budget, momentum mode, open band and spread).
+  `partial` and `unfilled_thin` are gone; `unfilled_no_protected_depth` carries the paper
+  broker's execution record and a `cause` (`price`, `depth`, `minimum_shares`). The fixture
+  numbers were computed today with the production functions: a USD 5 budget against a 0.82
+  ask sizes to principal 4.15, minimum receive 5.00000, limit 0.83, and fills 5.0609756...
+  shares with a 0.052290 fee. A product observation fell out of that check: at the
+  production USD 5 budget the five-share minimum caps the limit at 0.934, so the bot cannot
+  buy a 0.95 ask at all (`BELOW_MINIMUM_SIZE`), which the report will state beside H5 and
+  the screenshot baseline.
+- **Floor-protected exit quotes (P1).** The engine quotes every exit from the current book
+  (quantity quantized to 0.01, floor at the last consumed level minus 0.01, refusals
+  `BELOW_SELL_PRECISION`, `BELOW_VENUE_MINIMUM`, `EXIT_PRICE_TOO_LOW` at
+  `src/btc5m/engine.py:702-709`); the paper broker sells only at or above the limit
+  (`paper.py:249-253`), ends the order `PAPER_NO_PROTECTED_DEPTH` or `PAPER_EXECUTION_GAP`
+  (`:241-243`, `:287`), and the next step quotes again. Revision 7's unlimited exit walk,
+  claimed "at least as conservative", could book cash a production order would not have
+  recovered in a falling book; that claim is withdrawn. The evaluator now runs the quote
+  loop for every rule, with per-attempt records (quote frame, quantity, floor, activation,
+  outcome) and `exit_quote_refusals` counts. Required fixtures: the falling book (0.66 under
+  a 0.69 floor sells nothing; the re-quote fills at 0.65; a book falling faster than one
+  re-quote per frame never fills and settles by label), the nonpositive floor (0.010 refused,
+  0.011 quoted at 0.001) and the execution gap.
+- **Confirmation over every tape frame (P1).** `Engine.step` cancels the pending candidate
+  when the snapshot is `None` (`engine.py:103-104`, `:115-116`) and the replay cancels it on
+  a snapshot-free frame or a gap above `max_price_age_ms` (`lab_replay.py:349-368`). The
+  revision 7 evaluator replicated confirmation over `ticks`, which omits snapshot-free
+  frames (`dataset.py:315-316`). E1 to E5 now stream every tape frame of the round from
+  `rounds.first_frame_ident`; a snapshot-free frame records `NO_SNAPSHOT` and cancels, a gap
+  above 5,000 ms cancels (`LAB_CAPTURE_GAP`). The required fixture (`ENTRY`, snapshot-free,
+  `ENTRY` does not enter; a fourth `ENTRY` with a newer spot stamp does) derives its expected
+  frame by driving `Engine.step` with the same inputs.
+
+No photo was reinspected this round: no finding implicates a photo, and the ten files are
+unchanged since September 13 (the register records the reason). Docs only; no code, runtime
+data, service or credential was touched. Author gate through the shared semaphore: see the
+briefing for the exact result.
+
+Next: independent PLAN review of revision 8 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record and the holdout gate.
+
+# Progress: research re-plan, revision 7 after the fifth independent review
+
+2026-09-14. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of
+`197039a` (revision 6) returned five findings, four P1 and one P2. Every one was checked
+against the code before it was accepted, and all five were accepted. Revision 7 of
+[the plan](plans/profitable-subset-research.md) answers them in a table with the file and
+line evidence and rewrites the affected sections:
+
+- **Exit book selection (P1).** The evaluator's exit no longer needs a snapshot. Its book is
+  chosen in the paper broker's order (`PaperBroker._book`, `src/btc5m/paper.py:80-84`): a
+  token in `streams.pending_books` yields no book, then `streams.books[token]`, then the
+  same-slug snapshot's book. The holding path streams tape frames by ident (including
+  snapshot-free frames, which `dataset._extract` skips at `src/btc5m/dataset.py:315-316`),
+  so B1 gains per-round `first_frame_ident` and `last_frame_ident`. Triggers use the same
+  selected book in the engine's form (full-depth average, `INSUFFICIENT_FULL_EXIT_DEPTH`
+  counted, model trigger only with a same-round snapshot). Position identity is fixed at the
+  entry fill; `ROUND_EXPIRED` ends attempts. Eight exit-form fixtures include the required
+  one where a missing snapshot blocks entry and a fresh independent book fires and completes
+  the exit.
+- **Existing-rule comparators (P1).** E1 to E5 have no restated entry formula. Each calls
+  `strategy.evaluate` under the production mode configuration (E5 under lab variant
+  `continuation-60-.5`), so the spread gate, band, depth, SDK rounding, the 0.0175 sell-fee
+  reserve and the surplus threshold are the production paths; the two-screen confirmation
+  (`engine._confirm_candidate`) is replicated; the entry walk stops at the decision's
+  `limit`. Deviations (no ledger allowance, no account state, unlimited exit walk) are
+  tabulated with the column that reports each. The reviewer's floor 0.86, ask 0.81 example
+  is a required skip fixture (surplus 0.0117 below 0.02), plus a property test that every
+  screened tick's reason equals `strategy.evaluate`'s.
+- **Holdout gate (P1).** `build_holdout` runs six checks before opening the tape: selection
+  self-hash, freeze linkage, git commitment of the selection, freeze and rules files
+  (tracked and working blob equal to `HEAD`'s), rules hash, development content hash and
+  research fingerprint, each with its refusal code and no `.building` file left behind.
+  The selection record becomes version 2 with the bindings it needs; `evaluate --split
+  holdout` repeats the checks. Refusal tests for uncommitted, committed-then-edited,
+  rules-mismatched and dataset-mismatched records are scheduled in B1.
+- **Stop validation (P2).** `STOP_UNREACHABLE` now applies to the band's lower edge
+  (`min_ask - stop > 0`), so the ask 0.05 to 0.10 fixture is refused. Production rules whose
+  band violates it (E2 to E4 with `value_min_ask` 0, E5 with 0.05) declare
+  `unreachable_stop: never_fires`, allowed only for existing-rule trials, and every entered
+  round whose stop threshold is at or below zero is flagged `stop_unreachable` and counted.
+  Boundary fixtures at gross entry 0.080 and 0.081.
+- **Research fingerprint (P1).** `dataset.research_implementation_id()` over nine research
+  files (`config.py`, `domain.py`, `strategy.py`, `lab_tape.py`, `lab_variants.py`,
+  `dataset.py`, `rule_eval.py`, `rule_fit.py`, `research.py`), stored in the freeze record
+  (version 2, allowed because no real freeze has run), the manifest and the selection
+  record, and binding for `build-holdout` and holdout evaluation
+  (`RESEARCH_IMPLEMENTATION_MISMATCH`). `lab.SEMANTIC_FILES` is unchanged and a test asserts
+  the research files are absent from it.
+
+The photo register records a seventh inspection: all ten legible, nothing new, no finding
+implicated a photo. Root's runner commit `0341ba8` (author-context reuse) landed on the
+branch during the correction round and is unrelated to the plan. Docs only; no code,
+runtime data, service or credential was touched. Author gate through the shared semaphore:
+see the briefing for the exact result.
+
+Next: independent PLAN review of revision 7 (Astra); then BUILD resumes B1 with the
+remaining items, starting with the version 2 freeze record and the holdout gate.
+
+# Progress: research re-plan, revision 6 against the recovered baseline
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage reopened by the local-work recovery.
+The revision 5 approval (`f775fc2`) predates the merge of `feat/history-storage` and the
+online-backup fix (`1d3b4df`) and the restored dataset increment (`4fdc0e1`), so the plan
+was re-planned against that baseline rather than resumed. fork/main (`cb7827b`) is an
+ancestor; nothing new was merged from it.
+
+What revision 6 of [the plan](plans/profitable-subset-research.md) adds:
+
+- **Reconciliation record.** Every outstanding inventory item has a disposition with
+  re-runnable evidence: the ten history/storage commits and the online-backup fix are adopted
+  (storage.py byte-identical to the dirty worktree file; the test file differs only by Ruff
+  wrapping); `fix/dashboard-catchup` is deferred as redundant because its complete source and
+  test patch reverse-applies cleanly at HEAD; the root checkout's untracked photos and Serena
+  metadata are inputs and tool state, not application work. Dispositions are in the ignored
+  `.autopilot/wip-dispositions.json` and are checked by the pinned preflight tool.
+- **Strategy audit.** Each of the six production strategies, the lab families and the lab
+  selection rule is audited against the goal with the recorded numbers and file:line
+  citations. The audit's conclusion is that the existing evidence cannot answer the goal
+  for reasons that are not the strategies themselves: the USD 10 loss allowances stop
+  observation after two losses (1,022 and 682 repeated `LOSS_LIMIT` checks), holding-path
+  oracle staleness of 5.03 to 5.43 s flags rounds that had a fresh exit book, two flagged
+  4 to 5 cent entries carry 94% of the reversal family's realized profit, and the pair
+  strategies rest on maker-queue assumptions no taker evaluator can score.
+- **Seven bounded fixes or reporting additions (F1 to F7)** with tests: exit-form validity
+  (an exit needs a valid book, not a valid oracle point, matching the live broker and the
+  recovered replay fix `f600d1f`); a `budget_blocked` reporting column; the five existing
+  rules registered as fixed trials E1 to E5 with valuation columns added to the dataset and a
+  `model` exit; `STOP_UNREACHABLE` for stops below a rule's ask band; `stale_margin_rejections`.
+  The fixed-rule grid is now 29 trials plus H6. The pinned lab's gap classifier is not changed.
+- **B1 status.** `freeze`, `build`, `build-holdout`, the selection record and content hash
+  exist with 14 tests. Remaining: an interrupted-build test, external provenance and the F3
+  columns in the manifest and `ticks`, and the real-archive acceptance build. The build is
+  atomic rather than cursor-resumable; the plan now says so.
+- **B6 rewritten.** The PMXT probe is replaced by one bounded run of the recovered OutcomeTick
+  importer over the already-downloaded September 4 files (six hours, terms profile stated,
+  output only under the worktree's ignored `work/`), extracted and evaluated as an external
+  development set that is never a holdout. The runtime's two incomplete September 8 import
+  destinations are left untouched.
+
+Runtime read-only readings at 20:49 UTC are in the evidence register: tape high-water
+505,209 frames; directional lab at cursor 255,554 (3.3 days behind); best variant 27 clean
+rounds; the holdout phase still holds only the control. All ten reference photos were
+re-inspected (sixth time); the register records one wording ambiguity in the screenshot
+rule and no new mechanism. Author gate through the shared semaphore: 894 passed, Ruff lint
+and format clean, mypy clean. No code, runtime data, service or credential was touched.
+
+Next: independent PLAN review of revision 6 (Astra), including the dispositions; then BUILD
+resumes B1 with the remaining items above, starting with the real-archive freeze record.
+
+# Progress: recover outstanding local work before continuing research
+
+2026-09-13. The original autopilot startup checked fork/main but did not reconcile other
+local branches. An audit of all 33 local branch tips found ten missing history/storage
+commits and one uncommitted online-backup fix. They are now incorporated on chore/btc-autopilot
+in merge checkpoint 1d3b4df, preserving the original commits and source worktrees. The CLI
+conflict was resolved by retaining DatasetError, StorageError and TapeError handling.
+Other branches were already included by ancestry or equivalent patches. The apparent
+missing dashboard-catchup commit was verified present by reverse-applying its complete
+implementation/test patch and checking its documentation additions.
+
+The combined history/storage and backup checkpoint passed 881 tests, Ruff and mypy.
+It includes external-history import, journal compression, pinned-worker compatibility,
+registered-journal maintenance, capture compression and a replay execution-book repair.
+The backup fix pins a consistent SQLite read snapshot so concurrent collector writes cannot
+continually restart the copy; it releases that snapshot before compression and preserves
+the subsequent tail through guarded synchronization. Tests exercise concurrent writes and
+interruption. No live/paper runtime data or service configuration was changed.
+
+Final combined recovery verification: 894 tests passed, Ruff lint/format and mypy passed.
+The restored dataset increment now dispatches build/build-holdout CLI commands and prevents
+development extraction from decoding post-freeze frames or labels. Selection/rules-file
+commit binding remains a review item; this checkpoint is not completed research validation.
+
+The interrupted dataset author's edits were preserved in a recovery stash and restored
+on top of the combined branch. They remain an unfinished B1 increment requiring independent
+review, not evidence of completed strategy improvements. The original backup worktree and
+all local branches remain intact. Private per-branch evidence is in .autopilot/local-wip-audit.md.
+
+Startup now inventories local branches and dirty worktrees and automatically reopens PLAN
+recovery when source work is unaccounted for. Relevant patches must be incorporated or given
+an evidence-backed disposition. Astra must independently assess those decisions before BUILD
+continues. The prior research-plan approval is being reopened against the recovered baseline,
+including reuse of the already-implemented external-history importer and compressed tape.
+
+# Progress: research re-plan, revision 5 after the fourth independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `23167db`
+requested changes on two findings. Revision 5 of [the plan](plans/profitable-subset-research.md)
+answers both in a table at the top:
+
+- The stressed exit fixture had reused the standard timeline's first sale at `T + 600`. With
+  750 ms latency that frame precedes activation (`T + 750`) and its book stamp (`T + 500`)
+  fails book activation, so the second attempt could not start at `T + 1,350`. The stressed
+  fixture now has its own six-frame timeline: nothing at `T + 600`; 7 shares at `T + 900` on
+  a book stamped `T + 850`; attempt 2 activates at `T + 1,650`; the `T + 1,200` frame with
+  the same book yields nothing; 5 shares at `T + 2,300`. The same frames under standard
+  latency sell at `T + 600` and complete at `T + 900`, so one fixture shows stress delaying
+  both the first attempt (600 to 900 ms) and completion (900 to 2,300 ms). The held-remainder
+  variant stamps the last book `T + 1,600`, below the recomputed activation.
+- `research.day_bootstrap` could not report `partially_labeled` days from observed rows plus
+  a set of traded days. The set is replaced by `entered_by_day`, the count of entered rounds
+  per UTC day, which `summarize` already has. A day with fewer rows than entered rounds is
+  `partially_labeled`; none is `unlabeled_only`; more rows than entered rounds, or rows on a
+  day absent from the mapping, raise `BOOTSTRAP_ROWS_MISMATCH`. A paired fixture adds one
+  unresolved trade to an already traded day: the descriptive rows, `expected_rows`, coverage
+  and included days stay the same and the flag goes from 0 to 1; in the decision run the
+  same change adds a full-loss row and the flag stays 0.
+
+All ten reference photos were inspected a fifth time; nothing new (register updated). No
+code changed; no runtime file, service, credential or funded action was touched. Next:
+independent PLAN review of revision 5.
+
+# Progress: research re-plan, revision 4 after the third independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `f9bcc48`
+requested changes on three findings. Revision 4 of [the plan](plans/profitable-subset-research.md)
+answers each in a table at the top and rewrites the execution-validity, transition and
+day-bootstrap sections:
+
+- Every order is a sequence of attempts with an `activation_ms`. A fifth fill test, book
+  activation, requires the consumed token's book to satisfy
+  `min(timestamp_ms, received_ms) >= activation_ms`, the lower bound `PaperBroker._immediate`
+  already applies (`src/btc5m/paper.py:245`). Freshness relative to the frame (five seconds)
+  is no longer enough on its own. Failure reason `BOOK_BEFORE_ACTIVATION`; an entry whose
+  whole window carries pre-activation books is `unfilled_book_before_activation` and counted
+  so the liquidity selection stays visible. Fixtures: repeated decision-time books give no
+  entry; a newer, worse book fills at the worse price; a newer book after the deadline gives
+  no entry; one stamp before activation fails; stressed latency moves the boundary.
+- Entry and exit timing are separate. An entry has one attempt with the 2,000 ms deadline.
+  An exit's first attempt activates at `trigger_ms + latency`; each later attempt (one per
+  fill event) activates at the previous fill frame's `now_ms + latency` and pays latency
+  again; every exit attempt may run to the last frame before `end_s`. `exit_delayed` means
+  the first fill came after `trigger_ms + 2000` or never; `exit_delay_ms`,
+  `exit_completion_ms` and `exit_attempts` are recorded. The activation bound replaces the
+  separate depth-consumption rule. Fixtures: 7 of 12 at 600 ms with the remainder at 2,300 ms
+  (not flagged); a first fill at 2,400 ms (flagged); the stressed variant.
+- `research.day_bootstrap(rows, *, coverage, traded_days, expected_rows)`. The decision run
+  gets every entered round with `expected_rows = entered`; the descriptive run gets labeled
+  entered rounds with `expected_rows = labeled`. A traded day without a row in the
+  descriptive population is `unlabeled_only`, excluded and counted. The adapter asserts the
+  decision run's count equals the decision table's `entered`. Fixtures: the mixed five-round
+  fixture through both calls (4 rows, 3 rows), a wrong count raising, a day with only
+  unresolved trades.
+- Two anchors in the earlier answer tables pointed at renamed headings and were corrected.
+
+All ten reference photos were inspected a fourth time; nothing new (register updated). No
+code changed; no runtime file, service, credential or funded action was touched. Next:
+independent PLAN review of revision 4.
+
+# Progress: research re-plan, revision 3 after the second independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `6b7de88`
+requested changes on six findings. Revision 3 of [the plan](plans/profitable-subset-research.md)
+answers each in a table at the top and rewrites the affected sections:
+
+- The freeze record fixes what development may see and sets no deadline. BUILD follows four
+  steps: freeze, build development (train and validation only, stopping at the freeze
+  high-water), select and commit the selection record, then `build-holdout`, which refuses to
+  run without a committed selection record whose hashes match. Tests cover development
+  determinism after 200 more rounds, holdout isolation, boundary immutability (SHA-256 over
+  the record, no overwrite) and a selection made days after the cutoff.
+- A fill frame must pass `strategy._safety_reason` recomputed from the tape frame at fill
+  time (`src/btc5m/strategy.py:86`): source and receipt age, future stamps, inactive or
+  non-accepting markets, wrong or expired rounds, token mismatch, missing side, crossed book.
+  The dataset's `rejection` column is screening only; fixtures hand-edit it to show it has no
+  effect on fills. Ten invalid execution snapshots each follow one valid decision.
+- Entry is one attempt; exits sell displayed bid depth, keep the residual as inventory, retry
+  only on a newer book source timestamp, hold a residual below five shares to settlement,
+  accumulate proceeds, and assert `entry_shares == sold_shares + settled_shares`. Fixtures:
+  7 of 12 then 5; 9 of 12 with a 3-share residual under three label cases; an unchanged book
+  yields no second fill.
+- New `EvaluatedRound` rows with `observed_net: Decimal | None` and `sensitivity_net`, and a
+  `summarize` adapter that passes only entered rounds to `research.performance` (labeled
+  rows for `observed`, all entered rows for `sensitivity`), counts not-entered rounds apart,
+  and applies costs once. The decision rule reads the stressed run's sensitivity numbers.
+- H6 folds have `fit_cutoff_k = fold_start_k - 1800000`; a round trains fold k only if it
+  ended and its `label_received_ms` is at or before that cutoff. Test: a late-received label
+  can be flipped without changing fold k and the same flip changes fold k+1.
+- `research.day_bootstrap` includes every day with an entered round regardless of coverage
+  (flagged `low_coverage_traded`); the 144-slot rule decides only whether a no-trade day is a
+  genuine zero. The row count must equal the decision table's entered count or the function
+  raises. Fixture: a 100-slot day holding a USD -4.50 loss is included.
+- Also: `evaluate --split holdout` opens only `holdout.sqlite`; a short holdout read is kept
+  as `insufficient_evidence` and may be re-evaluated later only with the same rules,
+  selection and freeze records.
+
+All ten reference photos were inspected a third time; the PowerShell log in the gus thread
+was found to omit venue fees entirely (recorded in the photo register). No code changed; no
+runtime file, service, credential or funded action was touched. Next: independent PLAN
+review of revision 3.
+
+# Progress: research re-plan, revision 2 after independent review
+
+2026-09-13. Branch `chore/btc-autopilot`, PLAN stage. The independent PLAN review of `08fbf74`
+requested changes on seven findings. Revision 2 of [the plan](plans/profitable-subset-research.md)
+answers each in a table at the top and rewrites the affected sections:
+
+- A committed freeze record (`btc5m dataset freeze`) is the single split boundary: cutoff at
+  the next round boundary after the tape's last frame, a 30-minute purge on each side,
+  validation capped by round start, frame cursor and label receipt. Tests cover capture
+  advancing between freeze, extraction and selection.
+- Fills walk the complete price/size ladders read from the checksummed tape frame by ident;
+  depth summaries are screening only and are tested to have no effect on fills. Baselines walk
+  their own outcome token's ladder.
+- Execution validity: a live window from decision plus latency to decision plus 2,000 ms,
+  fresh books only, no fills after expiry, partial-depth handling, delayed or forced exits,
+  every entered round preserved, and a full-loss sensitivity for unlabeled entries that the
+  decision rule must pass.
+- A new `research.day_bootstrap` with a traded-round denominator, observed no-trade days as
+  zeros, missing days excluded and counted, a six-day minimum and an explicit
+  insufficient-evidence status.
+- H6 leaves the combinatorial cross-validation grid (now 24 fixed rules) and gets five
+  expanding chronological folds with fold-local standardization and fitting.
+- The screenshot hedge variant is deferred: both photos leave its trigger and size undefined
+  (the sentence is truncated; one log row shows a USD 1.69 hedge on a 48-share fill). The
+  no-hedge baseline is labeled an approximation.
+- H7 credits a hypothetical rebate only on passive (maker) fills, using the official pool
+  formula (20% of crypto taker fees, pro rata by fee-equivalent, USD 1 daily minimum), kept
+  apart from paper cash. The evidence register was corrected to the pool description.
+
+All ten reference photos were inspected again. No code changed; no runtime file, service,
+credential or funded action was touched. Next: independent PLAN review of revision 2.
+
+# Progress: research re-plan for a profitable subset
+
+2026-09-13. Branch `chore/btc-autopilot`, worktree `.worktrees/autopilot`, base `cb7827b`.
+PLAN stage of the unattended runner. No code changed; three documents were added.
+
+- [The plan](plans/profitable-subset-research.md) defines the question, a six-part decision
+  rule, a fast round-level dataset and rule evaluator on the existing archive, four baselines,
+  25 registered trials in six families plus one sensitivity, a chronological train/validation/
+  holdout protocol with a 30-minute purge, a pure-Python probability-of-backtest-overfitting
+  estimate, and six bounded increments. It reuses `Tape`, `research.py`, `strategy.py` and
+  `lab_scoring.py`; the lab and historical replay remain the path-faithful simulator.
+- [The evidence register](research/profitability-evidence-2026-09-13.md) rechecks the live
+  settlement rule (Chainlink 60-second TWAP confirmed on market 4493717), fees (crypto taker
+  0.07, 20% maker rebate), and records four 2026 papers: five-minute prices are calibrated
+  about a minute before close; settlement-time spot manipulation was measurable in near-even
+  cycles under the earlier endpoint rule; more than 24% of filled orders reverted at peak
+  hours in a reversion study; a v1 trade archive exists without books.
+- [The photo register](research/reference-photos-2026-09-13.md) inspected all ten reference
+  images. The BTC ideas (gus rule, Daniro pairing) were already assessed on September 6; the
+  literal gus rule becomes a registered baseline and maker economics a sensitivity. The
+  memecoin and hiring posts are rejected with reasons.
+- Read-only runtime readings: the directional lab report is dated September 10 11:42 UTC at
+  cursor 248,506 of high-water 442,086 (about three days behind); both automatic holdouts
+  selected nothing; no variant has 30 clean completed rounds; `momentum-settlement` has 14
+  uncertain rounds over 483 while `momentum-20-90-150` has 107, so uncertainty is policy
+  dependent. These readings motivate the plan's first increment.
+
+No runtime file, service, credential or funded action was touched. Next: independent PLAN
+review, then BUILD increment B1 (dataset extraction with synthetic tests and a read-only
+real-archive build recorded here).
 
 # Progress: independent unified integration review
 

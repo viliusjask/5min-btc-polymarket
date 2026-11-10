@@ -577,6 +577,10 @@ class Study:
 
     def report(self) -> dict[str, Any]:
         phases = []
+        external_row = self.tape.db.execute(
+            "SELECT value FROM meta WHERE key='external_history'"
+        ).fetchone()
+        external_history = json.loads(external_row[0]) if external_row else None
         forecasts = self.forecasts()
         for phase in self.phases:
             results = [
@@ -632,6 +636,7 @@ class Study:
                     if self.historical
                     else self.tape.highwater(),
                     **({"historical": historical} if historical else {}),
+                    **({"external_history": external_history} if external_history else {}),
                     "cursor": self.cursor,
                     "implementation": self.manifest["implementation"],
                     "trial_count": len(self.variants),

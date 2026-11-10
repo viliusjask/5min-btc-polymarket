@@ -21,10 +21,10 @@ to live/paper runtime data. Existing paper collectors and dashboards keep runnin
 Research uses public/anonymous inputs and synthetic account fixtures. Do not touch parent
 worktrees or their virtual environments. Financial findings must remain evidence-grounded.
 
-Assigned routing is mandatory: PLAN author Fable 5.1 medium, PLAN reviewer Astra high;
+Assigned routing is mandatory: PLAN author Fable 5.2 medium, PLAN reviewer Astra high;
 BUILD author Opus 5 medium, BUILD reviewer Astra high; INTEGRATION initial reviewer Fable
 5.1 high, fixes Astra high, independent rereview Astra high. Repeat corrections and
-independent review until approval. The wrapper may replace an exhausted Fable 5.1 stage with
+independent review until approval. The wrapper may replace an exhausted Fable 5.2 stage with
 explicit claude-opus-5 at high effort, including startup recovery and integration review,
 and retains that route for six hours. Opus and Astra quota failures wait; authentication
 errors never trigger fallback. Preserve the assigned author/reviewer permissions on fallback.

@@ -25,11 +25,11 @@ classified during execution. Secrets are not read or copied.
 
 The durable cycle starts with full research re-planning despite completed historical plans:
 
-- PLAN: Fable 5.1 medium author → Astra high independent review → Fable corrections and resumed
+- PLAN: Fable 5.2 medium author → Astra high independent review → Fable corrections and resumed
   Astra review until approved.
 - BUILD: Opus 5 medium author → Astra high independent review → Opus corrections and resumed
   Astra review until approved → wrapper-run full project gate.
-- INTEGRATION: Fable 5.1 high reviews the complete cumulative diff. Findings go to Astra high
+- INTEGRATION: Fable 5.2 high reviews the complete cumulative diff. Findings go to Astra high
   fixes, then a separate Astra high reviewer until approved. Clean initial Fable review
   may proceed directly to verification. Gate failures also require Astra fixes and rereview.
 
@@ -51,7 +51,7 @@ The gate uses the shared `~/projects/autopilot/state/verification` directory wit
 across BTC and Alpha-Sentry. Failed verification logs go back to the author. Confirmed Fable
 quota exhaustion switches immediately to explicit `claude-opus-5` at high effort, including
 PLAN startup recovery and the independent integration review. The shared routing helper records
-`.autopilot/limited-claude-fable-5-1` for six hours across retries and restarts, then tries Fable
+`.autopilot/limited-claude-fable-5-2` for six hours across retries and restarts, then tries Fable
 5.1 again. Opus and Astra quota failures retry after ten minutes; authentication failures and
 repeated failures idle without model polling. Astra roles always stay on Astra.
 Three author attempts without a new checkpoint also idle. State, reviews, effective prompts,

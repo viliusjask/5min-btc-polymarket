@@ -166,7 +166,7 @@ def test_review_history_is_stage_specific_and_rejects_author_approval(tmp_path):
             "quota",
             False,
             False,
-            ["claude-fable-5-1 medium 0", "claude-opus-5 high 0"],
+            ["claude-fable-5-2 medium 0", "claude-opus-5 high 0"],
         ),
         (
             "INTEGRATION",
@@ -174,7 +174,7 @@ def test_review_history_is_stage_specific_and_rejects_author_approval(tmp_path):
             "quota",
             False,
             False,
-            ["claude-fable-5-1 high 1", "claude-opus-5 high 1"],
+            ["claude-fable-5-2 high 1", "claude-opus-5 high 1"],
         ),
         (
             "BUILD",
@@ -182,11 +182,11 @@ def test_review_history_is_stage_specific_and_rejects_author_approval(tmp_path):
             "quota",
             False,
             True,
-            ["claude-fable-5-1 medium 0", "claude-opus-5 high 0"],
+            ["claude-fable-5-2 medium 0", "claude-opus-5 high 0"],
         ),
         ("PLAN", "author", "quota", True, False, ["claude-opus-5 high 0"]),
         ("BUILD", "author", "quota", False, False, ["claude-opus-5 medium 0"]),
-        ("PLAN", "author", "auth", False, False, ["claude-fable-5-1 medium 0"]),
+        ("PLAN", "author", "auth", False, False, ["claude-fable-5-2 medium 0"]),
         ("PLAN", "reviewer", "quota", False, False, ["gpt-6-astra high 1"]),
     ],
 )
@@ -209,7 +209,7 @@ def test_runner_routes_quota_without_changing_role_or_codex(
     (state / "INBOX.md").write_text("Synthetic authorized task\n")
     (state / "mode").write_text(mode + "\n")
     (state / "stage").write_text(stage + "\n")
-    marker = state / "limited-claude-fable-5-1"
+    marker = state / "limited-claude-fable-5-2"
     if cached:
         marker.write_text("cached quota\n")
     shared = tmp_path / "shared"
@@ -219,12 +219,12 @@ def test_runner_routes_quota_without_changing_role_or_codex(
 log() { printf '%s\n' "$*" >> "$STATE/test.log"; }
 kill_tree() { :; }
 claude_route() {
-  if [ "$1" = claude-fable-5-1 ] && [ -f "$STATE/limited-$1" ]; then
+  if [ "$1" = claude-fable-5-2 ] && [ -f "$STATE/limited-$1" ]; then
     echo 'claude-opus-5 high'
   else printf '%s %s\n' "$1" "$2"; fi
 }
 claude_quota_fallback() {
-  [ "$2" = claude-fable-5-1 ] || return 1
+  [ "$2" = claude-fable-5-2 ] || return 1
   echo quota > "$STATE/limited-$2"
 }
 failed_call() {
